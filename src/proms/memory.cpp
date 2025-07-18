@@ -11,6 +11,7 @@
 #include <stdint.h>
 
 #include "eprom.h"
+#include "flash_type_2.h"
 #include "flash_type_3.h"
 #include "logging.h"
 #include "memory_utils.h"
@@ -71,6 +72,9 @@ void configure_memory(firestarter_handle_t* handle) {
         return;
     } else if (handle->mem_type == TYPE_SRAM) {
         configure_sram(handle);
+        return;
+    } else if (handle->mem_type == TYPE_FLASH_TYPE_2) {
+        configure_flash2(handle);
         return;
     } else if (handle->mem_type == TYPE_FLASH_TYPE_3) {
         configure_flash3(handle);
