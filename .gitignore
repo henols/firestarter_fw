@@ -15,3 +15,5 @@ firestarter_app
 *.bin
 
 CLAUDE.md
+
+.claude/

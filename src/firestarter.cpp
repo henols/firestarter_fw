@@ -12,7 +12,12 @@
 
 #include "eprom_operations.h"
 #include "hardware_operations.h"
+#ifndef DISABLE_JSON_SUPPORT
 #include "json_parser.h"
+#endif
+#ifndef DISABLE_BINARY_PROTOCOL
+#include "binary_protocol.h"
+#endif
 #include "logging.h"
 #include "memory.h"
 #include "operation_utils.h"
@@ -26,10 +31,17 @@
 #define TX 1
 
 bool init_programmer(firestarter_handle_t* handle);
+#ifndef DISABLE_JSON_SUPPORT
 bool parse_json(firestarter_handle_t* handle);
+#endif
+bool parse_protocol(firestarter_handle_t* handle);
 void command_done(firestarter_handle_t* handle);
 
 firestarter_handle_t handle;
+#ifndef DISABLE_BINARY_PROTOCOL
+binary_protocol_context_t binary_ctx;
+bool use_binary_protocol = false;
+#endif
 
 unsigned long timeout = 0;
 
@@ -46,11 +58,15 @@ void setup() {
     rurp_board_setup();
 
     handle.cmd = CMD_IDLE;
+#ifndef DISABLE_BINARY_PROTOCOL
+    binary_protocol_init(&binary_ctx, (uint8_t*)handle.data_buffer, DATA_BUFFER_SIZE);
+#endif
     debug("Firestarter started");
     debug_format("Firmware version: %s", VERSION);
     debug_format("Hardware revision: %d", rurp_get_physical_hardware_revision());
 }
 
+#ifndef DISABLE_JSON_SUPPORT
 bool parse_json(firestarter_handle_t* handle) {
     debug("Parse JSON");
 #ifdef EXTRA_INFO_LOGGING
@@ -120,24 +136,128 @@ bool parse_json(firestarter_handle_t* handle) {
     }
     return true;
 }
+#endif
+
+bool parse_protocol(firestarter_handle_t* handle) {
+#if defined(DISABLE_JSON_SUPPORT) && defined(DISABLE_BINARY_PROTOCOL)
+    #error "Cannot disable both JSON and binary protocols - at least one must be enabled"
+#endif
+
+#ifndef DISABLE_BINARY_PROTOCOL
+    if (use_binary_protocol) {
+        debug("Parse Binary Protocol");
+        
+        size_t msg_len;
+        const uint8_t* message = binary_protocol_get_message(&binary_ctx, &msg_len);
+        
+        if (!message) {
+            log_error_const("Failed to get binary message");
+            return false;
+        }
+        
+        // Check if this is a config command by accessing the header directly from context
+        if (binary_ctx.header.cmd == CMD_CONFIG) {
+            rurp_configuration_t* config = rurp_get_config();
+            // For config commands, we need to parse with header info
+            handle->cmd = binary_ctx.header.cmd;
+            if (msg_len >= sizeof(binary_config_payload_t)) {
+                const binary_config_payload_t* cfg_payload = (const binary_config_payload_t*)message;
+                handle->ctrl_flags = cfg_payload->ctrl_flags;
+                config->hardware_revision = cfg_payload->hardware_revision;
+                config->r1 = cfg_payload->r1;
+                config->r2 = cfg_payload->r2;
+                rurp_save_config(config);
+                return true;
+            } else {
+                log_error_const("Failed parsing binary config");
+                return false;
+            }
+        }
+        
+        // Parse regular command - extract command from header and payload from message
+        handle->cmd = binary_ctx.header.cmd;
+        if (msg_len >= sizeof(binary_cmd_payload_t)) {
+            const binary_cmd_payload_t* cmd_payload = (const binary_cmd_payload_t*)message;
+            handle->address = cmd_payload->address;
+            handle->mem_size = cmd_payload->mem_size;
+            handle->chip_id = cmd_payload->chip_id;
+            handle->vpp_mv = cmd_payload->vpp_mv;
+            handle->pulse_delay = cmd_payload->pulse_delay;
+            handle->pins = cmd_payload->pins;
+            handle->mem_type = cmd_payload->mem_type;
+            handle->ctrl_flags = cmd_payload->ctrl_flags;
+            memcpy(&handle->bus_config, &cmd_payload->bus_config, sizeof(bus_config_t));
+        } else {
+            // No payload or smaller payload - use defaults
+            handle->address = 0;
+            handle->ctrl_flags = 0;
+            handle->bus_config.rw_line = 0xFF;
+            handle->bus_config.vpp_line = 0xFF;
+            handle->bus_config.address_lines[0] = 0xFF;
+            handle->bus_config.address_mask = 0xFFFF;
+            handle->chip_id = 0;
+            handle->mem_size = 0;
+            handle->vpp_mv = 12000;
+            handle->pulse_delay = 1000;
+            handle->pins = 28;
+            handle->mem_type = 0;
+        }
+        
+        if (handle->cmd < CMD_READ_VPP) {
+            if (!op_execute_function(configure_memory, handle)) {
+                log_error_const("Setup error");
+                return false;
+            }
+        }
+        
+        return true;
+    } else 
+#endif
+    {
+#ifndef DISABLE_JSON_SUPPORT
+        return parse_json(handle);
+#else
+        log_error_const("JSON protocol disabled in this build");
+        return false;
+#endif
+    }
+}
 
 bool init_programmer(firestarter_handle_t* handle) {
     handle->response_code = RESPONSE_CODE_OK;
     handle->operation_state = 0;
 
-    handle->data_size = rurp_communication_read_bytes(handle->data_buffer, DATA_BUFFER_SIZE);
+#ifndef DISABLE_BINARY_PROTOCOL
+    if (use_binary_protocol) {
+        // For binary protocol, the message is already processed
+        handle->data_size = 0; // Binary protocol doesn't use data_buffer for parsing
+    } else 
+#endif
+    {
+        handle->data_size = rurp_communication_read_bytes(handle->data_buffer, DATA_BUFFER_SIZE);
+    }
 #ifdef EXTRA_INFO_LOGGING
     handle->ctrl_flags = 0x80;
     log_info_format("Buffer size: %d", handle->data_size);
 #endif
+#ifndef DISABLE_BINARY_PROTOCOL
+    if (!use_binary_protocol && handle->data_size == 0) {
+#else
     if (handle->data_size == 0) {
+#endif
         log_error_const("Empty input");
         return false;
     }
     debug("Setup");
-    handle->data_buffer[handle->data_size] = '\0';
+#ifndef DISABLE_BINARY_PROTOCOL
+    if (!use_binary_protocol) {
+#endif
+        handle->data_buffer[handle->data_size] = '\0';
+#ifndef DISABLE_BINARY_PROTOCOL
+    }
+#endif
 
-    if (!parse_json(handle)) {
+    if (!parse_protocol(handle)) {
         return false;
     };
 
@@ -177,15 +297,46 @@ void loop() {
         command_done(&handle);
     } else if (handle.cmd == CMD_IDLE) {
         if (rurp_communication_available() > 0) {
+            uint8_t byte = rurp_communication_peak();
+            
+            // Check if this looks like binary protocol
+#ifndef DISABLE_BINARY_PROTOCOL
+            if (byte == BINARY_MAGIC_BYTE) {
+                // Try to collect a complete binary message
+                while (rurp_communication_available() > 0) {
+                    byte = rurp_communication_read();
+                    if (binary_protocol_process_byte(&binary_ctx, byte)) {
+                        // Complete message received
+                        use_binary_protocol = true;
+                        if (init_programmer(&handle)) {
+                            return;
+                        }
+                        binary_protocol_reset(&binary_ctx);
+                        break;
+                    }
+                }
+            }
+#endif
             // Look for the start of a JSON object '{' before trying to parse.
             // This makes the command reception more robust against spurious
             // characters on the serial line.
-            if (rurp_communication_peak() == '{') {
+#ifndef DISABLE_BINARY_PROTOCOL
+            else 
+#endif
+            if (byte == '{') {
+#ifndef DISABLE_JSON_SUPPORT
+#ifndef DISABLE_BINARY_PROTOCOL
+                use_binary_protocol = false;
+#endif
                 if (init_programmer(&handle)) {
                     return;
                 }
+#else
+                // JSON support disabled, discard JSON messages
+                rurp_communication_read();
+#endif
             } else {
-                rurp_communication_read();  // Discard non-'{' character
+                rurp_communication_read();  // Discard unknown character
             }
         }
         return;

@@ -11,7 +11,7 @@
 #define SERIAL_PORT Serial
 #endif
 #ifdef SERIAL_DEBUG
-char* debug_msg_buffer;
+extern char* debug_msg_buffer;
 #endif
 
 // --- Core Logging Functions ---

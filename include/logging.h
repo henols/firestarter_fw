@@ -17,6 +17,13 @@
 #include "firestarter.h"
 #include "rurp_shield.h"
 
+// Forward declaration for binary protocol support
+extern bool use_binary_protocol;
+
+// Forward declarations for binary protocol functions
+void send_binary_response(uint8_t status, const char* message);
+void send_binary_response_format(uint8_t status, const char* format, ...);
+
 // Declare logging type strings defined in logging.c
 extern const char LOG_OK_MSG[] PROGMEM;
 extern const char LOG_INIT_DONE_MSG[] PROGMEM;
@@ -139,14 +146,28 @@ extern const char LOG_ERROR_MSG[] PROGMEM;
 
 // --- ACK Macros ---
 #define send_ack(msg) \
-    rurp_log(LOG_OK_MSG, msg)
+    do { \
+        if (use_binary_protocol) { \
+            send_binary_response(RESPONSE_CODE_OK, msg); \
+        } else { \
+            rurp_log(LOG_OK_MSG, msg); \
+        } \
+    } while(0)
 
 #define send_ack_const(msg) \
-    rurp_log_P(LOG_OK_MSG, PSTR(msg))
+    do { \
+        if (use_binary_protocol) { \
+            send_binary_response(RESPONSE_CODE_OK, msg); \
+        } else { \
+            rurp_log_P(LOG_OK_MSG, PSTR(msg)); \
+        } \
+    } while(0)
 
 #define send_ack_format(cformat, ...)                       \
-    format(handle->response_msg, cformat, __VA_ARGS__);     \
-    send_ack(handle->response_msg)
+    do { \
+        format(handle->response_msg, cformat, __VA_ARGS__); \
+        send_ack(handle->response_msg); \
+    } while(0)
 #define log_error_P_int(progmem_str, value) \
     log_error_P_int_buf(handle->response_msg, progmem_str, value)
 

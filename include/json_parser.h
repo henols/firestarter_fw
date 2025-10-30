@@ -14,7 +14,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define NUMBER_JSNM_TOKENS 64
+#define NUMBER_JSNM_TOKENS 32  // Reduced from 64 to save 512 bytes
 
     int json_init(const char* json, int len, jsmntok_t* tokens);
     uint8_t json_get_cmd(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle);

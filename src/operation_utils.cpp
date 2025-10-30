@@ -13,6 +13,14 @@
 #include "firestarter.h"
 #include "logging.h"
 #include "rurp_shield.h"
+#ifndef DISABLE_BINARY_PROTOCOL
+#include "binary_protocol.h"
+#else
+// Stub declarations for binary protocol when disabled
+bool use_binary_protocol = false;
+void send_binary_response(uint8_t code, const char* msg) { (void)code; (void)msg; }
+void send_binary_response_with_data(uint8_t code, const char* buffer, size_t size) { (void)code; (void)buffer; (void)size; }
+#endif
 
 #define ERROR -1
 #define RETURN 0
@@ -319,22 +327,50 @@ static inline int _execute_operation(void (*callback)(firestarter_handle_t* hand
  * @return true if the response is OK, WARNING, or DATA. false if it's an ERROR.
  */
 static inline bool _check_response(firestarter_handle_t* handle) {
-    switch (handle->response_code) {
-        case RESPONSE_CODE_OK:
-            log_info(handle->response_msg);
-            // log_info_const("- OK -");
-            break;
-        case RESPONSE_CODE_WARNING:
-            log_warn(handle->response_msg);
-            break;
-        case RESPONSE_CODE_DATA:
-            log_data(handle->response_msg);
-            rurp_communication_write(handle->data_buffer, handle->data_size);
-            break;
-        case RESPONSE_CODE_ERROR:
-        default:
-            log_error(handle->response_msg);
-            return false;
+#ifndef DISABLE_BINARY_PROTOCOL
+    extern bool use_binary_protocol;
+    
+    if (use_binary_protocol) {
+        // Handle binary protocol responses
+        switch (handle->response_code) {
+            case RESPONSE_CODE_OK:
+                send_binary_response(RESPONSE_CODE_OK, handle->response_msg);
+                break;
+            case RESPONSE_CODE_WARNING:
+                send_binary_response(RESPONSE_CODE_WARNING, handle->response_msg);
+                break;
+            case RESPONSE_CODE_DATA:
+                send_binary_response_with_data(RESPONSE_CODE_DATA, handle->data_buffer, handle->data_size);
+                break;
+            case RESPONSE_CODE_ERROR:
+            default:
+                send_binary_response(RESPONSE_CODE_ERROR, handle->response_msg);
+                op_reset_timeout();
+                handle->response_code = RESPONSE_CODE_OK;
+                return false;
+        }
+    } else 
+#endif
+    {
+        // Handle JSON protocol responses
+        switch (handle->response_code) {
+            case RESPONSE_CODE_OK:
+                log_info(handle->response_msg);
+                break;
+            case RESPONSE_CODE_WARNING:
+                log_warn(handle->response_msg);
+                break;
+            case RESPONSE_CODE_DATA:
+                log_data(handle->response_msg);
+                rurp_communication_write(handle->data_buffer, handle->data_size);
+                break;
+            case RESPONSE_CODE_ERROR:
+            default:
+                log_error(handle->response_msg);
+                op_reset_timeout();
+                handle->response_code = RESPONSE_CODE_OK;
+                return false;
+        }
     }
     op_reset_timeout();
     handle->response_code = RESPONSE_CODE_OK;
