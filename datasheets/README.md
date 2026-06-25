@@ -26,7 +26,7 @@ This index is consumed by Phase 86 (naming pass) and Phase 89 (bench ledger).
 | 0x05 | FLASH-AMD-STD | `configure_flash4()` → `flash_type_4.cpp` | `W29C020.pdf`, `W29C040.pdf` | on-hand | see per-file table | 2026-06-25 | see per-file table |
 | 0x06 | FLASH-AMD-ALT | `configure_flash3()` → `flash_type_3.cpp` | `SST39SF040.pdf` | on-hand | `https://ww1.microchip.com/downloads/aemDocuments/documents/MPD/ProductDocuments/DataSheets/SST39SF010A-SST39SF020A-SST39SF040-Data-Sheet-DS20005022.pdf` | 2026-06-25 | exact |
 | 0x07 | EPROM-STD | `configure_eprom()` → `eprom.cpp` | `W27C512.pdf`, `W27E512.pdf`, `SST27SF512.pdf`, `ST-M27C512.pdf` | on-hand | see per-file table | 2026-06-25 | see per-file table |
-| 0x08 | EPROM-QUICK | `configure_eprom()` → `eprom.cpp` | `W27E040.pdf`, `AM27C020.pdf` | on-hand | see per-file table | 2026-06-25 | see per-file table |
+| 0x08 | EPROM-QUICK | `configure_eprom()` → `eprom.cpp` | `W27C020.pdf`, `W27E040.pdf`, `AM27C020.pdf` | on-hand | see per-file table | 2026-06-25 | see per-file table |
 | 0x0B | EPROM-LEGACY | `configure_eprom()` → `eprom.cpp` | `2516_EPROM.pdf` | on-hand | `https://archive.org/download/2516_EPROM/2516_EPROM.pdf` | 2026-06-25 | exact |
 | 0x0D | EEPROM-POLL | `configure_eeprom28c()` → `eeprom_28c.cpp` | `AT28C256.pdf` | no-silicon (representative) | `https://ww1.microchip.com/downloads/en/DeviceDoc/doc0006.pdf` | 2026-06-25 | exact |
 | 0x0E | SRAM-32PIN | `configure_sram()` → `sram.cpp` | `DS1245Y.pdf` | no-silicon (representative) | `https://www.futurlec.com/Datasheet/Dallas/DS1245Y.pdf` | 2026-06-25 | exact |
@@ -40,7 +40,7 @@ This index is consumed by Phase 86 (naming pass) and Phase 89 (bench ledger).
 
 ## Per-File Provenance Table
 
-Full provenance for each of the 17 committed PDFs. The bucket index above summarises; this
+Full provenance for each of the 18 committed PDFs. The bucket index above summarises; this
 table is the authoritative per-file record for Phase 86/89 consumers and audit purposes.
 
 | filename | bucket | actual source URL | retrieved | exact/substitute | notes |
@@ -52,6 +52,7 @@ table is the authoritative per-file record for Phase 86/89 consumers and audit p
 | `W27E512.pdf` | 0x07-EPROM-STD | `https://media.digikey.com/pdf/Data%20Sheets/Winbond%20PDFs/W27C512.pdf` | 2026-06-25 | exact-family | W27C512 Winbond family doc covers both W27C512 and W27E512 siblings; the chip_database.json entry is literally "W27C512,W27E512" with algorithm=7 (same silicon entry). W27E512 is the electrically-erasable sibling; both use the EPROM-STD algorithm. |
 | `SST27SF512.pdf` | 0x07-EPROM-STD | `https://datasheet.octopart.com/SST27SF256-70-3C-PG-SST-datasheet-7196.pdf` | 2026-06-25 | family-substitute | SST27SF256 sibling family doc; exact SST27SF512 leaf only at alldatasheet.com (blocked by HTML interstitial on curl). The SST27SFxxx family doc explicitly covers 256/512/1M/2M variants. Filed as `SST27SF512.pdf` per plan instructions. |
 | `ST-M27C512.pdf` | 0x07-EPROM-STD | `https://media.digikey.com/pdf/data%20sheets/st%20microelectronics%20pdfs/m27c512.pdf` | 2026-06-25 | exact | ST Microelectronics M27C512 via DigiKey CDN |
+| `W27C020.pdf` | 0x08-EPROM-QUICK | `http://www.winbond.com/PDF/sheet/w27c020.pdf` (via Wayback Machine `https://web.archive.org/web/2id_/http://www.winbond.com/PDF/sheet/w27c020.pdf`) | 2026-06-25 | exact | **On-hand chip (DSHEET-01).** Winbond W27C020 official leaf, Rev A1, Sept 1998; "256K × 8 ELECTRICALLY ERASABLE EPROM". Content verified by text extraction (part number present 28×). Manufacturer-primary source via Wayback (the live winbond.com path now 404s). DB entry `W27C02,W27C020,W27E02,W27E020,W27L02`, `algorithm=8`, DIP32_STD, 12V VPP. |
 | `W27E040.pdf` | 0x08-EPROM-QUICK | `http://bitsavers.org/components/winbond/W27C512_64Kx8_EEPROM_199911.pdf` | 2026-06-25 | family-substitute | Winbond EPROM family doc (W27C512 bitsavers scan) used as algorithm reference. Exact W27E040 leaf exists only at alldatasheet.com (blocked by HTML interstitial on curl); bitsavers has no W27E040 entry; all other aggregators bot-walled. W27E040 is a 512Kx8 EEPROM in the same Winbond 27xxx series; both use the EPROM-QUICK algorithm. Filed as `W27E040.pdf`. |
 | `AM27C020.pdf` | 0x08-EPROM-QUICK | `https://web.stanford.edu/class/ee183/datasheets/27c020.pdf` | 2026-06-25 | exact | AMD AM27C020 Rev F via Stanford.edu |
 | `2516_EPROM.pdf` | 0x0B-EPROM-LEGACY | `https://archive.org/download/2516_EPROM/2516_EPROM.pdf` | 2026-06-25 | exact | TI/Intel 2516 scan on archive.org. See note [1] re: DB entry. |
@@ -123,7 +124,7 @@ acquisition (all anticipated by RESEARCH):
 
 If a datasheet is truly unobtainable after exhausting all known sources, it would be recorded as a
 `MISSING` / `UNSOURCED` row in the provenance table above (with what was tried), and the phase
-would still complete. No row currently invokes D-03; all 17 PDFs have real, committed content.
+would still complete. No row currently invokes D-03; all 18 PDFs have real, committed content.
 
 ---
 
@@ -144,6 +145,7 @@ datasheets/
 │   ├── SST27SF512.pdf                 (family-substitute: SST27SF256 family doc)
 │   └── ST-M27C512.pdf
 ├── 0x08-EPROM-QUICK/                  handler: configure_eprom() → eprom.cpp
+│   ├── W27C020.pdf                    (on-hand; exact Winbond leaf, Rev A1)
 │   ├── W27E040.pdf                    (family-substitute: W27C512 bitsavers family doc)
 │   └── AM27C020.pdf
 ├── 0x0B-EPROM-LEGACY/                 handler: configure_eprom() → eprom.cpp
