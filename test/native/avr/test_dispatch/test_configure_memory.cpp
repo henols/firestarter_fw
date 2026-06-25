@@ -49,6 +49,12 @@ void setUp(void) {
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t)))
         .AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
+    /* Phase 84: stub delay() so the VPP-skip init tests can call
+     * eprom_generic_init → eprom_check_vpp without an ArduinoFake
+     * UnexpectedMethodCallException on the delay(100) call inside
+     * eprom_check_vpp. Existing dispatch tests never call the init function
+     * so this stub is additive-only and cannot break prior tests. */
+    When(Method(ArduinoFake(), delay)).AlwaysReturn();
 }
 
 void tearDown(void) {
@@ -194,6 +200,127 @@ void test_flash4_check_chip_id_0x39_sets_operation(void) {
         "CMD_CHECK_CHIP_ID on 0x39 must set a non-NULL operation_main");
 }
 
+/* =========================================================================
+ * Phase 84 Plan 01 — VPP-skip gate tests (D-11, FIX-01, T-84-01)
+ *
+ * Threat model (T-84-01): the VPP-skip must be EXACTLY scoped to
+ * CMD_READ and CMD_BLANK_CHECK.  Write/erase/chip-id must still gate VPP
+ * so the over-voltage block is preserved.
+ *
+ * Observable: response_code after calling firestarter_operation_init.
+ * - eprom_check_vpp with rurp_read_voltage_mv()=0 and vpp_mv=12000 always
+ *   hits the "VPP is low" branch (0 < 11400) → response_code = WARNING.
+ * - If eprom_check_vpp is skipped (the D-11 fix), response_code stays OK.
+ *
+ * Positive tests (CMD_READ / CMD_BLANK_CHECK):
+ *   After the D-11 fix:  response_code == OK  (VPP check skipped) → PASS.
+ *   Before the fix:      response_code == WARNING (VPP check ran) → FAIL.
+ *
+ * Negative tests (CMD_WRITE / CMD_ERASE / CMD_CHECK_CHIP_ID):
+ *   response_code must be WARNING (VPP check still ran, returning low-VPP
+ *   warning with the stub's 0 mV reading) → PASS always (no code change
+ *   for these paths, so both before and after the fix they gate VPP).
+ * ========================================================================= */
+
+static bool recording_get_control_register(
+        struct firestarter_handle* handle,
+        rurp_register_t bit)
+{
+    (void)handle; (void)bit;
+    return false;
+}
+
+/* Build a minimal EPROM handle for the VPP-skip gate tests.
+ * - vpp_mv=12000 ensures eprom_check_vpp will set WARNING when it runs
+ *   (rurp_read_voltage_mv returns 0, which is < 12000*95/100 = 11400).
+ * - FLAG_SKIP_BLANK_CHECK avoids needing firestarter_get_data stubs for
+ *   the CMD_WRITE path.
+ * - firestarter_get_control_register stub prevents NULL-ptr crash in
+ *   eprom_write_init's is_operation_in_progress check. */
+static firestarter_handle_t make_vpp_gate_handle(uint32_t protocol, uint8_t cmd) {
+    firestarter_handle_t h = {};
+    h.protocol = protocol;
+    h.cmd = cmd;
+    h.response_code = RESPONSE_CODE_OK;
+    h.vpp_mv = 12000;
+    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK;
+    h.firestarter_get_control_register = recording_get_control_register;
+    return h;
+}
+
+/* --- Positive tests: read/blank-check must NOT run eprom_check_vpp
+ *     (response_code must stay RESPONSE_CODE_OK after the D-11 fix).
+ *     These tests FAIL against the unmodified source (RED gate). --- */
+
+void test_eprom_read_does_not_run_vpp_check(void) {
+    firestarter_handle_t h = make_vpp_gate_handle(0x07, CMD_READ);
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "configure_memory must not error on 0x07/CMD_READ");
+    TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_init,
+        "eprom_generic_init must be set as init for CMD_READ");
+    h.firestarter_operation_init(&h);
+    /* After D-11 fix: VPP check skipped → response_code stays OK.
+     * Unmodified code: VPP check runs → response_code = WARNING (FAIL). */
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "CMD_READ must NOT run eprom_check_vpp (D-11 VPP-skip): "
+        "response_code must stay OK, not be set to WARNING by VPP low check");
+}
+
+void test_eprom_blank_check_does_not_run_vpp_check(void) {
+    firestarter_handle_t h = make_vpp_gate_handle(0x07, CMD_BLANK_CHECK);
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "configure_memory must not error on 0x07/CMD_BLANK_CHECK");
+    h.firestarter_operation_init(&h);
+    /* After D-11 fix: response_code stays OK (VPP skipped).
+     * Unmodified: response_code = WARNING (FAIL). */
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "CMD_BLANK_CHECK must NOT run eprom_check_vpp (D-11 VPP-skip): "
+        "response_code must stay OK, not be set to WARNING by VPP low check");
+}
+
+/* --- Negative tests (T-84-01 over-broadening hazard mitigation):
+ *     write/erase/chip-id MUST still run eprom_check_vpp exactly as before.
+ *     With 0 mV stub voltage: response_code = WARNING (VPP low).
+ *     These tests pass both before and after the D-11 fix. --- */
+
+void test_eprom_write_still_runs_vpp_check(void) {
+    firestarter_handle_t h = make_vpp_gate_handle(0x07, CMD_WRITE);
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "configure_memory must not error on 0x07/CMD_WRITE");
+    h.firestarter_operation_init(&h);
+    /* VPP check MUST have run: voltage 0 < 11400 → WARNING */
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_WARNING, h.response_code,
+        "CMD_WRITE MUST still run eprom_check_vpp (over-voltage gate preserved): "
+        "0 mV stub voltage must produce WARNING response");
+}
+
+void test_eprom_erase_still_runs_vpp_check(void) {
+    firestarter_handle_t h = make_vpp_gate_handle(0x07, CMD_ERASE);
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "configure_memory must not error on 0x07/CMD_ERASE");
+    h.firestarter_operation_init(&h);
+    /* VPP check MUST have run → WARNING */
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_WARNING, h.response_code,
+        "CMD_ERASE MUST still run eprom_check_vpp (over-voltage gate preserved)");
+}
+
+void test_eprom_check_chip_id_still_runs_vpp_check(void) {
+    firestarter_handle_t h = make_vpp_gate_handle(0x07, CMD_CHECK_CHIP_ID);
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "configure_memory must not error on 0x07/CMD_CHECK_CHIP_ID");
+    /* eprom_check_chip_id_init → eprom_check_vpp directly */
+    h.firestarter_operation_init(&h);
+    /* VPP check MUST have run → WARNING (12V on A9 for ID requires VPP gate) */
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_WARNING, h.response_code,
+        "CMD_CHECK_CHIP_ID MUST still run eprom_check_vpp "
+        "(12V on A9 for ID; over-voltage gate preserved)");
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -222,6 +349,13 @@ int main(int argc, char** argv) {
     RUN_TEST(test_flash4_check_chip_id_0x05_sets_operation);
     RUN_TEST(test_flash4_check_chip_id_0x35_sets_operation);
     RUN_TEST(test_flash4_check_chip_id_0x39_sets_operation);
+
+    /* Phase 84 D-11 VPP-skip gate tests (RED before eprom.cpp fix) */
+    RUN_TEST(test_eprom_read_does_not_run_vpp_check);
+    RUN_TEST(test_eprom_blank_check_does_not_run_vpp_check);
+    RUN_TEST(test_eprom_write_still_runs_vpp_check);
+    RUN_TEST(test_eprom_erase_still_runs_vpp_check);
+    RUN_TEST(test_eprom_check_chip_id_still_runs_vpp_check);
 
     return UNITY_END();
 }
