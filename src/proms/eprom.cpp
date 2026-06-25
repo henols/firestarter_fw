@@ -288,6 +288,12 @@ void eprom_internal_erase(firestarter_handle_t* handle) {
 }
 
 void eprom_generic_init(firestarter_handle_t* handle) {
+    /* D-11 (Phase 84): read and blank-check do not drive VPP — skip the
+     * regulator-enable + measurement + ERROR/WARNING.  Write/erase/chip-id
+     * still gate VPP exactly as before (T-84-01 over-voltage block intact). */
+    if (handle->cmd == CMD_READ || handle->cmd == CMD_BLANK_CHECK) {
+        return;
+    }
     eprom_check_vpp(handle);
     if (handle->response_code == RESPONSE_CODE_ERROR) {
         return;
