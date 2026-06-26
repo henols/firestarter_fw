@@ -47,11 +47,31 @@ extern "C" int  bus_recording_count();
 extern "C" uint8_t recorded_reg(int i);
 extern "C" uint8_t recorded_data(int i);
 
+/* Golden-trace helper (assert_trace_eq + GOLDEN_BLESS print mode).
+ * Included AFTER the extern "C" recording decls above (required include order). */
+#include "../_shared/golden_trace.h"
+
+/* Golden expected arrays.
+ * Each .inc file is a comma-list of { reg, data } rows produced by GOLDEN_BLESS mode. */
+static const golden_entry_t golden_flash3_write[] = {
+#include "golden_flash3_write.inc"
+};
+static const int golden_flash3_write_n =
+    (int)(sizeof(golden_flash3_write) / sizeof(golden_flash3_write[0]));
+
 void setUp(void) {
     ArduinoFakeReset();
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t))).AlwaysReturn(1);
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
+    /* delay() is called by flash3_write_init (flash3_erase_execute + FLASH_ERASE_DELAY_MS).
+     * delayMicroseconds() is called by memory_set_data (3µs settle).
+     * millis() is called by flash_util_verify_operation (DQ7 poll timeout loop).
+     * Stub all three so the operation-phase golden tests don't abort on an
+     * unmocked ArduinoFake virtual (Pitfall 4). */
+    When(Method(ArduinoFake(), delay)).AlwaysReturn();
+    When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
+    When(Method(ArduinoFake(), millis)).AlwaysReturn(0);
     clear_bus_recording();
 }
 
@@ -163,6 +183,59 @@ void test_inv09_flash3_sst39sf040_keep_flash_eeprom(void) {
         "INV-09: 0x06 CMD_ERASE configure-phase must NOT set any VPP-enable CTL bit");
 }
 
+/* ─── Phase 88 Plan 03: Golden register trace (PRIM-01 / SAFE-02 / D-01..D-04) ── */
+
+/*
+ * test_golden_flash3_write — byte-exact golden trace for the flash3 0x06 write path.
+ *
+ * flash3 (FLASH-AMD-ALT / SST39SF040) is a 5V-only AMD-unlock NOR flash; it has
+ * NO chip-id P4 site (D-03 coverage map: write only, no chip-id fixture).
+ *
+ * Input: minimal representative data_size=1, address=0, FLAG_SKIP_BLANK_CHECK |
+ * FLAG_SKIP_ERASE (D-04).  chip_id=0 so the chip-id check inside flash3_write_init
+ * is suppressed.  configure_memory wires operation_init = flash3_write_init and
+ * operation_main = flash3_write_execute.
+ *
+ * With FLAG_SKIP_BLANK_CHECK and FLAG_SKIP_ERASE set, flash3_write_init is a
+ * no-op (both the erase and blank-check branches are suppressed).  The trace is
+ * therefore entirely from flash3_write_execute:
+ *   - flash_execute_command(FLASH_ENABLE_WRITE): 3-cycle SDP unlock at 0x5555/0x2AAA/0x5555
+ *     → flash_util_byte_flipping writes CTRL (CTRL_READ_WRITE=0), then LSB+MSB for each
+ *     address in the unlock sequence, then CTRL again.
+ *   - memory_set_data (h.firestarter_set_data): writes LSB+MSB of the data address,
+ *     then chip-enable pulse (no CTL register writes visible in the 8-bit recording
+ *     for rurp_chip_enable/disable — those are rurp_set_control_pin calls, not
+ *     rurp_write_to_register calls, so they do NOT appear in the recording).
+ *   - flash_util_verify_operation: DQ7 poll; rurp_read_data_buffer() stub returns 0;
+ *     data_buffer[0]=0x00 so DQ7 match on first poll (0 & 0x80 == 0 & 0x80 = 0).
+ *     CTL register is written to go back to read mode (CTRL_READ_WRITE=1 then cleanup).
+ *
+ * Note: clear_bus_recording() is called AFTER configure_memory() to isolate the
+ * operation trace from the configure-phase address writes (mem_util_set_address).
+ *
+ * Low-byte-only semantics (Pitfall 1): CTRL_VPP_VPE_DROP_ENABLE = 0x100 on
+ * HARDWARE_REVISION builds is NOT captured.  The existing INV-09 assertion
+ * (which scans for VPP-enable bits) is the complementary guard for 8-bit-fit
+ * VPP bits; this golden trace adds the full ordered sequence.
+ */
+void test_golden_flash3_write(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    h.data_size   = 1; /* minimal representative input (D-04): 1 SDP unlock + 1 byte program */
+    h.ctrl_flags  = FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE; /* suppress init side-effects */
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "golden flash3 write: configure_memory must not error");
+    clear_bus_recording(); /* isolate operation trace from configure-phase address writes */
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+    if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
+#ifdef GOLDEN_BLESS
+    print_trace_inc();
+#else
+    assert_trace_eq(golden_flash3_write, golden_flash3_write_n,
+                    "golden trace drift: flash3 0x06 write");
+#endif
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -175,6 +248,9 @@ int main(int argc, char** argv) {
 
     /* Phase 87 Plan 03: INV-09 gap-fill assertion (SAFE-02 / NAME-03) */
     RUN_TEST(test_inv09_flash3_sst39sf040_keep_flash_eeprom);
+
+    /* Phase 88 Plan 03: byte-exact golden write trace (PRIM-01 / D-01..D-04) */
+    RUN_TEST(test_golden_flash3_write);
 
     return UNITY_END();
 }
