@@ -6,6 +6,7 @@
  */
 
 #include "flash_type_4.h"
+#include "primitives.h"
 
 #include <Arduino.h>
 
@@ -119,12 +120,8 @@ void flash4_write_execute(firestarter_handle_t* handle) {
 static bool flash4_wait_for_page_write(firestarter_handle_t* handle, uint32_t address, uint8_t expected) {
     // poll the last byte written until it's correct.
     uint8_t observed = 0;
-    for (uint16_t j = 0; j < 1024; j++) {
-        delayMicroseconds(10);
-        observed = handle->firestarter_get_data(handle, address);
-        if (observed == expected) {
-            return true;
-        }
+    if (poll_readback(handle, address, expected, 1024, &observed)) {
+        return true;
     }
 
     {

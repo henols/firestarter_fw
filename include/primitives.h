@@ -34,6 +34,35 @@ extern "C" {
      */
     void chip_id_report(firestarter_handle_t* handle, uint16_t read_id);
 
+    /* poll_readback — bounded single-address poll kernel (P5/PRIM-05).
+     *
+     * Shared by: eeprom_28c.cpp (eeprom28c_wait_for_write, cap=2000),
+     *            flash_type_4.cpp (flash4_wait_for_page_write, cap=1024).
+     *
+     * NOT used by eprom.cpp verify_and_update_mask — that is a whole-buffer
+     * bitmask loop returning a count with no timeout frame (different algorithm).
+     *
+     * Each caller keeps its own error-frame emission on false return, because
+     * the two sites use different MSG ids AND different _b[] byte order:
+     *   eeprom28c: MSG_ERR_EEPROM_TIMEOUT, _b[5] = {addr>>16, addr>>8, addr, expected, observed}
+     *   flash4:    MSG_ERR_FL4_VERIFY_TIMEOUT, _b[5] = {expected, addr>>16, addr>>8, addr, observed}
+     * The byte-order divergence is intentional (per site) and MUST NOT be normalised.
+     *
+     * Parameters:
+     *   handle       — firestarter handle (provides firestarter_get_data).
+     *   address      — single address to poll.
+     *   expected     — byte value that ends the poll.
+     *   max_iters    — iteration cap (2000 for eeprom28c, 1024 for flash4).
+     *   observed_out — written with the last observed byte on timeout (caller uses
+     *                  this in its error frame); ignored on true return.
+     *
+     * Returns: true if observed == expected within max_iters; false on timeout.
+     *
+     * Per-iteration behaviour: delayMicroseconds(10) then firestarter_get_data(handle, address).
+     */
+    bool poll_readback(firestarter_handle_t* handle, uint32_t address, uint8_t expected,
+                       uint16_t max_iters, uint8_t* observed_out);
+
     /* vpp_check_window — shared VPP read + HIGH/LOW window-compare + _b[8] packing
      *                    + FORCE downgrade (P3/PRIM-04).
      *

@@ -131,12 +131,8 @@ void eeprom28c_write_execute(firestarter_handle_t* handle) {
 
 static bool eeprom28c_wait_for_write(firestarter_handle_t* handle, uint32_t address, uint8_t expected) {
     uint8_t observed = 0;
-    for (uint16_t j = 0; j < 2000; j++) {
-        delayMicroseconds(10);
-        observed = handle->firestarter_get_data(handle, address);
-        if (observed == expected) {
-            return true;
-        }
+    if (poll_readback(handle, address, expected, 2000, &observed)) {
+        return true;
     }
     {
         uint8_t _b[5];

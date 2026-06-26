@@ -15,6 +15,13 @@
  *   - flash_intel.cpp  (protocol 0x10 — command-register 0x90 autoselect read)
  *   - flash_utils.cpp  (protocols 0x05/0x06 — AMD/JEDEC FLASH_ENABLE_ID sequence)
  *
+ * poll_readback (P5/PRIM-05):
+ *   - eeprom_28c.cpp   (protocol 0x0D — eeprom28c_wait_for_write, cap=2000)
+ *   - flash_type_4.cpp (protocol 0x05 — flash4_wait_for_page_write, cap=1024)
+ *   Each caller emits its own error frame (different MSG id + _b[] byte order per site).
+ *   eprom.cpp verify_and_update_mask is a different algorithm (whole-buffer bitmask,
+ *   returns count, no timeout frame) — NOT routed through poll_readback.
+ *
  * vpp_check_window (P3/PRIM-04):
  *   - eprom.cpp        (protocols 0x07/0x08/0x0B — via eprom_check_vpp)
  *   - flash_intel.cpp  (protocol 0x10 — via flash_intel_check_vpp)
@@ -33,6 +40,8 @@
 #include "logging_id.h"
 #include "rurp_shield.h"
 
+#include <Arduino.h>
+
 void chip_id_report(firestarter_handle_t* handle, uint16_t read_id) {
     if (read_id != handle->chip_id) {
         uint8_t _b[4];
@@ -48,6 +57,29 @@ void chip_id_report(firestarter_handle_t* handle, uint16_t read_id) {
             handle->response_code = RESPONSE_CODE_ERROR;
         }
     }
+}
+
+bool poll_readback(firestarter_handle_t* handle, uint32_t address, uint8_t expected,
+                   uint16_t max_iters, uint8_t* observed_out) {
+    /* Bounded single-address poll kernel (P5/PRIM-05).
+     *
+     * Per-iteration: delayMicroseconds(10) then read address. Returns true on match.
+     * On timeout: writes last observed byte into *observed_out and returns false.
+     * The caller emits its site-specific error frame (MSG id + _b[] byte order diverge
+     * between eeprom28c and flash4 — MUST NOT be normalised here).
+     */
+    uint8_t observed = 0;
+    for (uint16_t j = 0; j < max_iters; j++) {
+        delayMicroseconds(10);
+        observed = handle->firestarter_get_data(handle, address);
+        if (observed == expected) {
+            return true;
+        }
+    }
+    if (observed_out) {
+        *observed_out = observed;
+    }
+    return false;
 }
 
 void vpp_check_window(firestarter_handle_t* handle) {
