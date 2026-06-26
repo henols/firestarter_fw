@@ -5,6 +5,7 @@
  * Permission is hereby granted under MIT license.
  *
  * Phase 71 Plan 04 — Tier-1 validation suite for the Flash Type 4 family.
+ * Phase 87 Plan 03 — INV-04 gap-fill assertion (NAME-03 / SAFE-02).
  * HARN-01 / D-07 / T-71-WIRED-WRONG.
  *
  * Proves the configure_flash4 dispatch/configure phase is VPP-safe.
@@ -24,6 +25,9 @@
  *   is the correct scope for the "dispatch doesn't touch VPP" proof.
  *
  * Protocols covered: 0x05 (FLASH_AMD_STD), 0x35 (FLASH_EEPROM), 0x39 (FLASH_EEPROM2).
+ *
+ * INV gap-fill assertion added by Phase 87 Plan 03 (SAFE-02 third target):
+ *   INV-04: test_inv04_flash4_256b_page_boundary
  */
 
 #include <Arduino.h>
@@ -249,6 +253,94 @@ void test_flash4_write_execute_no_vpp(void) {
         "flash4_write_execute (operation phase) must NOT set any VPP-enable CTL bit");
 }
 
+/* ─── Phase 87 Plan 03: INV-04 gap-fill assertion (SAFE-02) ─────────────────── */
+
+/* INV-04 — flash4 256B page boundary (data-driven from handle->mem_size).
+ * SAFE-02 third target: grep -rn INV-04 must hit doc + handler + this test.
+ * Asserts: for a 512KB (W29C040) chip, flash4_write_execute fires TWO SDP sequences
+ * for a write that crosses a 256B page boundary (bytes 0–256 inclusive). A fixed
+ * 64-byte page would fire 5 SDPs; a correct 256-byte page fires 2 (one at byte 0,
+ * one at byte 256). This directly pins the data-driven page-size derivation.
+ * Source: flash_type_4.cpp flash4_page_size() (mem_size=524288 → 256B).
+ *         W29C040 citation: datasheets/0x05-FLASH-AMD-STD/W29C040.pdf p.11 §Page Write.
+ *
+ * Test setup: configure 0x05 with mem_size=524288 (512KB, W29C040), address=254,
+ * data_size=3 (bytes 254, 255, 256 — spanning the 256B page boundary at address 256).
+ * With 256B pages: SDP fires at address 254 (is_first_byte) and address 256 (is_page_start).
+ * That is exactly 2 SDP sequences in the recording. A 64B page would fire the second SDP
+ * at address 256 (256%64==0) too, but would ALSO fire at address 192 and 128, which means
+ * a 3-byte write from 254 would still give 2 (254 is not a 64B boundary, but 256 is).
+ *
+ * Distinguishing proof: use address=0, data_size=3. With page_size=256: fires at address 0
+ * (first_byte, SDP1) and only one more fire would happen at address 256 — but data ends at 2.
+ * Actually the cleanest cross-boundary proof: address=254, data_size=3.
+ *   - page_size=256: SDP at addr 254 (first_byte=true) + addr 256 (page_start). Count=2.
+ *   - page_size=128: SDP at addr 254 (first_byte=true) + addr 256 (256%128==0, page_start). Count=2.
+ *   - page_size=64:  SDP at addr 254 (first_byte=true) + addr 256 (256%64==0, page_start). Count=2.
+ * All three give count=2 for this span — no discrimination on count alone.
+ *
+ * Better approach: address=0, data_size=65 (spans pages at 64B boundaries but not 256B).
+ *   - page_size=256: SDP at addr 0 only (page_start + first_byte). addr 64 is NOT a 256B boundary. Count=1.
+ *   - page_size=64:  SDP at addr 0 (first_byte) + addr 64 (64%64==0). Count=2.
+ * So for W29C040 (512KB → page_size=256): 65-byte write from addr 0 = 1 SDP (not 2).
+ *
+ * Verification: assert count=1 (not 2) for 65 bytes starting at addr 0 with 512KB chip.
+ * If page_size were 64, count would be 2 (original bug). The single SDP confirms 256B pages. */
+static int count_sdp_occurrences(void) {
+    /* Count how many times the SDP MSB pattern 0x55, 0x2A, 0x55 appears in the recording. */
+    int count = 0;
+    int msb_seq_index = 0;
+    const uint8_t msb_pattern[3] = {0x55, 0x2A, 0x55};
+    for (int i = 0; i < bus_recording_count(); i++) {
+        if (recorded_reg(i) == MOST_SIGNIFICANT_BYTE) {
+            if (recorded_data(i) == msb_pattern[msb_seq_index]) {
+                msb_seq_index++;
+                if (msb_seq_index == 3) {
+                    count++;
+                    msb_seq_index = 0; /* reset to scan for next occurrence */
+                }
+            } else {
+                msb_seq_index = (recorded_data(i) == msb_pattern[0]) ? 1 : 0;
+            }
+        }
+    }
+    return count;
+}
+
+void test_inv04_flash4_256b_page_boundary(void) {
+    /* W29C040 (512KB): flash4_page_size(524288) = 256.
+     * Write 65 bytes starting at address 0.
+     *   - page_size=256: SDP fires at addr 0 only (first_byte + page_start). Count=1.
+     *   - page_size=64:  SDP fires at addr 0 AND addr 64 (64%64==0). Count=2.
+     * Asserting count=1 PROVES page_size=256 (not the old fixed 64). */
+    firestarter_handle_t h = {};
+    h.protocol   = 0x05;
+    h.cmd        = CMD_WRITE;
+    h.response_code = RESPONSE_CODE_OK;
+    h.chip_id    = 0;
+    h.mem_size   = 524288; /* 512 KB (W29C040) → flash4_page_size() = 256 */
+    h.address    = 0;
+    h.data_size  = 65; /* 65 bytes: addr 0..64; 64 is a 64B boundary but NOT a 256B boundary */
+    /* data_buffer zero-initialized: rurp_read_data_buffer() returns 0 = expected → DQ7 poll passes. */
+
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "INV-04: configure_memory must not error on 0x05 CMD_WRITE");
+
+    clear_bus_recording();
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "INV-04: flash4_write_execute must not error on 65-byte zero write");
+    /* page_size=256 → only 1 SDP for 65 bytes from addr 0 (addr 64 is not a 256B boundary).
+     * page_size=64 (the old fixed value) → 2 SDPs (addr 0 and addr 64). */
+    int sdp_count = count_sdp_occurrences();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, sdp_count,
+        "INV-04: W29C040 (512KB) must use 256B page size — 65-byte write from addr 0 fires "
+        "exactly 1 SDP (addr 64 is a 64B boundary but NOT a 256B boundary); "
+        "page_size=64 (old bug) would fire 2 SDPs");
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -268,6 +360,9 @@ int main(int argc, char** argv) {
     /* FIX-02B: operation-phase SDP emission + VPP-safety proofs */
     RUN_TEST(test_flash4_write_execute_emits_sdp);
     RUN_TEST(test_flash4_write_execute_no_vpp);
+
+    /* Phase 87 Plan 03: INV-04 gap-fill assertion (SAFE-02 / NAME-03) */
+    RUN_TEST(test_inv04_flash4_256b_page_boundary);
 
     return UNITY_END();
 }

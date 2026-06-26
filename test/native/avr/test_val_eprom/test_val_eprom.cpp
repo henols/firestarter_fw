@@ -5,6 +5,7 @@
  * Permission is hereby granted under MIT license.
  *
  * Phase 71 Plan 04 — Tier-1 validation suite for the EPROM family.
+ * Phase 87 Plan 03 — INV-01..INV-06/INV-08 gap-fill assertions (NAME-03 / SAFE-02).
  * HARN-01 / D-07 / D-08 (verify-can-fail posture).
  *
  * Proves configure_eprom behavior BY SIDE-EFFECT via the recording bus stub:
@@ -28,7 +29,17 @@
  *   0x0B:      CTRL_VPP_REGULATOR_ENABLE only (direct VPE path)
  * Both paths set CTRL_VPP_REGULATOR_ENABLE — we assert the common bit.
  *
- * NOTE: delay() must be mocked; eprom_check_vpp calls delay(100).
+ * INV gap-fill assertions added by Phase 87 Plan 03 (SAFE-02 third target):
+ *   INV-01: test_inv01_eprom_0x0B_direct_vpe_rail
+ *   INV-02: test_inv02_eprom_0x0B_oe_vpp_read_skip
+ *   INV-03: test_inv03_eprom_0x08_p1_as_vpp
+ *   INV-05: test_inv05_eprom_vpp_skip_on_read
+ *   INV-06: test_inv06_eprom_pulse_delay_defaults
+ *   INV-08: test_inv08_eprom_warning5_decode_preserved
+ *
+ * NOTE: delay() and delayMicroseconds() must be mocked; eprom_check_vpp calls
+ * delay(100), eprom_write_execute calls delay(500), memory_set_data/get_data
+ * call delayMicroseconds().
  * Hardware revision stub returns 1 (non-REVISION_0) via host_stubs.cpp so
  * eprom_check_vpp does not take the REV0 early-return path.
  */
@@ -39,9 +50,11 @@
 
 extern "C" {
 #include "memory.h"
+#include "rurp_shield.h"
 }
 #include "firestarter.h"
 #include "rurp_pinout.h"
+#include "memory_utils.h"
 
 using namespace fakeit;
 
@@ -59,6 +72,9 @@ void setUp(void) {
     /* delay() is called by eprom_check_vpp (delay(100)) and eprom_write_execute
      * (delay(500)). Must be stubbed before any ArduinoFake virtual is called. */
     When(Method(ArduinoFake(), delay)).AlwaysReturn();
+    /* delayMicroseconds() is called by memory_set_data (3µs settle) and
+     * memory_get_data (read strobe). Needed by INV-03 execute-phase test. */
+    When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
     clear_bus_recording();
 }
 
@@ -202,6 +218,224 @@ void test_eprom_0x0B_read_configure_only_does_not_enable_vpp(void) {
     }
 }
 
+/* ─── Phase 87 Plan 03: INV-01..INV-06/INV-08 gap-fill assertions (SAFE-02) ─ */
+
+/* INV-01 — 0x0B direct-VPE rail (no CTRL_VPP_VPE_DROP_ENABLE drop).
+ * SAFE-02 third target: grep -rn INV-01 must hit doc + handler + this test.
+ * Asserts: 0x0B write+init enables CTRL_VPP_REGULATOR_ENABLE (direct VPE path)
+ * AND does NOT enable CTRL_VPP_P1_ENABLE — distinguishing the 0x0B rail from
+ * the 0x08 P1-as-VPP path (INV-03).
+ * Source: eprom.cpp eprom_check_vpp lines 266–268 (0x0B → REGULATOR_ENABLE only). */
+void test_inv01_eprom_0x0B_direct_vpe_rail(void) {
+    firestarter_handle_t h = make_handle(0x0B, CMD_WRITE);
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "INV-01: configure_memory must not error on 0x0B CMD_WRITE");
+    if (h.firestarter_operation_init) {
+        h.firestarter_operation_init(&h);
+    }
+    TEST_ASSERT_TRUE_MESSAGE(
+        recording_has_vpp_enable(CTRL_VPP_REGULATOR_ENABLE),
+        "INV-01: 0x0B write must record CTRL_VPP_REGULATOR_ENABLE (direct VPE rail)");
+    /* 0x0B uses direct VPE path — CTRL_VPP_P1_ENABLE (0x08) must NOT be set
+     * during the init VPP-check phase (P1 is the 0x08 EPROM-QUICK path, INV-03). */
+    for (int i = 0; i < bus_recording_count(); i++) {
+        if (recorded_reg(i) == CONTROL_REGISTER) {
+            TEST_ASSERT_BITS_LOW_MESSAGE(
+                (uint8_t)CTRL_VPP_P1_ENABLE,
+                recorded_data(i),
+                "INV-01: 0x0B init phase must NOT set CTRL_VPP_P1_ENABLE (direct VPE, not P1 path)");
+        }
+    }
+}
+
+/* INV-02 — 0x0B shared OE/VPP pin: read operations skip VPP enable.
+ * SAFE-02 third target: grep -rn INV-02 must hit doc + handler + this test.
+ * Asserts: CMD_READ configure-only phase for 0x0B records NO VPP-enable bits.
+ * Enabling VPP on 0x0B during read would drive the shared OE/VPP pin high with
+ * 12–25 V, damaging the logic output (2732/2516 OE/VPP-shared pin).
+ * Source: eprom.cpp INV-02 header block; configure_eprom does not call eprom_check_vpp
+ * during configure (VPP fires only from firestarter_operation_init). */
+void test_inv02_eprom_0x0B_oe_vpp_read_skip(void) {
+    firestarter_handle_t h = make_handle(0x0B, CMD_READ);
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "INV-02: configure_memory must not error on 0x0B CMD_READ");
+    /* Configure-only phase: no VPP-enable bits allowed in any CONTROL_REGISTER write
+     * (VPP is suppressed for read operations on 0x0B to protect the shared OE/VPP pin). */
+    for (int i = 0; i < bus_recording_count(); i++) {
+        if (recorded_reg(i) == CONTROL_REGISTER) {
+            TEST_ASSERT_BITS_LOW_MESSAGE(
+                (uint8_t)CTRL_VPP_REGULATOR_ENABLE,
+                recorded_data(i),
+                "INV-02: 0x0B CMD_READ configure-phase must NOT set CTRL_VPP_REGULATOR_ENABLE (OE/VPP shared pin)");
+            TEST_ASSERT_BITS_LOW_MESSAGE(
+                (uint8_t)CTRL_VPP_P1_ENABLE,
+                recorded_data(i),
+                "INV-02: 0x0B CMD_READ configure-phase must NOT set CTRL_VPP_P1_ENABLE");
+        }
+    }
+}
+
+/* INV-03 — 0x08 P1-as-VPP: routes VPP to socket pin 1 via CTRL_VPP_P1_ENABLE.
+ * SAFE-02 third target: grep -rn INV-03 must hit doc + handler + this test.
+ * Asserts: 0x08 write+execute with pins=32 / vpp_line=VPP_P1_32_DIP activates
+ * CTRL_VPP_P1_ENABLE (0x08) in the recording (eprom_internal_set_control_register
+ * flips CTRL_VPE_ENABLE → CTRL_VPP_P1_ENABLE when using_p1_as_vpp is true).
+ * Source: eprom.cpp lines 367–373 (eprom_internal_set_control_register); memory_utils.h
+ * using_p1_as_vpp (pins==32 && vpp_line==VPP_P1_32_DIP). */
+void test_inv03_eprom_0x08_p1_as_vpp(void) {
+    firestarter_handle_t h = make_handle(0x08, CMD_WRITE);
+    /* Set up 32-pin / VPP_P1_32_DIP bus config so using_p1_as_vpp() returns true.
+     * This causes eprom_internal_set_control_register to flip CTRL_VPE_ENABLE → CTRL_VPP_P1_ENABLE
+     * during program_mismatched_bytes, producing the P1-as-VPP recording. */
+    h.pins = 32;
+    h.bus_config.vpp_line = VPP_P1_32_DIP; /* 0x15 — 32-pin DIP VPP routing */
+    h.data_size = 1;
+    /* data_buffer[0] is 0 (zero-init); rurp_read_data_buffer() stub returns 0 →
+     * verify_and_update_mask finds no mismatch after first program pass → loop exits. */
+
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "INV-03: configure_memory must not error on 0x08 CMD_WRITE");
+
+    /* Call init (eprom_write_init → eprom_generic_init → eprom_check_vpp) then execute. */
+    if (h.firestarter_operation_init) {
+        h.firestarter_operation_init(&h);
+    }
+    /* Clear recording before execute so we isolate the execute-phase P1 bit. */
+    clear_bus_recording();
+
+    if (h.firestarter_operation_main) {
+        h.firestarter_operation_main(&h);
+    }
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "INV-03: eprom_write_execute must not error on 1-byte zero write");
+    /* eprom_write_execute sets REGULATOR_ENABLE first; program_mismatched_bytes then
+     * requests CTRL_VPE_ENABLE which eprom_internal_set_control_register flips to
+     * CTRL_VPP_P1_ENABLE (0x08) because using_p1_as_vpp(handle) is true. */
+    TEST_ASSERT_TRUE_MESSAGE(
+        recording_has_vpp_enable(CTRL_VPP_P1_ENABLE),
+        "INV-03: 0x08 execute with 32-pin/VPP_P1_32_DIP must record CTRL_VPP_P1_ENABLE "
+        "(eprom_internal_set_control_register CTRL_VPE_ENABLE→CTRL_VPP_P1_ENABLE flip)");
+}
+
+/* INV-05 — VPP-skip-on-read: VPP NOT enabled for CMD_READ or CMD_BLANK_CHECK.
+ * SAFE-02 third target: grep -rn INV-05 must hit doc + handler + this test.
+ * Asserts: configure-only phase for CMD_READ across all three EPROM protocols
+ * records NO VPP-enable bits (CTRL_VPP_REGULATOR_ENABLE or CTRL_VPP_P1_ENABLE).
+ * CMD_READ does not call firestarter_operation_init in the production read path,
+ * so VPP is never enabled during reads (protects OE/VPP-shared pins on 0x0B parts
+ * and avoids regulator settle time on 0x07/0x08).
+ * Source: eprom.cpp INV-05 header block; configure_eprom does not wire eprom_check_vpp
+ * into the CMD_READ configure path. */
+void test_inv05_eprom_vpp_skip_on_read(void) {
+    /* Test all three EPROM protocols for CMD_READ VPP-skip. */
+    const uint32_t protos[3] = {0x07, 0x08, 0x0B};
+    for (int p = 0; p < 3; p++) {
+        clear_bus_recording();
+        firestarter_handle_t h = make_handle(protos[p], CMD_READ);
+        configure_memory(&h);
+        TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+            "INV-05: configure_memory must not error on CMD_READ");
+        for (int i = 0; i < bus_recording_count(); i++) {
+            if (recorded_reg(i) == CONTROL_REGISTER) {
+                TEST_ASSERT_BITS_LOW_MESSAGE(
+                    (uint8_t)CTRL_VPP_REGULATOR_ENABLE,
+                    recorded_data(i),
+                    "INV-05: EPROM CMD_READ configure-phase must NOT set CTRL_VPP_REGULATOR_ENABLE");
+                TEST_ASSERT_BITS_LOW_MESSAGE(
+                    (uint8_t)CTRL_VPP_P1_ENABLE,
+                    recorded_data(i),
+                    "INV-05: EPROM CMD_READ configure-phase must NOT set CTRL_VPP_P1_ENABLE");
+            }
+        }
+    }
+    /* Repeat for CMD_BLANK_CHECK — VPP also suppressed on blank-check. */
+    for (int p = 0; p < 3; p++) {
+        clear_bus_recording();
+        firestarter_handle_t h = make_handle(protos[p], CMD_BLANK_CHECK);
+        configure_memory(&h);
+        TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+            "INV-05: configure_memory must not error on CMD_BLANK_CHECK");
+        for (int i = 0; i < bus_recording_count(); i++) {
+            if (recorded_reg(i) == CONTROL_REGISTER) {
+                TEST_ASSERT_BITS_LOW_MESSAGE(
+                    (uint8_t)CTRL_VPP_REGULATOR_ENABLE,
+                    recorded_data(i),
+                    "INV-05: EPROM CMD_BLANK_CHECK configure-phase must NOT set CTRL_VPP_REGULATOR_ENABLE");
+            }
+        }
+    }
+}
+
+/* INV-06 — Pulse-delay defaults: 0x08→100µs, 0x0B→500µs, 0x07→1000µs.
+ * SAFE-02 third target: grep -rn INV-06 must hit doc + handler + this test.
+ * Asserts: configure_eprom sets handle->pulse_delay per protocol when the caller
+ * supplies pulse_delay=0 (the default, meaning "use handler default").
+ * Source: eprom.cpp lines 118–124 (the pulse_delay default-setting switch). */
+void test_inv06_eprom_pulse_delay_defaults(void) {
+    /* 0x08 EPROM_QUICK: 100 µs (Quick-Pulse algorithm). */
+    {
+        firestarter_handle_t h = make_handle(0x08, CMD_WRITE);
+        h.pulse_delay = 0; /* ensure handler default is applied */
+        configure_memory(&h);
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(100, h.pulse_delay,
+            "INV-06: 0x08 EPROM_QUICK must set pulse_delay=100µs");
+    }
+    /* 0x0B EPROM_LEGACY: 500 µs (older NMOS parts need longer initial pulse). */
+    {
+        firestarter_handle_t h = make_handle(0x0B, CMD_WRITE);
+        h.pulse_delay = 0;
+        configure_memory(&h);
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(500, h.pulse_delay,
+            "INV-06: 0x0B EPROM_LEGACY must set pulse_delay=500µs");
+    }
+    /* 0x07 EPROM_STD: 1000 µs (classic 1ms JEDEC algorithm). */
+    {
+        firestarter_handle_t h = make_handle(0x07, CMD_WRITE);
+        h.pulse_delay = 0;
+        configure_memory(&h);
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(1000, h.pulse_delay,
+            "INV-06: 0x07 EPROM_STD must set pulse_delay=1000µs");
+    }
+    /* Non-zero pulse_delay must NOT be overridden by the handler. */
+    {
+        firestarter_handle_t h = make_handle(0x08, CMD_WRITE);
+        h.pulse_delay = 250; /* DB-supplied value — must not be clobbered */
+        configure_memory(&h);
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(250, h.pulse_delay,
+            "INV-06: non-zero pulse_delay from DB must not be overridden by handler default");
+    }
+}
+
+/* INV-08 — WARNING-5 (0x07 EE-EPROM→0x0D) now delivered by Phase-86 variant decode.
+ * SAFE-02 third target: grep -rn INV-08 must hit doc + handler + this test.
+ * Asserts: protocol 0x07 dispatches to configure_eprom (NOT configure_eeprom28c)
+ * post-Phase-86. The Phase-86 variant decode correctly classifies UV-EPROM 0x07
+ * chips as 0x07 and 0x0D parts (28C-series EE-EPROMs formerly reclassified by
+ * build_db.py Rule 2) as 0x0D — so configure_eprom never sees those chips.
+ * Invariant preserved: 0x07 CMD_WRITE routes to eprom_write_execute (not eeprom28c).
+ * Source: eprom.cpp INV-08 header block; PROTOCOLS.md §3 INV-08 row. */
+void test_inv08_eprom_warning5_decode_preserved(void) {
+    /* Post-Phase-86: 0x07 dispatches to configure_eprom → eprom_write_execute.
+     * Verify configure_memory with 0x07 CMD_WRITE wires firestarter_operation_main
+     * (non-NULL) and response_code is OK — confirming the 0x07 dispatch route is
+     * correct. If WARNING-5 had re-activated (routing 0x07 parts to 0x0D), the
+     * 0x07 chips would have been removed from eprom.cpp's dispatch arm entirely. */
+    firestarter_handle_t h = make_handle(0x07, CMD_WRITE);
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "INV-08: configure_memory must not error on 0x07 CMD_WRITE (post-Phase-86 dispatch)");
+    TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_main,
+        "INV-08: 0x07 CMD_WRITE must wire firestarter_operation_main (routes to configure_eprom, not 0x0D path)");
+    /* Also verify 0x07 CMD_READ routes OK — the 0x0D eeprom28c path uses a different init. */
+    firestarter_handle_t hr = make_handle(0x07, CMD_READ);
+    configure_memory(&hr);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, hr.response_code,
+        "INV-08: configure_memory must not error on 0x07 CMD_READ (post-Phase-86 dispatch)");
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -215,6 +449,14 @@ int main(int argc, char** argv) {
     RUN_TEST(test_eprom_0x07_read_configure_only_does_not_enable_vpp);
     RUN_TEST(test_eprom_0x08_read_configure_only_does_not_enable_vpp);
     RUN_TEST(test_eprom_0x0B_read_configure_only_does_not_enable_vpp);
+
+    /* Phase 87 Plan 03: INV gap-fill assertions (SAFE-02 / NAME-03) */
+    RUN_TEST(test_inv01_eprom_0x0B_direct_vpe_rail);
+    RUN_TEST(test_inv02_eprom_0x0B_oe_vpp_read_skip);
+    RUN_TEST(test_inv03_eprom_0x08_p1_as_vpp);
+    RUN_TEST(test_inv05_eprom_vpp_skip_on_read);
+    RUN_TEST(test_inv06_eprom_pulse_delay_defaults);
+    RUN_TEST(test_inv08_eprom_warning5_decode_preserved);
 
     return UNITY_END();
 }

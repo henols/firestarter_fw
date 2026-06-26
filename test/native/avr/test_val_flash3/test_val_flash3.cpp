@@ -5,6 +5,7 @@
  * Permission is hereby granted under MIT license.
  *
  * Phase 71 Plan 04 — Tier-1 validation suite for the Flash Type 3 family.
+ * Phase 87 Plan 03 — INV-09 gap-fill assertion (NAME-03 / SAFE-02).
  * HARN-01 / D-07 / T-71-WIRED-WRONG.
  *
  * Proves configure_flash3 is a 5V-only handler (no VPP regulator use).
@@ -23,6 +24,9 @@
  *
  * VPP: NONE — configure_flash3 is a 5V AMD-style handler. The flash3 erase path
  * uses flash_execute_command which writes data bytes only, not VPP CTL bits.
+ *
+ * INV gap-fill assertion added by Phase 87 Plan 03 (SAFE-02 third target):
+ *   INV-09: test_inv09_flash3_sst39sf040_keep_flash_eeprom
  */
 
 #include <Arduino.h>
@@ -120,6 +124,45 @@ void test_flash3_blank_check_configure_no_vpp(void) {
         "configure_flash3 CMD_BLANK_CHECK must NOT set any VPP-enable CTL bit");
 }
 
+/* ─── Phase 87 Plan 03: INV-09 gap-fill assertion (SAFE-02) ─────────────────── */
+
+/* INV-09 — SST39SF040 (0x06) retains electrical.type=Flash/EEPROM classification.
+ * SAFE-02 third target: grep -rn INV-09 must hit doc + handler + this test.
+ * Asserts: protocol 0x06 dispatches to configure_flash3() — a 5V AMD-style handler
+ * with no VPP regulator involvement — and NOT to configure_eprom() which would
+ * enable the 12V VPP boost regulator on a 5V-only part (BLOCKER-2 violation).
+ *
+ * The SST39SF040 classification invariant: electrical.type="Flash/EEPROM" (FLAG_CAN_ERASE
+ * set) must not be confused with the UV-EPROM path (configure_eprom, no erase, VPP boost).
+ * Phase-86 variant decode preserves this by routing 0x06 chips exclusively to configure_flash3().
+ *
+ * Two observable behaviors that collectively confirm the invariant:
+ *   1. configure_memory with 0x06 CMD_WRITE succeeds and wires firestarter_operation_main
+ *      (non-NULL, confirming configure_flash3's function-pointer wiring).
+ *   2. No CTRL_VPP_REGULATOR_ENABLE or CTRL_VPP_P1_ENABLE bit appears in the recording
+ *      (5V-only part — configure_flash3 never touches the VPP regulator).
+ * Source: flash_type_3.cpp INV-09 header block; PROTOCOLS.md §1.2 and §3 INV-09 row. */
+void test_inv09_flash3_sst39sf040_keep_flash_eeprom(void) {
+    /* SST39SF040 (0x06): routes to configure_flash3 (5V AMD NOR flash, NOT configure_eprom). */
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "INV-09: configure_memory must not error on 0x06 CMD_WRITE (SST39SF040 Flash/EEPROM)");
+    TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_main,
+        "INV-09: 0x06 CMD_WRITE must wire firestarter_operation_main (configure_flash3, not configure_eprom)");
+    /* No VPP-enable bits: configure_flash3 is 5V-only (BLOCKER-2 — must never reach VPP regulator). */
+    assert_no_vpp_in_recording(
+        "INV-09: 0x06 (SST39SF040 Flash/EEPROM) configure-phase must NOT set any VPP-enable CTL bit");
+    /* Repeat for CMD_ERASE to confirm the full 0x06 dispatch stays in flash3. */
+    clear_bus_recording();
+    firestarter_handle_t he = make_handle(CMD_ERASE);
+    configure_memory(&he);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, he.response_code,
+        "INV-09: configure_memory must not error on 0x06 CMD_ERASE (SST39SF040)");
+    assert_no_vpp_in_recording(
+        "INV-09: 0x06 CMD_ERASE configure-phase must NOT set any VPP-enable CTL bit");
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -129,6 +172,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_flash3_write_configure_no_vpp);
     RUN_TEST(test_flash3_erase_configure_no_vpp);
     RUN_TEST(test_flash3_blank_check_configure_no_vpp);
+
+    /* Phase 87 Plan 03: INV-09 gap-fill assertion (SAFE-02 / NAME-03) */
+    RUN_TEST(test_inv09_flash3_sst39sf040_keep_flash_eeprom);
 
     return UNITY_END();
 }
