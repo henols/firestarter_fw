@@ -109,5 +109,5 @@ uint16_t flash_util_get_chip_id(firestarter_handle_t* handle) {
 }
 
 void flash_util_check_chip_id_execute(firestarter_handle_t* handle) {
-    chip_id_report(handle, flash_util_get_chip_id(handle));
+    chip_id_report(handle, flash_util_get_chip_id(handle), is_flag_set(FLAG_FORCE));
 }

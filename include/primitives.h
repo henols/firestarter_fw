@@ -13,7 +13,8 @@
 extern "C" {
 #endif
 
-    /* chip_id_report — shared chip-ID compare + MSG frame + FORCE downgrade (P4/PRIM-03).
+    /* chip_id_report — shared chip-ID compare + MSG frame + caller-keyed severity
+     *                   (P4/PRIM-03).
      *
      * Callers: eprom.cpp (protocol 0x07/0x08/0x0B), eeprom_28c.cpp (0x0D),
      *          flash_intel.cpp (0x10), flash_utils.cpp (0x05/0x06 via flash4/flash3).
@@ -24,15 +25,27 @@ extern "C" {
      * passes the result here. No regulator control lives in this primitive (D-06 —
      * chip keying is on handle->protocol in the caller; D-06 boundary is preserved).
      *
+     * Parameters:
+     *   handle        — firestarter handle (provides chip_id, response_code).
+     *   read_id       — chip ID read from hardware.
+     *   force_warning — when true, a mismatch is downgraded to WARNING; when false,
+     *                   a mismatch is always ERROR. The caller owns this decision
+     *                   (CR-01: FLAG_FORCE must NOT be read inside this primitive).
+     *
      * Behavior:
      *   - On match (read_id == handle->chip_id): no log frame, response_code unchanged.
-     *   - On mismatch with FLAG_FORCE set: LOG_WARN_ID_BYTES(MSG_WARN_CHIP_ID_MISMATCH)
+     *   - On mismatch with force_warning=true:  LOG_WARN_ID_BYTES(MSG_WARN_CHIP_ID_MISMATCH)
      *     + RESPONSE_CODE_WARNING.
-     *   - On mismatch without FLAG_FORCE: LOG_ERROR_ID_BYTES(MSG_ERR_CHIP_ID_MISMATCH)
-     *     + RESPONSE_CODE_ERROR.
+     *   - On mismatch with force_warning=false: LOG_ERROR_ID_BYTES(MSG_ERR_CHIP_ID_MISMATCH)
+     *     + RESPONSE_CODE_ERROR (unconditional, regardless of FLAG_FORCE in caller).
      *   - _b[4] byte order: read_id hi, read_id lo, expected hi, expected lo (MSB-first).
+     *
+     * CR-01 rationale: eprom_check_chip_id_execute (the CHECK_CHIP_ID command, reached
+     * via `firestarter id --force`) must always report ERROR on mismatch — even with
+     * FLAG_FORCE set. Callers that want FORCE→WARNING (flash, generic-init path) pass
+     * is_flag_set(FLAG_FORCE); the eprom CHECK_CHIP_ID caller passes false explicitly.
      */
-    void chip_id_report(firestarter_handle_t* handle, uint16_t read_id);
+    void chip_id_report(firestarter_handle_t* handle, uint16_t read_id, bool force_warning);
 
     /* poll_readback — bounded single-address poll kernel (P5/PRIM-05).
      *

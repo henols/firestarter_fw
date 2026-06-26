@@ -309,8 +309,12 @@ void eprom_generic_init(firestarter_handle_t* handle) {
 
 void eprom_internal_check_chip_id(firestarter_handle_t* handle, uint8_t error_code) {
     LOG_DEBUG_ID_SUB(DBG_CHECK_CHIP_ID);
-    (void)error_code;  /* parameter retained for API compatibility; chip_id_report keys on FLAG_FORCE */
-    chip_id_report(handle, eprom_get_chip_id(handle));
+    /* CR-01: pass error_code semantics directly to chip_id_report.
+     * force_warning=true  when error_code==RESPONSE_CODE_WARNING (generic-init path,
+     *                     caller supplies FORCE?WARNING:ERROR).
+     * force_warning=false when error_code==RESPONSE_CODE_ERROR  (CHECK_CHIP_ID path,
+     *                     eprom_check_chip_id_execute — ERROR unconditional, even with --force). */
+    chip_id_report(handle, eprom_get_chip_id(handle), error_code == RESPONSE_CODE_WARNING);
 }
 // Use this function to set the control register and flip CTRL_VPE_ENABLE bit to CTRL_VPE_ENABLE or CTRL_VPP_P1_ENABLE
 void eprom_internal_set_control_register(firestarter_handle_t* handle, rurp_register_t bit, bool state) {

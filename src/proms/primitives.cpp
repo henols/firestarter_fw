@@ -11,9 +11,14 @@
  *
  * chip_id_report (P4/PRIM-03):
  *   - eprom.cpp        (protocols 0x07/0x08/0x0B — A9-12V read, EPROM/EEPROM family)
+ *     CHECK_CHIP_ID path: force_warning=false (ERROR unconditional, CR-01)
+ *     generic-init path: force_warning=is_flag_set(FLAG_FORCE)
  *   - eeprom_28c.cpp   (protocol 0x0D — A9-12V read with mfr_addr = mem_size-64)
+ *     force_warning=is_flag_set(FLAG_FORCE)
  *   - flash_intel.cpp  (protocol 0x10 — command-register 0x90 autoselect read)
+ *     force_warning=is_flag_set(FLAG_FORCE)
  *   - flash_utils.cpp  (protocols 0x05/0x06 — AMD/JEDEC FLASH_ENABLE_ID sequence)
+ *     force_warning=is_flag_set(FLAG_FORCE)
  *
  * poll_readback (P5/PRIM-05):
  *   - eeprom_28c.cpp   (protocol 0x0D — eeprom28c_wait_for_write, cap=2000)
@@ -42,14 +47,17 @@
 
 #include <Arduino.h>
 
-void chip_id_report(firestarter_handle_t* handle, uint16_t read_id) {
+void chip_id_report(firestarter_handle_t* handle, uint16_t read_id, bool force_warning) {
     if (read_id != handle->chip_id) {
         uint8_t _b[4];
         _b[0] = (uint8_t)((read_id >> 8) & 0xFF);
         _b[1] = (uint8_t)(read_id & 0xFF);
         _b[2] = (uint8_t)((handle->chip_id >> 8) & 0xFF);
         _b[3] = (uint8_t)(handle->chip_id & 0xFF);
-        if (is_flag_set(FLAG_FORCE)) {
+        /* CR-01: force_warning is supplied by the caller — FLAG_FORCE is NOT
+         * read here. eprom_check_chip_id_execute passes false (unconditional ERROR
+         * even with --force); all other callers pass is_flag_set(FLAG_FORCE). */
+        if (force_warning) {
             LOG_WARN_ID_BYTES(MSG_WARN_CHIP_ID_MISMATCH, _b, 4);
             handle->response_code = RESPONSE_CODE_WARNING;
         } else {

@@ -600,6 +600,108 @@ void test_golden_eprom_chip_id(void) {
 #endif
 }
 
+/* ─── Phase 89 CR-01 / WR-02: chip-id mismatch-fork regression guard ─────── */
+
+/* Scripted-byte mock for mismatch tests — returns a fixed byte sequence. */
+static uint8_t s_mismatch_mock_bytes[4];
+static int     s_mismatch_mock_idx;
+
+static uint8_t mock_mismatch_get_data(struct firestarter_handle* /*h*/, uint32_t /*addr*/) {
+    if (s_mismatch_mock_idx < (int)sizeof(s_mismatch_mock_bytes))
+        return s_mismatch_mock_bytes[s_mismatch_mock_idx++];
+    return 0xFF;
+}
+
+/* WR-02a — Direct unit test of chip_id_report(force_warning=false):
+ * mismatch ALWAYS yields ERROR regardless of FLAG_FORCE being set.
+ *
+ * CR-01 regression guard: this is the minimal direct test that would have
+ * caught the Phase-89-02 regression (where FLAG_FORCE was read inside
+ * chip_id_report instead of being passed by the caller). */
+void test_wr02a_chip_id_report_false_keying_always_errors(void) {
+    /* Script get_data to return 0xDE, 0xAD → read_id=0xDEAD; handle.chip_id=0x1F00 → mismatch. */
+    s_mismatch_mock_idx = 0;
+    s_mismatch_mock_bytes[0] = 0xDE;
+    s_mismatch_mock_bytes[1] = 0xAD;
+    memset(s_mismatch_mock_bytes + 2, 0xFF, 2);
+
+    /* Case 1: FLAG_FORCE NOT set — expect ERROR (baseline). */
+    {
+        firestarter_handle_t h = make_handle(0x07, CMD_CHECK_CHIP_ID);
+        h.chip_id = 0x1F00;
+        /* ctrl_flags = FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE, no FLAG_FORCE */
+        configure_memory(&h);
+        h.firestarter_get_data = mock_mismatch_get_data;
+        s_mismatch_mock_idx = 0;
+        if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+        if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+            "WR-02a: CHECK_CHIP_ID mismatch without FLAG_FORCE must yield ERROR");
+    }
+    /* Case 2: FLAG_FORCE IS set — eprom_check_chip_id_execute must STILL yield ERROR (CR-01). */
+    {
+        firestarter_handle_t h = make_handle(0x07, CMD_CHECK_CHIP_ID);
+        h.chip_id = 0x1F00;
+        h.ctrl_flags |= FLAG_FORCE;  /* set FLAG_FORCE — must NOT downgrade to WARNING */
+        configure_memory(&h);
+        h.firestarter_get_data = mock_mismatch_get_data;
+        s_mismatch_mock_idx = 0;
+        if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+        if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+            "WR-02a CR-01: CHECK_CHIP_ID mismatch WITH FLAG_FORCE must STILL yield ERROR "
+            "(eprom_check_chip_id_execute always passes force_warning=false)");
+    }
+}
+
+/* WR-02b — chip_id_report(force_warning=true) yields WARNING on mismatch.
+ *
+ * Exercises the generic-init path (eprom_generic_init → eprom_internal_check_chip_id
+ * with error_code=RESPONSE_CODE_WARNING when FLAG_FORCE is set).  This is the
+ * FORCE→WARNING path that must remain intact for normal write operations. */
+void test_wr02b_chip_id_report_true_keying_yields_warning(void) {
+    /* Script get_data to return 0xDE, 0xAD → mismatch against chip_id=0x1F00. */
+    s_mismatch_mock_idx = 0;
+    s_mismatch_mock_bytes[0] = 0xDE;
+    s_mismatch_mock_bytes[1] = 0xAD;
+    memset(s_mismatch_mock_bytes + 2, 0xFF, 2);
+
+    /* CMD_WRITE + FLAG_FORCE: eprom_generic_init passes RESPONSE_CODE_WARNING to
+     * eprom_internal_check_chip_id → chip_id_report(force_warning=true) → WARNING. */
+    firestarter_handle_t h = make_handle(0x07, CMD_WRITE);
+    h.chip_id = 0x1F00;
+    h.ctrl_flags |= FLAG_FORCE;
+    configure_memory(&h);
+    h.firestarter_get_data = mock_mismatch_get_data;
+    s_mismatch_mock_idx = 0;
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(RESPONSE_CODE_WARNING, h.response_code,
+        "WR-02b: generic-init mismatch WITH FLAG_FORCE must yield WARNING "
+        "(eprom_generic_init passes RESPONSE_CODE_WARNING → force_warning=true)");
+}
+
+/* WR-02c — generic-init path WITHOUT FLAG_FORCE yields ERROR on mismatch.
+ *
+ * Symmetry test: eprom_generic_init with FLAG_FORCE CLEAR passes
+ * RESPONSE_CODE_ERROR → chip_id_report(force_warning=false) → ERROR.
+ * This confirms the generic-init caller-keying is also correct. */
+void test_wr02c_generic_init_mismatch_without_force_yields_error(void) {
+    s_mismatch_mock_idx = 0;
+    s_mismatch_mock_bytes[0] = 0xDE;
+    s_mismatch_mock_bytes[1] = 0xAD;
+    memset(s_mismatch_mock_bytes + 2, 0xFF, 2);
+
+    firestarter_handle_t h = make_handle(0x07, CMD_WRITE);
+    h.chip_id = 0x1F00;
+    /* ctrl_flags: FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE, no FLAG_FORCE */
+    configure_memory(&h);
+    h.firestarter_get_data = mock_mismatch_get_data;
+    s_mismatch_mock_idx = 0;
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "WR-02c: generic-init mismatch WITHOUT FLAG_FORCE must yield ERROR");
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -627,6 +729,11 @@ int main(int argc, char** argv) {
     RUN_TEST(test_golden_eprom_0x08_write);
     RUN_TEST(test_golden_eprom_0x0B_write);
     RUN_TEST(test_golden_eprom_chip_id);
+
+    /* Phase 89 CR-01 / WR-02: chip-id mismatch-fork regression guard */
+    RUN_TEST(test_wr02a_chip_id_report_false_keying_always_errors);
+    RUN_TEST(test_wr02b_chip_id_report_true_keying_yields_warning);
+    RUN_TEST(test_wr02c_generic_init_mismatch_without_force_yields_error);
 
     return UNITY_END();
 }

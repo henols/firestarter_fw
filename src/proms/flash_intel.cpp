@@ -173,5 +173,5 @@ void flash_intel_check_chip_id(firestarter_handle_t* handle) {
     uint16_t chip_id = handle->firestarter_get_data(handle, 0x0000) << 8;
     chip_id |= handle->firestarter_get_data(handle, 0x0001);
     handle->firestarter_set_data(handle, 0, 0xFF);  // exit autoselect
-    chip_id_report(handle, chip_id);
+    chip_id_report(handle, chip_id, is_flag_set(FLAG_FORCE));
 }

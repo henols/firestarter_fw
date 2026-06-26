@@ -88,7 +88,7 @@ static void eeprom28c_check_chip_id(firestarter_handle_t* handle) {
     uint16_t chip_id = handle->firestarter_get_data(handle, mfr_addr) << 8;
     chip_id |= handle->firestarter_get_data(handle, mfr_addr + 1);
     handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_A9_ENABLE, 0);
-    chip_id_report(handle, chip_id);
+    chip_id_report(handle, chip_id, is_flag_set(FLAG_FORCE));
 }
 
 void eeprom28c_write_init(firestarter_handle_t* handle) {
