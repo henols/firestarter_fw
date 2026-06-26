@@ -36,7 +36,7 @@
  *   waste regulator settle time on 0x07/0x08.
  *   Citation: datasheets/0x07-EPROM-STD/W27C512.pdf p.5 §Pin Description (Vpp = PGM V during prog only).
  *
- * INV-06 — pulse-delay defaults per protocol (configure_eprom() lines 70–76):
+ * INV-06 — pulse-delay defaults per protocol (configure_eprom() pulse_delay switch, lines 118–124):
  *   pulse_delay controls the CE-asserted duration for the Intelligent Programming pulse.
  *   0x08 (EPROM_QUICK) → 100 µs (Quick-Pulse algorithm, faster per-byte cycle).
  *   0x0B (EPROM_LEGACY) → 500 µs (older NMOS parts require longer initial pulse).
@@ -45,11 +45,16 @@
  *   Citation: datasheets/0x08-EPROM-QUICK/AM27C020.pdf p.10 §Quick-Pulse Programming (100µs);
  *             datasheets/0x07-EPROM-STD/ST-M27C512.pdf p.8 §PRESTO IIB (100µs ST variant).
  *
- * INV-08 — WARNING-5 (0x07 EE-EPROM chips reclassified to 0x0D) delivered by Phase-86 decode:
+ * INV-08 — WARNING-5 (0x07 EE-EPROM chips reclassified to 0x0D) delivered by Phase-86 decode
+ *   [DISPATCH-ONLY scope — see caveat below]:
  *   Before Phase 86, build_db.py Rule 2 overrode certain 0x07-classified 28C-series parts
  *   (AT28C010 etc.) to 0x0D at DB-generation time (WARNING-5). Phase 86 removed Rule 2;
  *   the correct 0x0D classification now flows from the infoic.xml classify() decode.
  *   This handler no longer sees those chips; the invariant is preserved at the DB layer.
+ *   SCOPE: WARNING-5 is HOST-SIDE Python (build_db.py), gated by diff_db.py — it is NOT
+ *   firmware-reachable and the native INV-08 test cannot detect its re-activation. The
+ *   firmware test pins ONLY the downstream consequence: that 0x07 still dispatches here
+ *   (to configure_eprom, not configure_eeprom28c).
  *   Full prose: firestarter/doc/PROTOCOLS.md §3 INV-08 row.
  */
 

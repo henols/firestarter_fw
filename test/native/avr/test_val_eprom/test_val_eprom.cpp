@@ -409,20 +409,25 @@ void test_inv06_eprom_pulse_delay_defaults(void) {
     }
 }
 
-/* INV-08 — WARNING-5 (0x07 EE-EPROM→0x0D) now delivered by Phase-86 variant decode.
+/* INV-08 — 0x07 dispatch arm preserved (DISPATCH-ONLY scope).
  * SAFE-02 third target: grep -rn INV-08 must hit doc + handler + this test.
- * Asserts: protocol 0x07 dispatches to configure_eprom (NOT configure_eeprom28c)
- * post-Phase-86. The Phase-86 variant decode correctly classifies UV-EPROM 0x07
- * chips as 0x07 and 0x0D parts (28C-series EE-EPROMs formerly reclassified by
- * build_db.py Rule 2) as 0x0D — so configure_eprom never sees those chips.
- * Invariant preserved: 0x07 CMD_WRITE routes to eprom_write_execute (not eeprom28c).
+ * SCOPE CAVEAT: WARNING-5 (the build_db.py Rule-2 reclassification of 28C-series
+ * EE-EPROMs from 0x07 to 0x0D) is HOST-SIDE Python logic — it is NOT reachable
+ * from firmware and CANNOT be regression-tested here. This firmware test pins
+ * ONLY the downstream firmware consequence: that protocol 0x07 still dispatches
+ * to configure_eprom (NOT configure_eeprom28c). It is, in effect, the same
+ * dispatch assertion as the 0x07 path test — see PROTOCOLS.md §3 INV-08 row,
+ * which is scoped to "dispatch-only" for the same reason. The host-side
+ * WARNING-5 retirement itself is owned by Phase 86's build_db.py / diff_db gates.
+ * Asserts: protocol 0x07 dispatches to configure_eprom (NOT configure_eeprom28c).
  * Source: eprom.cpp INV-08 header block; PROTOCOLS.md §3 INV-08 row. */
 void test_inv08_eprom_warning5_decode_preserved(void) {
     /* Post-Phase-86: 0x07 dispatches to configure_eprom → eprom_write_execute.
      * Verify configure_memory with 0x07 CMD_WRITE wires firestarter_operation_main
      * (non-NULL) and response_code is OK — confirming the 0x07 dispatch route is
-     * correct. If WARNING-5 had re-activated (routing 0x07 parts to 0x0D), the
-     * 0x07 chips would have been removed from eprom.cpp's dispatch arm entirely. */
+     * correct. NOTE (dispatch-only scope): this checks the firmware 0x07 arm only;
+     * it does NOT and cannot detect a host-side WARNING-5 re-activation (that lives
+     * in build_db.py and is gated by diff_db.py, not by firmware tests). */
     firestarter_handle_t h = make_handle(0x07, CMD_WRITE);
     configure_memory(&h);
     TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
