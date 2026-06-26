@@ -5,6 +5,27 @@
  * Permission is hereby granted under MIT license.
  */
 
+/* Handler: configure_eeprom28c() — protocol 0x0D (EEPROM-POLL): 5V parallel EEPROM, SDP + DQ7 page poll
+ *
+ * Write algorithm: page write (64B page) with SDP (Software Data Protection) permanently disabled
+ * before programming via a 6-cycle unlock sequence, then bytes within tBLC (150 µs inter-byte
+ * window). After the last byte the chip's internal write cycle fires (~5–10 ms). DQ7 data
+ * polling confirms completion: read the last-written address; when bit 7 matches the written
+ * value, the cycle is done. DQ6 toggle is an alternative: alternates on each read during write.
+ *   Citation: datasheets/0x0D-EEPROM-POLL/AT28C256.pdf p.6 §Software Data Protection;
+ *             p.7 §Page Write; p.8 §Data Polling (DQ7).
+ *
+ * SDP-disable rationale: permanently disabling SDP before every write avoids having to
+ * implement SDP-enable/disable state tracking in the firmware. The trade-off (SDP protection
+ * lost for the session) is acceptable given the programming-only use case.
+ *
+ * VPP: None required (5V internal charge pump). The RURP VPP regulator is NOT enabled for
+ * this bucket — 0x0D chips are 5V-only parallel EEPROMs.
+ *   Citation: datasheets/0x0D-EEPROM-POLL/AT28C256.pdf p.4 §DC Characteristics (Vcc=5V).
+ *
+ * Full prose: firestarter/doc/PROTOCOLS.md §1.6 (EEPROM-POLL).
+ */
+
 #include "eeprom_28c.h"
 
 #include <Arduino.h>

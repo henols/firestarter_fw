@@ -16,14 +16,24 @@
 #include "operation_utils.h"
 #include "rurp_pinout.h"
 
-/* Data-driven page size derived from chip capacity (handle->mem_size).
- * W29C040 (512K = 524288) → 256; SST29EE010 (128K = 131072) → 128;
- * AT29C256 (32K = 32768) → 64. Flash4 DB chips span 32KB–512KB.
- * A fixed 256 would over-run smaller chips' 64-byte page buffers;
- * the old fixed 64 polled mid-page on W29C040 (original bug).
- * Data-driven sizing fixes W29C040 without changing effective behavior
- * for smaller chips whose native page is ≤ their derived size.
- * (Worked examples: ≤65536→64, ≤262144→128, else→256.) */
+/* Handler: configure_flash4() — protocol 0x05 (FLASH-AMD-STD): 5V page-write flash (EEPROM-like)
+ * Phantom dispatch arms 0x35 (FLASH_EEPROM) and 0x39 (FLASH_EEPROM2) are routed here by
+ * memory.cpp for forward-compat but have zero DB chips; the host excludes them from
+ * KNOWN_PROTOCOLS and routes them to not_implemented before a serial byte is sent.
+ *
+ * INV-04 — flash4 256B page boundary (data-driven from handle->mem_size):
+ *   FLASH-AMD-STD chips write in fixed-size pages; all bytes in a page must be written
+ *   within tBLC (150 µs inter-byte window). The page size varies by capacity:
+ *   W29C040 (512K = 524288) → 256B; SST29EE010 (128K = 131072) → 128B;
+ *   AT29C256 (32K = 32768) → 64B. Flash4 DB chips span 32KB–512KB.
+ *   A fixed 256 would over-run smaller chips' 64-byte page buffers;
+ *   the old fixed 64 polled mid-page on W29C040 (original bug).
+ *   Data-driven sizing (flash4_page_size()) fixes W29C040 without changing effective
+ *   behavior for smaller chips whose native page is ≤ their derived size.
+ *   (Worked examples: ≤65536→64, ≤262144→128, else→256.)
+ *   Citation: datasheets/0x05-FLASH-AMD-STD/W29C040.pdf p.11 §Page Write Operation (256B page);
+ *             datasheets/0x05-FLASH-AMD-STD/W29C020.pdf p.9 §Write Operation (tBLC timing).
+ *   Full prose: firestarter/doc/PROTOCOLS.md §1.1 (FLASH-AMD-STD) and §3 INV-04 row. */
 static uint32_t flash4_page_size(uint32_t mem_size) {
     if (mem_size <= 65536)  return 64;
     if (mem_size <= 262144) return 128;

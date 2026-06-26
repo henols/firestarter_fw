@@ -5,6 +5,28 @@
  * Permission is hereby granted under MIT license.
  */
 
+/* Handler: configure_flash3() — protocol 0x06 (FLASH-AMD-ALT): AMD/SST unlock-sequence NOR flash
+ *
+ * Write algorithm: 3-cycle software unlock before each byte program:
+ *   0xAA→0x5555, 0x55→0x2AAA, 0xA0→0x5555, then data byte to target address.
+ *   The internal program state machine completes in ~10–20 µs/byte. DQ7 data polling
+ *   confirms completion (DQ7 matches written bit = done; DQ5 high = timeout).
+ *   Sector erase: 6-cycle sequence ending with 0x30→sector address.
+ *   Citation: datasheets/0x06-FLASH-AMD-ALT/SST39SF040.pdf p.7 §Byte-Program Operation;
+ *             p.8 §Chip-Erase Operation.
+ *
+ * INV-09 — SST39SF040 keep-Flash/EEPROM classification:
+ *   The dominant 0x06 chip (SST39SF040, 190 DB entries) is a NOR flash with sector erase
+ *   and electrical reprogram — it is correctly classified as electrical.type "Flash/EEPROM"
+ *   (FLAG_CAN_ERASE set, auto-erase before write active). This classification must NOT be
+ *   confused with the UV-EPROM path (no erase, no FLAG_CAN_ERASE). The Phase-86 variant
+ *   decode preserves this by routing 0x06 chips exclusively to configure_flash3(); the
+ *   BLOCKER-2 invariant ensures they never reach configure_eprom() (which would enable
+ *   the VPP regulator on a 5V-only part).
+ *   Citation: datasheets/0x06-FLASH-AMD-ALT/SST39SF040.pdf p.4 §DC Characteristics (Vcc=5V only).
+ *   Full prose: firestarter/doc/PROTOCOLS.md §1.2 (FLASH-AMD-ALT) and §3 INV-09 row.
+ */
+
 #include "flash_type_3.h"
 
 #include <Arduino.h>

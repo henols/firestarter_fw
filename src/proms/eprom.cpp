@@ -5,6 +5,54 @@
  * Permission is hereby granted under MIT license.
  */
 
+/* Handler: configure_eprom() — protocols 0x07 (EPROM-STD), 0x08 (EPROM-QUICK), 0x0B (EPROM-LEGACY)
+ *
+ * WHY this file exists and the load-bearing protocol distinctions:
+ *
+ * INV-01 — 0x0B direct-VPE rail (no CTRL_VPP_VPE_DROP_ENABLE drop):
+ *   EPROM-LEGACY 24-pin parts (2716/2732/2516) have VPP pins that accept the raw
+ *   VPE regulator output (12–25 V). No drop-resistor is needed. The firmware sets
+ *   CTRL_VPP_REGULATOR_ENABLE alone (FLAG_VPE_AS_VPP path) — see eprom_write_execute().
+ *   0x07/0x08 require CTRL_VPP_VPE_DROP_ENABLE to drop VPE to the correct 13 V level.
+ *   Citation: datasheets/0x0B-EPROM-LEGACY/2516_EPROM.pdf p.2 §Vpp Programming Voltage.
+ *
+ * INV-02 — 0x0B shared OE/VPP read-skip:
+ *   Some 2732/2516 variants share the OE and VPP pins. Enabling VPP during CMD_READ
+ *   would drive the output-enable pin high with 12–25 V, destroying the logic output.
+ *   VPP is therefore skipped on read operations for 0x0B (VPP-skip-on-read, INV-05
+ *   applies here too). The eprom_internal_set_control_register() wrapper enforces this.
+ *   Citation: datasheets/0x0B-EPROM-LEGACY/2516_EPROM.pdf p.3 §Pin Description (OE/Vpp).
+ *
+ * INV-03 — 0x08 P1-as-VPP:
+ *   32-pin EPROM-QUICK parts (AM27C020, W27C020, AT27C010) expose VPP on socket pin 1.
+ *   The RURP routes VPP to pin 1 via CTRL_VPP_P1_ENABLE (0x08) for this family.
+ *   0x07 28-pin parts route VPP through the JP4 jumper to a different bus line.
+ *   Citation: datasheets/0x08-EPROM-QUICK/W27C020.pdf p.4 §Pin Description (pin 1 = Vpp).
+ *
+ * INV-05 — VPP-skip-on-read:
+ *   VPP is NOT enabled for CMD_READ or CMD_BLANK_CHECK. The eprom_internal_set_control_
+ *   register() wrapper intercepts VPP enable bits and suppresses them on read commands.
+ *   Enabling VPP during a read would stress the OE/VPP-shared pins on 0x0B parts and
+ *   waste regulator settle time on 0x07/0x08.
+ *   Citation: datasheets/0x07-EPROM-STD/W27C512.pdf p.5 §Pin Description (Vpp = PGM V during prog only).
+ *
+ * INV-06 — pulse-delay defaults per protocol (configure_eprom() lines 70–76):
+ *   pulse_delay controls the CE-asserted duration for the Intelligent Programming pulse.
+ *   0x08 (EPROM_QUICK) → 100 µs (Quick-Pulse algorithm, faster per-byte cycle).
+ *   0x0B (EPROM_LEGACY) → 500 µs (older NMOS parts require longer initial pulse).
+ *   default / 0x07 (EPROM_STD) → 1000 µs (classic 1 ms JEDEC algorithm).
+ *   The DB `pulse-delay` field overrides these defaults when non-zero.
+ *   Citation: datasheets/0x08-EPROM-QUICK/AM27C020.pdf p.10 §Quick-Pulse Programming (100µs);
+ *             datasheets/0x07-EPROM-STD/ST-M27C512.pdf p.8 §PRESTO IIB (100µs ST variant).
+ *
+ * INV-08 — WARNING-5 (0x07 EE-EPROM chips reclassified to 0x0D) delivered by Phase-86 decode:
+ *   Before Phase 86, build_db.py Rule 2 overrode certain 0x07-classified 28C-series parts
+ *   (AT28C010 etc.) to 0x0D at DB-generation time (WARNING-5). Phase 86 removed Rule 2;
+ *   the correct 0x0D classification now flows from the infoic.xml classify() decode.
+ *   This handler no longer sees those chips; the invariant is preserved at the DB layer.
+ *   Full prose: firestarter/doc/PROTOCOLS.md §3 INV-08 row.
+ */
+
 #include "eprom.h"
 
 #include <Arduino.h>

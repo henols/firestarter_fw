@@ -5,6 +5,32 @@
  * Permission is hereby granted under MIT license.
  */
 
+/* Handler: configure_flash_intel() — protocol 0x10 (FLASH-INTEL): Intel 28F command-register NOR flash
+ *
+ * Write algorithm: command-register architecture (no address-based unlock sequence).
+ *   Byte program: write 0x40 (Setup Program) to any address, write data byte to target
+ *   address PA, wait ~10 µs, write 0xC0 (Program Verify) to any address, read PA, compare.
+ *   On mismatch: write 0x00 (Reset), retry up to 25 times per byte.
+ *   Unlike AMD flash there is no 0x5555/0x2AAA address unlock; commands go directly to the
+ *   command register.
+ *   Citation: datasheets/0x10-FLASH-INTEL/Intel-28F010.pdf p.9 §Quick-Pulse Programming Algorithm.
+ *
+ * Erase model: bulk chip erase only (no sector erase on original 28F010).
+ *   Pre-condition: all bytes must be pre-programmed to 0x00 before erase.
+ *   Erase: write 0x20 (Erase Setup) twice to any address, wait ~12 ms, write 0xA0 (Erase Verify),
+ *   read all bytes (expect 0xFF). On failure: write 0x00, retry up to 1000 iterations.
+ *   Citation: datasheets/0x10-FLASH-INTEL/Intel-28F010.pdf p.10 §Quick-Erase Algorithm.
+ *
+ * VPP: 12V MANDATORY via CTRL_VPP_P1_ENABLE (0x08) + CTRL_VPP_REGULATOR_ENABLE.
+ *   VPP ≤ 6.5V inhibits ALL program and erase operations (hardware write-protect).
+ *   VPP must remain enabled for the entire program/erase cycle; it must NOT be released
+ *   mid-cycle. This is distinct from EPROM-family VPP: 28F010 VPP is a mandatory supply
+ *   rail, not a programming-pulse voltage.
+ *   Citation: datasheets/0x10-FLASH-INTEL/Intel-28F010.pdf p.6 §VPP Characteristics (Vpp<6.5V=write-inhibit).
+ *
+ * Full prose: firestarter/doc/PROTOCOLS.md §1.8 (FLASH-INTEL).
+ */
+
 #include "flash_intel.h"
 
 #include <Arduino.h>
