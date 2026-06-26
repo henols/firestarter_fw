@@ -45,11 +45,6 @@ extern "C" {
         {0x5555, 0xA0},
     };
 
-    const byte_flip_t FLASH_ENABLE_WRITE_PROTECTION[] = {
-        {0x5555, 0xAA},
-        {0x2AAA, 0x55},
-        {0x5555, 0xA0},
-    };
     const byte_flip_t FLASH_DISABLE_WRITE_PROTECTION[] = {
         {0x5555, 0xAA},
         {0x2AAA, 0x55},

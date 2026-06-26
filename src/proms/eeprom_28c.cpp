@@ -43,16 +43,6 @@ void eeprom28c_write_init(firestarter_handle_t* handle);
 void eeprom28c_write_execute(firestarter_handle_t* handle);
 static bool eeprom28c_wait_for_write(firestarter_handle_t* handle, uint32_t address, uint8_t expected);
 
-// AT28C SDP disable: 6-write sequence to magic addresses
-const byte_flip_t EEPROM_SDP_DISABLE[] = {
-    {0x5555, 0xAA},
-    {0x2AAA, 0x55},
-    {0x5555, 0x80},
-    {0x5555, 0xAA},
-    {0x2AAA, 0x55},
-    {0x5555, 0x20},
-};
-
 void configure_eeprom28c(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CONFIGURING_EEPROM_28C);
     // AT28C page write timing requires fast consecutive writes; no pulse delay needed
@@ -127,7 +117,7 @@ void eeprom28c_write_init(firestarter_handle_t* handle) {
     // Disable SDP (Software Data Protection) before writing.
     // The 6-write sequence must complete within the inter-byte timing window.
     // flash_util_byte_flipping uses fu_flash_flip_data which has no pulse_delay.
-    flash_execute_command(EEPROM_SDP_DISABLE);
+    flash_execute_command(FLASH_DISABLE_WRITE_PROTECTION);
     // Wait for SDP disable internal write cycle to complete
     if (!eeprom28c_wait_for_write(handle, 0x5555, 0x20)) {
         return;
