@@ -6,6 +6,8 @@
  *
  * Phase 71 Plan 04 — Tier-1 validation suite for the EPROM family.
  * Phase 87 Plan 03 — INV-01..INV-06/INV-08 gap-fill assertions (NAME-03 / SAFE-02).
+ * Phase 88 Plan 01 — Golden register traces for 0x07/0x08/0x0B write + chip-id (P4)
+ *                    (PRIM-01 / SAFE-02 / D-01 / D-02 / D-03 / D-04).
  * HARN-01 / D-07 / D-08 (verify-can-fail posture).
  *
  * Proves configure_eprom behavior BY SIDE-EFFECT via the recording bus stub:
@@ -63,6 +65,37 @@ extern "C" void clear_bus_recording();
 extern "C" int  bus_recording_count();
 extern "C" uint8_t recorded_reg(int i);
 extern "C" uint8_t recorded_data(int i);
+
+/* Golden-trace helper (assert_trace_eq + GOLDEN_BLESS print mode).
+ * Included AFTER the extern "C" recording decls above (required include order). */
+#include "../_shared/golden_trace.h"
+
+/* Golden expected arrays (one per traced path).
+ * Each .inc file is a comma-list of { reg, data } rows produced by GOLDEN_BLESS mode.
+ * Header comment in each .inc names the input and documents the low-byte caveat. */
+static const golden_entry_t golden_eprom_0x07_write[] = {
+#include "golden_eprom_0x07_write.inc"
+};
+static const int golden_eprom_0x07_write_n =
+    (int)(sizeof(golden_eprom_0x07_write) / sizeof(golden_eprom_0x07_write[0]));
+
+static const golden_entry_t golden_eprom_0x08_write[] = {
+#include "golden_eprom_0x08_write.inc"
+};
+static const int golden_eprom_0x08_write_n =
+    (int)(sizeof(golden_eprom_0x08_write) / sizeof(golden_eprom_0x08_write[0]));
+
+static const golden_entry_t golden_eprom_0x0B_write[] = {
+#include "golden_eprom_0x0B_write.inc"
+};
+static const int golden_eprom_0x0B_write_n =
+    (int)(sizeof(golden_eprom_0x0B_write) / sizeof(golden_eprom_0x0B_write[0]));
+
+static const golden_entry_t golden_eprom_chip_id[] = {
+#include "golden_eprom_chip_id.inc"
+};
+static const int golden_eprom_chip_id_n =
+    (int)(sizeof(golden_eprom_chip_id) / sizeof(golden_eprom_chip_id[0]));
 
 void setUp(void) {
     ArduinoFakeReset();
@@ -441,6 +474,132 @@ void test_inv08_eprom_warning5_decode_preserved(void) {
         "INV-08: configure_memory must not error on 0x07 CMD_READ (post-Phase-86 dispatch)");
 }
 
+/* ─── Phase 88 Plan 01: Golden register traces (PRIM-01 / SAFE-02 / D-01..D-04) ── */
+
+/* Scripted-byte mock for chip-id path (Pitfall 3 — configure_memory overwrites
+ * firestarter_get_data; re-assign this pointer AFTER configure_memory). */
+static uint8_t s_chipid_mock_bytes[4];
+static int     s_chipid_mock_idx;
+
+static uint8_t mock_chipid_get_data(struct firestarter_handle* /*h*/, uint32_t /*addr*/) {
+    if (s_chipid_mock_idx < (int)sizeof(s_chipid_mock_bytes))
+        return s_chipid_mock_bytes[s_chipid_mock_idx++];
+    return 0xFF;
+}
+
+/*
+ * test_golden_eprom_0x07_write — byte-exact golden trace for protocol 0x07 write.
+ *
+ * Input: 1-byte write (minimal representative — D-04; exercises VPP init + one
+ * program pulse + one verify cycle).  FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE
+ * from make_handle() ensure blank-check and erase branches are suppressed so
+ * the trace covers init+execute only.
+ *
+ * Trace captures: init (eprom_check_vpp VPP-enable/measure/disable) + execute
+ * (REGULATOR_ENABLE|CTRL_VPP_VPE_DROP_ENABLE set, program_mismatched_bytes
+ * CTRL_VPE_ENABLE pulse, verify → success).
+ *
+ * Note: clear_bus_recording() is called AFTER configure_memory() to isolate
+ * the init+execute trace from the configure-phase address writes.
+ */
+void test_golden_eprom_0x07_write(void) {
+    firestarter_handle_t h = make_handle(0x07, CMD_WRITE);
+    h.data_size = 1;  /* minimal representative input (D-04) */
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "golden 0x07 write: configure_memory must not error");
+    clear_bus_recording();  /* isolate init+execute from configure-phase address writes */
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+    if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
+#ifdef GOLDEN_BLESS
+    print_trace_inc();
+#else
+    assert_trace_eq(golden_eprom_0x07_write, golden_eprom_0x07_write_n,
+                    "golden trace drift: eprom 0x07 write");
+#endif
+}
+
+/*
+ * test_golden_eprom_0x08_write — byte-exact golden trace for protocol 0x08 write.
+ * Same structure as 0x07 but EPROM_QUICK path: CTRL_VPP_VPE_DROP_ENABLE + 100µs
+ * pulse instead of 1000µs.
+ */
+void test_golden_eprom_0x08_write(void) {
+    firestarter_handle_t h = make_handle(0x08, CMD_WRITE);
+    h.data_size = 1;
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "golden 0x08 write: configure_memory must not error");
+    clear_bus_recording();
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+    if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
+#ifdef GOLDEN_BLESS
+    print_trace_inc();
+#else
+    assert_trace_eq(golden_eprom_0x08_write, golden_eprom_0x08_write_n,
+                    "golden trace drift: eprom 0x08 write");
+#endif
+}
+
+/*
+ * test_golden_eprom_0x0B_write — byte-exact golden trace for protocol 0x0B write.
+ * EPROM_LEGACY path: direct VPE rail (CTRL_VPP_REGULATOR_ENABLE only, no
+ * CTRL_VPP_VPE_DROP_ENABLE), 500µs pulse.
+ */
+void test_golden_eprom_0x0B_write(void) {
+    firestarter_handle_t h = make_handle(0x0B, CMD_WRITE);
+    h.data_size = 1;
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "golden 0x0B write: configure_memory must not error");
+    clear_bus_recording();
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+    if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
+#ifdef GOLDEN_BLESS
+    print_trace_inc();
+#else
+    assert_trace_eq(golden_eprom_0x0B_write, golden_eprom_0x0B_write_n,
+                    "golden trace drift: eprom 0x0B write");
+#endif
+}
+
+/*
+ * test_golden_eprom_chip_id — byte-exact golden trace for the eprom chip-id (P4) path.
+ *
+ * Uses CMD_CHECK_CHIP_ID with a non-zero chip_id (0x1F00) to enable the compare
+ * branch in eprom_internal_check_chip_id.  The scripted-byte mock returns 0x1F then
+ * 0x00 so the chip_id matches and no error is set.
+ *
+ * Pitfall 3: configure_memory() overwrites firestarter_get_data; we re-assign the
+ * mock AFTER configure_memory() and before driving operation_init/main.
+ *
+ * Trace captures: eprom_check_chip_id_init (eprom_check_vpp) + chip-id execute
+ * (CTRL_VPP_REGULATOR_ENABLE + CTRL_VPP_A9_ENABLE set for read, then disabled).
+ */
+void test_golden_eprom_chip_id(void) {
+    s_chipid_mock_idx = 0;
+    s_chipid_mock_bytes[0] = 0x1F;  /* manufacturer byte */
+    s_chipid_mock_bytes[1] = 0x00;  /* device byte — combined = 0x1F00 */
+    memset(s_chipid_mock_bytes + 2, 0xFF, 2);
+
+    firestarter_handle_t h = make_handle(0x07, CMD_CHECK_CHIP_ID);
+    h.chip_id = 0x1F00;  /* non-zero: enables compare branch (D-03 P4 path) */
+    configure_memory(&h);
+    /* Re-assign after configure_memory() overwrites the pointer (Pitfall 3). */
+    h.firestarter_get_data = mock_chipid_get_data;
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "golden chip-id: configure_memory must not error");
+    clear_bus_recording();
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+    if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
+#ifdef GOLDEN_BLESS
+    print_trace_inc();
+#else
+    assert_trace_eq(golden_eprom_chip_id, golden_eprom_chip_id_n,
+                    "golden trace drift: eprom chip-id (P4)");
+#endif
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -462,6 +621,12 @@ int main(int argc, char** argv) {
     RUN_TEST(test_inv05_eprom_vpp_skip_on_read);
     RUN_TEST(test_inv06_eprom_pulse_delay_defaults);
     RUN_TEST(test_inv08_eprom_warning5_decode_preserved);
+
+    /* Phase 88 Plan 01: byte-exact golden register traces (PRIM-01 / SAFE-02) */
+    RUN_TEST(test_golden_eprom_0x07_write);
+    RUN_TEST(test_golden_eprom_0x08_write);
+    RUN_TEST(test_golden_eprom_0x0B_write);
+    RUN_TEST(test_golden_eprom_chip_id);
 
     return UNITY_END();
 }
