@@ -59,6 +59,7 @@
  */
 
 #include "eprom.h"
+#include "primitives.h"
 
 #include <Arduino.h>
 
@@ -352,21 +353,8 @@ void eprom_generic_init(firestarter_handle_t* handle) {
 
 void eprom_internal_check_chip_id(firestarter_handle_t* handle, uint8_t error_code) {
     LOG_DEBUG_ID_SUB(DBG_CHECK_CHIP_ID);
-    uint16_t chip_id = eprom_get_chip_id(handle);
-    if (chip_id != handle->chip_id) {
-        uint8_t _b[4];
-        _b[0] = (uint8_t)((chip_id >> 8) & 0xFF);
-        _b[1] = (uint8_t)(chip_id & 0xFF);
-        _b[2] = (uint8_t)((handle->chip_id >> 8) & 0xFF);
-        _b[3] = (uint8_t)(handle->chip_id & 0xFF);
-        if (error_code == RESPONSE_CODE_WARNING) {
-            LOG_WARN_ID_BYTES(MSG_WARN_CHIP_ID_MISMATCH, _b, 4);
-            handle->response_code = RESPONSE_CODE_WARNING;
-        } else {
-            LOG_ERROR_ID_BYTES(MSG_ERR_CHIP_ID_MISMATCH, _b, 4);
-            handle->response_code = RESPONSE_CODE_ERROR;
-        }
-    }
+    (void)error_code;  /* parameter retained for API compatibility; chip_id_report keys on FLAG_FORCE */
+    chip_id_report(handle, eprom_get_chip_id(handle));
 }
 // Use this function to set the control register and flip CTRL_VPE_ENABLE bit to CTRL_VPE_ENABLE or CTRL_VPP_P1_ENABLE
 void eprom_internal_set_control_register(firestarter_handle_t* handle, rurp_register_t bit, bool state) {
