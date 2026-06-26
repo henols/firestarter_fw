@@ -34,6 +34,36 @@ extern "C" {
      */
     void chip_id_report(firestarter_handle_t* handle, uint16_t read_id);
 
+    /* vpp_check_window — shared VPP read + HIGH/LOW window-compare + _b[8] packing
+     *                    + FORCE downgrade (P3/PRIM-04).
+     *
+     * Callers: eprom.cpp (protocols 0x07/0x08/0x0B via eprom_check_vpp),
+     *          flash_intel.cpp (protocol 0x10 via flash_intel_check_vpp).
+     *
+     * Each caller keeps its own:
+     *   - Regulator enable/disable (protocol-keyed, D-06): eprom_check_vpp enables
+     *     CTRL_VPP_REGULATOR_ENABLE (+ CTRL_VPP_VPE_DROP_ENABLE for 0x07/0x08) before
+     *     calling here, then clears after; flash_intel's caller (flash_intel_write_init)
+     *     already holds CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE throughout.
+     *   - REV0 guard: early return on REVISION_0 hardware (stays handler-local, Open Q2).
+     *   - Trailing regulator clear: only eprom_check_vpp issues the clear; flash_intel
+     *     holds VPP for the entire write cycle.
+     *   - Settle delay: eprom_check_vpp issues delay(100) before calling here;
+     *     flash_intel's caller already delayed 500ms (delay diverges — handler-local).
+     *
+     * This primitive owns ONLY:
+     *   - rurp_read_voltage_mv() read
+     *   - HIGH check: vpp_mv > (uint32_t)handle->vpp_mv + 500 (D-08 threshold UNCHANGED)
+     *     → FORCE: LOG_WARN_ID_BYTES(MSG_WARN_VPP_HIGH) + RESPONSE_CODE_WARNING
+     *     → else:  LOG_ERROR_ID_BYTES(MSG_ERR_VPP_HIGH) + RESPONSE_CODE_ERROR
+     *   - LOW check: vpp_mv < (uint32_t)handle->vpp_mv * 95 / 100
+     *     → always: LOG_WARN_ID_BYTES(MSG_WARN_VPP_LOW) + RESPONSE_CODE_WARNING
+     *   - _b[8] MSB-first packing (vpp_mv + 50 / 1000 hi, lo, /100%10 hi, lo; ×2 for set)
+     *
+     * No regulator control lives here (D-06 / SAFE-04 / T-89-01).
+     */
+    void vpp_check_window(firestarter_handle_t* handle);
+
 #ifdef __cplusplus
 }
 #endif
