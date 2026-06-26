@@ -5,6 +5,33 @@
  * Permission is hereby granted under MIT license.
  */
 
+/* Top-level dispatch entry: configure_memory() — all protocols and legacy mem_type fallback.
+ *
+ * Dispatch order (protocol-prefix first, mem_type fallback only when protocol==0):
+ *   1. protocol==0x10 → configure_flash_intel()   (FLASH-INTEL)
+ *   2. protocol==0x0D → configure_eeprom28c()      (EEPROM-POLL)
+ *   3. protocol==0x06 → configure_flash3()         (FLASH-AMD-ALT)
+ *   4. protocol∈{0x05,0x35,0x39} → configure_flash4()  (FLASH-AMD-STD; 0x35/0x39 = phantoms)
+ *   5. protocol∈{0x07,0x08,0x0B} → configure_eprom()   (EPROM-STD/QUICK/LEGACY)
+ *   6. protocol∈{0x0E,0x27,0x28,0x29} → configure_sram()  (SRAM/NVRAM — BLOCKER-2 guard)
+ *  6a. protocol∈{0x11,0x2A,0x2B,0x2C} → configure_not_implemented()  (named infeasibles)
+ *  6b. protocol!=0 → configure_not_implemented()  (generic fail-closed: unknown non-zero proto)
+ *   7–11. protocol==0 only: mem_type fallback for backward-compat (DISP-02)
+ *
+ * The protocol-prefix chain (steps 1–6b) ensures that every non-zero protocol either
+ * reaches its correct handler or fail-closes. Steps 7–11 (mem_type fallback) are
+ * UNREACHABLE for any protocol_id emitted by chip_database.json.
+ *
+ * Safety invariant (BLOCKER-2): SRAM-family chips (0x0E/0x27/0x28/0x29) must NEVER
+ * reach configure_eprom() — that would enable the 12V VPP boost regulator on a 5V part.
+ * The protocol-prefix dispatch enforces this structurally: 0x28 (SRAM_STD/FM1608 FRAM)
+ * dispatches to configure_sram() at step 6, before the generic fail-closed at 6b.
+ *
+ * This dispatch structure is FROZEN for Phase 87 (naming/documentation pass).
+ * Source of truth: firestarter/CLAUDE.md §Protocol Dispatch (dispatch order table).
+ * Full protocol prose: firestarter/doc/PROTOCOLS.md §1 (real buckets), §2 (non-protocols).
+ */
+
 #include "memory.h"
 
 #include <Arduino.h>

@@ -5,6 +5,27 @@
  * Permission is hereby granted under MIT license.
  */
 
+/* shared flash helper utilities — used by configure_flash3(), configure_flash4(),
+ * and configure_flash_intel() (protocols 0x06, 0x05, 0x10 respectively).
+ *
+ * This file holds the primitives that are common across multiple flash families:
+ *   - Flash SDP (Software Data Protection) unlock/disable bus sequences shared
+ *     between the 0x05 FLASH-AMD-STD and 0x0D EEPROM-POLL paths.
+ *   - DQ7 / toggle-bit poll loop (data polling completion detection) shared by
+ *     0x05 and 0x06 families.
+ *   - Flash erase utility routines invoked from flash3_erase_execute() (0x06)
+ *     and flash_intel_* (0x10) erase paths.
+ *
+ * No VPP regulator control lives here — VPP decisions are entirely within each
+ * family's own configure_*() handler (see flash_intel.cpp for 12V mandatory VPP,
+ * and sram.cpp / eprom.cpp for the BLOCKER-2 VPP isolation rationale).
+ *
+ * datasheets references: datasheets/0x05-FLASH-AMD-STD/W29C040.pdf (DQ7 poll timing);
+ *                        datasheets/0x06-FLASH-AMD-ALT/SST39SF040.pdf (SDP unlock cycles);
+ *                        datasheets/0x10-FLASH-INTEL/Intel-28F010.pdf (SR poll loop).
+ * Full protocol prose: firestarter/doc/PROTOCOLS.md §1.1, §1.2, §1.8.
+ */
+
 #include "flash_utils.h"
 #include <Arduino.h>
 #include "rurp_shield.h"

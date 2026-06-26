@@ -5,6 +5,26 @@
  * Permission is hereby granted under MIT license.
  */
 
+/* Dispatch entry point and main firmware loop.
+ *
+ * This file is the top-level orchestrator: it receives JSON commands over serial
+ * (250000 baud, COBS-framed + CRC8-CCITT), parses them into firestarter_handle_t,
+ * and calls configure_memory() which dispatches to the correct algorithm handler
+ * based on handle->protocol (the algorithm field from chip_database.json).
+ *
+ * The INV-01..INV-09 invariant ordering established in firestarter/doc/PROTOCOLS.md §3
+ * is grounded in the dispatch chain that originates here. The dispatch structure
+ * (memory.cpp:configure_memory()) is the source-of-truth for handler routing — see
+ * firestarter/CLAUDE.md §Protocol Dispatch for the step-by-step dispatch table.
+ *
+ * This dispatch structure is FROZEN for Phase 87 (naming/documentation pass).
+ * No protocol routing, wire value, or handler assignment is changed this phase.
+ * The INV ids (INV-01..INV-09) cited in each handler's header block are the SAFE-02
+ * handoff contract to Phases 88 (golden traces) and 89 (recompose).
+ *
+ * Full protocol prose: firestarter/doc/PROTOCOLS.md.
+ */
+
 #include "firestarter.h"
 
 #include <Arduino.h>
