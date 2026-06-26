@@ -48,6 +48,36 @@ extern "C" int  bus_recording_count();
 extern "C" uint8_t recorded_reg(int i);
 extern "C" uint8_t recorded_data(int i);
 
+/* Golden-trace helper (assert_trace_eq + GOLDEN_BLESS print mode).
+ * Included AFTER the extern "C" recording decls above (required include order). */
+#include "../_shared/golden_trace.h"
+
+/* Golden expected arrays (one per traced path).
+ * Each .inc file is a comma-list of { reg, data } rows produced by GOLDEN_BLESS mode.
+ * Header comment in each .inc names the input and documents the low-byte caveat. */
+static const golden_entry_t golden_flash4_write[] = {
+#include "golden_flash4_write.inc"
+};
+static const int golden_flash4_write_n =
+    (int)(sizeof(golden_flash4_write) / sizeof(golden_flash4_write[0]));
+
+static const golden_entry_t golden_flash4_chip_id[] = {
+#include "golden_flash4_chip_id.inc"
+};
+static const int golden_flash4_chip_id_n =
+    (int)(sizeof(golden_flash4_chip_id) / sizeof(golden_flash4_chip_id[0]));
+
+/* Scripted-byte mock for chip-id path (Pitfall 3 — configure_memory overwrites
+ * firestarter_get_data; re-assign this pointer AFTER configure_memory). */
+static uint8_t s_flash4_chipid_mock_bytes[4];
+static int     s_flash4_chipid_mock_idx;
+
+static uint8_t flash4_mock_chipid_get_data(struct firestarter_handle* /*h*/, uint32_t /*addr*/) {
+    if (s_flash4_chipid_mock_idx < (int)sizeof(s_flash4_chipid_mock_bytes))
+        return s_flash4_chipid_mock_bytes[s_flash4_chipid_mock_idx++];
+    return 0xFF;
+}
+
 void setUp(void) {
     ArduinoFakeReset();
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t))).AlwaysReturn(1);
@@ -341,6 +371,101 @@ void test_inv04_flash4_256b_page_boundary(void) {
         "page_size=64 (old bug) would fire 2 SDPs");
 }
 
+/* ─── Phase 88 Plan 03: Golden register traces (PRIM-01 / SAFE-02 / D-01..D-04) ── */
+
+/*
+ * test_golden_flash4_write — byte-exact golden trace for flash4 0x05 write path.
+ *
+ * flash4 (FLASH-AMD-STD / W29C040): 5V page-write NOR flash with AMD SDP.
+ * Uses the INV-04 65-byte minimal probe (D-04): address=0, data_size=65, mem_size=524288.
+ * A full 256-byte page write would exceed the 256-entry recording cap (Pitfall 2 / D-04);
+ * the assert_trace_eq anti-truncation guard enforces this.  With page_size=256 (W29C040,
+ * 512KB), a 65-byte write fires exactly ONE SDP (addr 0 is both first_byte and page_start;
+ * addr 64 is a 64B boundary but NOT a 256B boundary — no second SDP).
+ *
+ * Input: protocol=0x05, CMD_WRITE, mem_size=524288 (512KB), address=0, data_size=65,
+ * data_buffer=zeros, FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE, chip_id=0.
+ * configure_memory wires operation_init = flash4_write_init and operation_main = flash4_write_execute.
+ * With FLAG_SKIP_BLANK_CHECK and FLAG_SKIP_ERASE set, flash4_write_init is a no-op.
+ *
+ * Trace structure: 1 SDP (8 entries) + 65 × memory_set_data (3 entries/byte = 195)
+ * + 1 poll (flash4_wait_for_page_write: 3 entries for last address) = 206 entries (< 256 cap).
+ *
+ * clear_bus_recording() is called AFTER configure_memory() to isolate the operation trace.
+ */
+void test_golden_flash4_write(void) {
+    firestarter_handle_t h = {};
+    h.protocol   = 0x05;
+    h.cmd        = CMD_WRITE;
+    h.response_code = RESPONSE_CODE_OK;
+    h.chip_id    = 0;
+    h.mem_size   = 524288; /* 512KB W29C040 → page_size=256; 65-byte probe fires 1 SDP */
+    h.address    = 0;
+    h.data_size  = 65; /* INV-04 minimal probe (D-04): addr 64 is NOT a 256B boundary */
+    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE; /* suppress init side-effects */
+    /* data_buffer zero-initialized: rurp_read_data_buffer()=0 → DQ7 poll passes. */
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "golden flash4 write: configure_memory must not error");
+    clear_bus_recording(); /* isolate operation trace from configure-phase address writes */
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+    if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
+#ifdef GOLDEN_BLESS
+    print_trace_inc();
+#else
+    assert_trace_eq(golden_flash4_write, golden_flash4_write_n,
+                    "golden trace drift: flash4 0x05 write (65-byte probe)");
+#endif
+}
+
+/*
+ * test_golden_flash4_chip_id — byte-exact golden trace for flash4 chip-id (P4 via flash_utils).
+ *
+ * flash4's CMD_CHECK_CHIP_ID path routes to flash4_check_chip_id_execute →
+ * flash_util_check_chip_id_execute → flash_util_get_chip_id.
+ * flash_util_get_chip_id issues FLASH_ENABLE_ID (SDP 3-cycle), reads 2 bytes at
+ * addresses 0x0000 and 0x0001 (manufacturer + device), then issues FLASH_DISABLE_ID.
+ *
+ * Pitfall 3: configure_memory() overwrites firestarter_get_data with memory_get_data.
+ * We re-assign h.firestarter_get_data to the scripted-byte mock AFTER configure_memory().
+ * Scripted bytes {0xBF, 0xB7} → chip_id = 0xBFB7 → matches h.chip_id=0xBFB7 (no error).
+ *
+ * Trace structure:
+ *   FLASH_ENABLE_ID (8 entries: CTL + 3×(LSB+MSB) + CTL)
+ *   + 2 × memory_get_data via firestarter_get_data (3 entries each via mem_util_set_address)
+ *   + FLASH_DISABLE_ID (8 entries)
+ *   = 22 entries (well under 256 cap).
+ *
+ * Note: configure_flash4 for CMD_CHECK_CHIP_ID sets operation_init=NULL and
+ * operation_main=flash4_check_chip_id_execute; only operation_main is driven.
+ * clear_bus_recording() is called AFTER configure_memory() (and after mock re-assign).
+ */
+void test_golden_flash4_chip_id(void) {
+    s_flash4_chipid_mock_idx = 0;
+    s_flash4_chipid_mock_bytes[0] = 0xBF; /* manufacturer byte */
+    s_flash4_chipid_mock_bytes[1] = 0xB7; /* device byte — combined = 0xBFB7 (SST39SF040) */
+    s_flash4_chipid_mock_bytes[2] = 0xFF;
+    s_flash4_chipid_mock_bytes[3] = 0xFF;
+
+    firestarter_handle_t h = make_handle(0x05, CMD_CHECK_CHIP_ID);
+    h.chip_id = 0xBFB7; /* non-zero: enables compare branch (D-03 P4 path); matches mock */
+    configure_memory(&h);
+    /* Re-assign AFTER configure_memory() overwrites firestarter_get_data (Pitfall 3). */
+    h.firestarter_get_data = flash4_mock_chipid_get_data;
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "golden flash4 chip-id: configure_memory must not error");
+    clear_bus_recording(); /* isolate operation trace from configure-phase address writes */
+    /* configure_flash4 CMD_CHECK_CHIP_ID: operation_init=NULL, operation_main set. */
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+    if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
+#ifdef GOLDEN_BLESS
+    print_trace_inc();
+#else
+    assert_trace_eq(golden_flash4_chip_id, golden_flash4_chip_id_n,
+                    "golden trace drift: flash4 chip-id (P4 via flash_utils)");
+#endif
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -363,6 +488,10 @@ int main(int argc, char** argv) {
 
     /* Phase 87 Plan 03: INV-04 gap-fill assertion (SAFE-02 / NAME-03) */
     RUN_TEST(test_inv04_flash4_256b_page_boundary);
+
+    /* Phase 88 Plan 03: byte-exact golden write + chip-id traces (PRIM-01 / D-01..D-04) */
+    RUN_TEST(test_golden_flash4_write);
+    RUN_TEST(test_golden_flash4_chip_id);
 
     return UNITY_END();
 }
