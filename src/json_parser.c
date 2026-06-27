@@ -25,6 +25,7 @@ bool get_vpp_mv(const char* json, jsmntok_t* tokens, int pos, firestarter_handle
 bool get_algorithm(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
 bool get_read_settling(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
 bool get_read_strobe(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
+bool get_page_size(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
 
 bool get_rw_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
 bool get_vpp_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
@@ -66,6 +67,8 @@ const char key_algorithm[] PROGMEM = "algorithm";
 /* Phase 44 — host-tunable read-timing knobs (D-04 sweep params) */
 const char key_read_settling[] PROGMEM = "read-settling-delay";
 const char key_read_strobe[]   PROGMEM = "read-strobe-us";
+/* PGSZ-03 / CR-01 — per-chip page size from DB (mirrors key_read_strobe pattern) */
+const char key_page_size[]     PROGMEM = "page-size";
 
 typedef struct {
     PGM_P key;
@@ -78,6 +81,8 @@ static const key_parser_t key_parsers[] PROGMEM = {
     {key_vpp_mv, get_vpp_mv},        {key_type, get_type},               {key_algorithm, get_algorithm},
     /* Phase 44 — read-timing sweep knobs (RCA-01 causal proof, D-04) */
     {key_read_settling, get_read_settling},                              {key_read_strobe, get_read_strobe},
+    /* PGSZ-03 / CR-01 — per-chip page size (mirrors key_read_strobe registration) */
+    {key_page_size, get_page_size},
 };
 
 int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle) {
@@ -366,6 +371,30 @@ bool get_read_strobe(const char* json, jsmntok_t* tokens, int pos, firestarter_h
     if (jsoneq(json, &tokens[pos], "read-strobe-us") == 0) {
         unsigned long v = simple_strtoul(json + tokens[pos + 1].start);
         handle->read_strobe_us = (uint32_t)(v > READ_TIMING_MAX_US ? READ_TIMING_MAX_US : v);
+        return 1;
+    }
+    return 0;
+}
+
+/*
+ * PGSZ-03 / CR-01 — per-chip page size parser (mirrors get_read_strobe pattern).
+ *
+ * Parses the "page-size" JSON key into handle->page_size.
+ * Bound-check (V5 / T-94-PGSZBAD): a 0 or absurd value is treated as unset
+ * so flash4_write_execute falls back to flash4_page_size(handle->mem_size).
+ * Absurd cap: page sizes > 65536 bytes would exceed any flash4 chip's capacity;
+ * a value that large indicates a malformed/hand-crafted JSON command and must
+ * degrade safely to the heuristic (handle->page_size == 0 → fallback).
+ * The maximum legitimate page size for any FLASH-AMD-STD chip is 256 bytes.
+ */
+#define PAGE_SIZE_MAX_BYTES 65536UL  /* sane cap; any value beyond this is malformed */
+
+bool get_page_size(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
+    if (jsoneq(json, &tokens[pos], "page-size") == 0) {
+        unsigned long v = simple_strtoul(json + tokens[pos + 1].start);
+        /* V5: 0 or absurd value → leave handle->page_size at 0 so firmware falls back
+         * to flash4_page_size(handle->mem_size) heuristic (PGSZ-02 safe fallback). */
+        handle->page_size = (uint32_t)((v == 0 || v > PAGE_SIZE_MAX_BYTES) ? 0 : v);
         return 1;
     }
     return 0;

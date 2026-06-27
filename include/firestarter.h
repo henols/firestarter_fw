@@ -94,6 +94,7 @@ typedef struct firestarter_handle {
     uint32_t pulse_delay;
     uint32_t read_settling_us;   /* address-settling delay before /CE assert (µs; 0 = no settling delay) */
     uint32_t read_strobe_us;     /* /CE read-strobe pulse width (µs; 0 = use default 3µs) */
+    uint32_t page_size;          /* PGSZ-02/03: per-chip page size from DB (bytes; 0 = use flash4_page_size() heuristic) */
     uint32_t ctrl_flags;
     uint16_t chip_id;
     char data_buffer[DATA_BUFFER_SIZE];
