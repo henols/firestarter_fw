@@ -47,6 +47,7 @@ void flash4_write_init(firestarter_handle_t* handle);
 void flash4_write_execute(firestarter_handle_t* handle);
 void flash4_check_chip_id_execute(firestarter_handle_t* handle);
 static bool flash4_wait_for_page_write(firestarter_handle_t* handle, uint32_t address, uint8_t expected);
+static bool flash4_detect_boot_block_lockout(firestarter_handle_t* handle, uint32_t address);
 
 uint16_t flash4_get_chip_id(firestarter_handle_t* handle);
 
@@ -145,7 +146,18 @@ static bool flash4_wait_for_page_write(firestarter_handle_t* handle, uint32_t ad
         return true;
     }
 
-    {
+    /* FIX-01b (Phase 94 Plan 03): on a verify timeout, check whether the failing
+     * address is in a boot-block region (first or last 16K) and if so attempt
+     * the §6.6 DETECT read (FLASH_ENABLE_ID → read 0x00002/0x7FFF2 → FLASH_DISABLE_ID).
+     * If the status byte is 0xFF the boot block is locked; emit MSG_ERR_FL4_BOOT_BLOCK_LOCKED
+     * so the operator gets a clear diagnosis instead of the bare timeout.
+     * The detect runs ONLY on the error path — never on a successful write — so
+     * the golden write trace (clean data, no timeout) is not affected (FIX-02). */
+    bool in_boot_block = (address < 0x4000) ||
+                         (handle->mem_size > 0x4000 && address >= handle->mem_size - 0x4000);
+    if (in_boot_block && flash4_detect_boot_block_lockout(handle, address)) {
+        LOG_ERROR_ID_U24(MSG_ERR_FL4_BOOT_BLOCK_LOCKED, address);
+    } else {
         uint8_t _b[5];
         _b[0] = (uint8_t)expected;
         _b[1] = (uint8_t)((address >> 16) & 0xFF);
@@ -153,9 +165,39 @@ static bool flash4_wait_for_page_write(firestarter_handle_t* handle, uint32_t ad
         _b[3] = (uint8_t)(address & 0xFF);
         _b[4] = (uint8_t)observed;
         LOG_ERROR_ID_BYTES(MSG_ERR_FL4_VERIFY_TIMEOUT, _b, 5);
-        handle->response_code = RESPONSE_CODE_ERROR;
     }
+    handle->response_code = RESPONSE_CODE_ERROR;
     return false;
+}
+
+/* FIX-01b (Phase 94 Plan 03): W29C040 §6.6 boot-block lockout detection.
+ *
+ * Performs the §6.6 DETECT read sequence:
+ *   ENTRY:  flash_execute_command(FLASH_ENABLE_ID) — identical to the chip-ID ENTRY
+ *   READ:   0x00002 for first-16K boot block (address < 0x4000)
+ *           0x7FFF2 for last-16K boot block  (address >= mem_size - 0x4000)
+ *   EXIT:   flash_execute_command(FLASH_DISABLE_ID) — identical to the chip-ID EXIT
+ *
+ * Returns true when the boot block is locked (status byte == 0xFF);
+ *         false when unlocked (status byte == 0xFE) or on an unexpected read value.
+ *
+ * This function reuses the existing FLASH_ENABLE_ID / FLASH_DISABLE_ID byte-flip
+ * tables in flash_utils.h — no new command sequences are needed.
+ *
+ * Guard: only called when the failing address is already in a boot-block region
+ * (first or last 16K); the caller is responsible for the region check.
+ * Timing: the ID-mode command bytes must be emitted firmware-side — a host
+ * dev-reg round-trip cannot meet the byte-load window (same constraint as SDP). */
+static bool flash4_detect_boot_block_lockout(firestarter_handle_t* handle, uint32_t address) {
+    /* Choose detect address: first 16K → 0x00002, last 16K → 0x7FFF2 */
+    uint32_t detect_addr = 0x00002;
+    if (handle->mem_size > 0x4000 && address >= handle->mem_size - 0x4000) {
+        detect_addr = 0x7FFF2;
+    }
+    flash_execute_command(FLASH_ENABLE_ID);
+    uint8_t status = handle->firestarter_get_data(handle, detect_addr);
+    flash_execute_command(FLASH_DISABLE_ID);
+    return status == 0xFF;  /* 0xFF = locked; 0xFE = unlocked (per §6.6) */
 }
 
 void flash4_check_chip_id_execute(firestarter_handle_t* handle) {

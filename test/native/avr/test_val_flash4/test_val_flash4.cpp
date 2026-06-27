@@ -78,6 +78,23 @@ static uint8_t flash4_mock_chipid_get_data(struct firestarter_handle* /*h*/, uin
     return 0xFF;
 }
 
+/* FIX-01b (Phase 94 Plan 03) — boot-block detect mock.
+ *
+ * Returns 0xFF at the §6.6 DETECT address (0x00002 for first 16K boot block),
+ * simulating a permanently locked boot block. Returns 0x00 for all other
+ * addresses so that poll_readback compares expected=0xFF against observed=0x00,
+ * forcing a poll timeout on the first data byte.
+ *
+ * Pitfall 3 (same as chip-id mock): configure_memory() overwrites firestarter_get_data.
+ * Caller MUST re-assign h.firestarter_get_data to this function AFTER configure_memory().
+ */
+static uint8_t flash4_mock_boot_block_locked_get_data(struct firestarter_handle* /*h*/, uint32_t addr) {
+    if (addr == 0x00002) {
+        return 0xFF; /* §6.6 DETECT: 0xFF = boot block locked */
+    }
+    return 0x00; /* all data addresses return 0x00 (poll target mismatch with 0xFF expected) */
+}
+
 void setUp(void) {
     ArduinoFakeReset();
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t))).AlwaysReturn(1);
@@ -635,6 +652,101 @@ void test_pgsz02_zero_page_size_falls_back_to_heuristic(void) {
         "— addr 128 is NOT a 256B boundary (128%%256=128≠0); count=2 would mean fallback failed");
 }
 
+/* ─── Phase 94 Plan 03: FIX-01b firmware §6.6 DETECT (boot-block locked) ────── */
+
+/*
+ * test_fix01b_boot_block_locked_sets_error_code
+ *
+ * FIX-01b firmware DETECT path: when flash4_wait_for_page_write times out on an
+ * address in the first 16K boot block (< 0x4000) AND the §6.6 detect read at
+ * 0x00002 returns 0xFF (locked), the firmware must set RESPONSE_CODE_ERROR.
+ *
+ * Test setup:
+ *   - protocol=0x05, CMD_WRITE, mem_size=524288 (W29C040, 512KB)
+ *   - address=0x0000, data_size=1, data_buffer[0]=0xFF (non-zero expected)
+ *   - Mock firestarter_get_data: returns 0xFF at addr 0x00002 (detect → locked),
+ *     0x00 for all other addresses (data addresses → mismatch → poll timeout)
+ *   - After configure_memory(), re-assign firestarter_get_data to mock (Pitfall 3)
+ *   - FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE: suppress init side-effects
+ *
+ * poll_readback: iterates 1024 times, each time calling firestarter_get_data(addr=0x0000)
+ * which returns 0x00 ≠ expected=0xFF → poll timeout → error path reached.
+ * flash4_detect_boot_block_lockout: addr 0 < 0x4000 → detect_addr=0x00002 →
+ *   firestarter_get_data(0x00002) returns 0xFF → locked → LOG_ERROR_ID_U24(MSG_ERR_FL4_BOOT_BLOCK_LOCKED, 0)
+ *   → handle->response_code = RESPONSE_CODE_ERROR.
+ *
+ * Assertion: response_code == RESPONSE_CODE_ERROR (detect ran and set error).
+ * Golden trace: NOT asserted — the detect path writes FLASH_ENABLE_ID / FLASH_DISABLE_ID
+ * bus sequences which are on the error path only (clean write is untouched, FIX-02 coverage).
+ */
+void test_fix01b_boot_block_locked_sets_error_code(void) {
+    firestarter_handle_t h = {};
+    h.protocol   = 0x05;
+    h.cmd        = CMD_WRITE;
+    h.response_code = RESPONSE_CODE_OK;
+    h.chip_id    = 0;
+    h.mem_size   = 524288; /* 512KB W29C040 → first 16K boot block at 0x0000..0x3FFF */
+    h.address    = 0x0000; /* boot-block address: triggers §6.6 detect path */
+    h.data_size  = 1;      /* 1 byte write; data_buffer[0] = 0xFF (non-zero expected) */
+    h.data_buffer[0] = 0xFF; /* expected byte; mock returns 0x00 → poll timeout */
+    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE; /* suppress init side-effects */
+
+    configure_memory(&h);
+    /* Pitfall 3: re-assign firestarter_get_data AFTER configure_memory() overwrites it */
+    h.firestarter_get_data = flash4_mock_boot_block_locked_get_data;
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "FIX-01b: configure_memory must not error on 0x05 CMD_WRITE");
+
+    clear_bus_recording();
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+    if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "FIX-01b: flash4_write_execute must set RESPONSE_CODE_ERROR when first-16K boot block "
+        "is locked (poll timeout + §6.6 detect returns 0xFF = locked)");
+}
+
+/*
+ * test_fix01b_clean_write_no_boot_block_detect
+ *
+ * FIX-02 (golden-trace guard): flash4_write_execute on a CLEAN write (poll passes first
+ * iteration because expected == observed == 0) must NOT invoke the boot-block detect
+ * path, and RESPONSE_CODE_OK must be preserved.
+ *
+ * This is the "detect only runs on error path" invariant (FIX-02 acceptance criterion).
+ * Uses the same 65-byte zero write as test_golden_flash4_write, confirming that clean
+ * data leaves response_code unchanged after FIX-01b is applied.
+ *
+ * Setup: protocol=0x05, mem_size=524288, address=0, data_size=65, data_buffer={} (zeros).
+ * rurp_read_data_buffer() = 0, firestarter_get_data at data addresses returns 0 (default stub).
+ * poll_readback: observed = firestarter_get_data(addr) = 0 == expected=0 → passes on first iter.
+ * No timeout → no detect path → no RESPONSE_CODE_ERROR.
+ */
+void test_fix01b_clean_write_no_boot_block_detect(void) {
+    firestarter_handle_t h = {};
+    h.protocol   = 0x05;
+    h.cmd        = CMD_WRITE;
+    h.response_code = RESPONSE_CODE_OK;
+    h.chip_id    = 0;
+    h.mem_size   = 524288; /* 512KB W29C040 */
+    h.address    = 0;      /* boot-block address, but clean write → no detect */
+    h.data_size  = 65;     /* same as golden write probe (INV-04 minimal: 65 bytes) */
+    /* data_buffer zero-initialized: firestarter_get_data returns 0 = expected → poll passes. */
+    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE;
+
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "FIX-01b clean path: configure_memory must not error on 0x05 CMD_WRITE");
+
+    clear_bus_recording();
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+    if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "FIX-01b (FIX-02): clean write at boot-block address must NOT trigger the §6.6 detect "
+        "path — detect runs only on poll timeout, not on successful writes");
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -668,6 +780,10 @@ int main(int argc, char** argv) {
     /* Phase 94 Plan 02: PGSZ-02 consumption proof (handle->page_size safe fallback) */
     RUN_TEST(test_pgsz02_handle_page_size_overrides_heuristic);
     RUN_TEST(test_pgsz02_zero_page_size_falls_back_to_heuristic);
+
+    /* Phase 94 Plan 03: FIX-01b firmware §6.6 DETECT (boot-block locked error path) */
+    RUN_TEST(test_fix01b_boot_block_locked_sets_error_code);
+    RUN_TEST(test_fix01b_clean_write_no_boot_block_detect);
 
     return UNITY_END();
 }
