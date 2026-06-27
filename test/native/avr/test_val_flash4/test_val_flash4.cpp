@@ -466,6 +466,66 @@ void test_golden_flash4_chip_id(void) {
 #endif
 }
 
+/* ─── Phase 94 Plan 01: FIX-01a firmware defense-in-depth (T-93-CANERASE / D-06) ─ */
+
+/*
+ * test_flash4_init_no_vpp_when_can_erase_protocol5
+ *
+ * FIX-01a defense-in-depth: a protocol-0x05 handle with FLAG_CAN_ERASE SET (and
+ * FLAG_SKIP_ERASE NOT set) must NOT cause flash4_write_init to assert any VPP-enable
+ * control bits. This proves that even a stale or hand-crafted JSON command carrying
+ * the hazardous flag cannot trigger the 12V bulk erase path (T-93-CANERASE).
+ *
+ * Guard design (D-06): keyed on handle->protocol == 0x05, NOT on handle->vpp_mv.
+ * The W29C040 carries vpp_mv=12000 as a chip-ID-read datum, not a program-rail
+ * request — a voltage heuristic would never fire here (Pitfall 3 / 94-RESEARCH.md).
+ *
+ * Test setup:
+ *   - protocol=0x05, CMD_WRITE, mem_size=524288 (W29C040)
+ *   - ctrl_flags = FLAG_CAN_ERASE (0x02): erase path would normally be taken
+ *   - FLAG_SKIP_ERASE NOT set: without the guard, flash4_erase_execute would be called
+ *   - FLAG_SKIP_BLANK_CHECK set: suppress blank-check side effects (not under test)
+ *   - data_size=0, data_buffer={}: no write data; only init path exercised
+ *
+ * Expected: assert_no_vpp_in_recording finds NO CTRL_VPP_REGULATOR_ENABLE (0x80)
+ * or CTRL_VPP_P1_ENABLE (0x08) bits in any CONTROL_REGISTER write during
+ * flash4_write_init + flash4_write_execute (empty data → no-op execute).
+ *
+ * Failure mode if guard is reverted: flash4_erase_execute is called, which asserts
+ * CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_VPE_DROP_ENABLE | CTRL_VPE_ENABLE at line
+ * ~155 of flash_type_4.cpp → assert_no_vpp_in_recording FAILS.
+ */
+void test_flash4_init_no_vpp_when_can_erase_protocol5(void) {
+    firestarter_handle_t h = {};
+    h.protocol   = 0x05;
+    h.cmd        = CMD_WRITE;
+    h.response_code = RESPONSE_CODE_OK;
+    h.chip_id    = 0;
+    h.mem_size   = 524288; /* 512 KB (W29C040) */
+    h.address    = 0;
+    h.data_size  = 0; /* no data: only flash4_write_init is exercised */
+    /* ctrl_flags: FLAG_CAN_ERASE set, FLAG_SKIP_ERASE NOT set → would call
+     * flash4_erase_execute without the protocol guard.
+     * FLAG_SKIP_BLANK_CHECK set to suppress blank-check side effects. */
+    h.ctrl_flags = FLAG_CAN_ERASE | FLAG_SKIP_BLANK_CHECK;
+
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "FIX-01a: configure_memory must not error on 0x05 CMD_WRITE");
+
+    clear_bus_recording();
+    /* Drive flash4_write_init; data_size=0 so flash4_write_execute loops zero times. */
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+    if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "FIX-01a: flash4_write_init must succeed for protocol 0x05 with FLAG_CAN_ERASE set");
+    assert_no_vpp_in_recording(
+        "FIX-01a (T-93-CANERASE / D-06): protocol 0x05 with FLAG_CAN_ERASE must NOT "
+        "assert CTRL_VPP_REGULATOR_ENABLE or CTRL_VPP_P1_ENABLE — 12V bulk erase "
+        "is forbidden on a 5V flash4 chip even when the flag is present");
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -492,6 +552,9 @@ int main(int argc, char** argv) {
     /* Phase 88 Plan 03: byte-exact golden write + chip-id traces (PRIM-01 / D-01..D-04) */
     RUN_TEST(test_golden_flash4_write);
     RUN_TEST(test_golden_flash4_chip_id);
+
+    /* Phase 94 Plan 01: FIX-01a firmware defense-in-depth (T-93-CANERASE / D-06) */
+    RUN_TEST(test_flash4_init_no_vpp_when_can_erase_protocol5);
 
     return UNITY_END();
 }

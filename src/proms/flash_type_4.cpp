@@ -77,7 +77,20 @@ void flash4_write_init(firestarter_handle_t* handle) {
 
         if (is_flag_set(FLAG_CAN_ERASE)) {
             if (!is_flag_set(FLAG_SKIP_ERASE)) {
-                flash4_erase_execute(handle);
+                /* FIX-01a / T-93-CANERASE / D-06 defense-in-depth:
+                 * Protocol 0x05 (FLASH_AMD_STD) is a 5V-only page-write flash;
+                 * it auto-erases per page during the page-write, so no separate
+                 * 12V bulk erase is ever needed or safe.
+                 * Guard keyed on handle->protocol == 0x05 per D-06 boundary
+                 * ("regulator routing keyed on protocol, never on electrical.type
+                 * or vpp_mv"). vpp_mv=12000 on the W29C040 is a chip-ID datum,
+                 * NOT a program rail — a voltage heuristic would never fire here.
+                 * This guard is defense-in-depth: the host already omits
+                 * FLAG_CAN_ERASE for algorithm==5, but a stale or hand-crafted
+                 * JSON command carrying the flag must also be blocked here. */
+                if (handle->protocol != 0x05) {
+                    flash4_erase_execute(handle);
+                }
             } else {
                 LOG_INFO_ID(MSG_INFO_SKIPPING_ERASE);
             }
