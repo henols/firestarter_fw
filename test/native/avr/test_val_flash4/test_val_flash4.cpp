@@ -526,6 +526,115 @@ void test_flash4_init_no_vpp_when_can_erase_protocol5(void) {
         "is forbidden on a 5V flash4 chip even when the flag is present");
 }
 
+/* ─── Phase 94 Plan 02: PGSZ-02 consumption test (handle->page_size safe fallback) ─── */
+
+/*
+ * test_pgsz02_handle_page_size_overrides_heuristic
+ *
+ * PGSZ-02 / CR-01: when handle->page_size is non-zero, flash4_write_execute must
+ * use it instead of flash4_page_size(handle->mem_size). Proven by SDP boundary count.
+ *
+ * Setup: protocol=0x05, mem_size=524288 (W29C040, 512KB → heuristic gives 256B),
+ *        handle->page_size = 128 (override: smaller than heuristic).
+ *        address=126, data_size=4 (spans address 126..129 inclusive).
+ *
+ * NOTE: using address=126 (not 0) to stay well within the 256-entry recording buffer
+ * cap. With address=0, data_size=129 + page_size=128 the recording fills:
+ *   SDP@0 (8 entries) + 128 data bytes × 3 entries = 392 entries > 256 cap.
+ * With address=126, data_size=4 the recording fills:
+ *   SDP@126 first_byte (8) + SDP@128 page_start (8) + 4 data bytes × 3 (12) + poll (3) = 31 entries.
+ *
+ *   - page_size=128 (handle->page_size): SDP at addr 126 (first_byte) AND
+ *                   addr 128 (128 % 128 == 0, page_start). Count = 2.
+ *   - page_size=256 (heuristic): SDP at addr 126 only (addr 128 is NOT a 256B boundary:
+ *                   128 % 256 == 128 ≠ 0). Count = 1.
+ *
+ * Asserting count=2 PROVES the firmware consumed handle->page_size=128, not the heuristic 256.
+ *
+ * Zero-init guard (SAFE-02): make_handle() uses `h = {}` (zero-initialized); page_size
+ * is explicitly set to 128 here. A zero-initialized handle with page_size==0 falls back
+ * to the heuristic — see test_pgsz02_zero_page_size_falls_back_to_heuristic below.
+ */
+void test_pgsz02_handle_page_size_overrides_heuristic(void) {
+    firestarter_handle_t h = {};
+    h.protocol   = 0x05;
+    h.cmd        = CMD_WRITE;
+    h.response_code = RESPONSE_CODE_OK;
+    h.chip_id    = 0;
+    h.mem_size   = 524288;  /* 512KB W29C040 — heuristic → 256B */
+    h.page_size  = 128;     /* PGSZ-02: explicit override (smaller than heuristic 256B) */
+    h.address    = 126;     /* Start 2 bytes before 128B boundary at addr 128 */
+    h.data_size  = 4;       /* Bytes 126,127,128,129 — crosses 128B boundary; fits in recording cap */
+    /* data_buffer zero-initialized: rurp_read_data_buffer()=0 → DQ7 poll passes. */
+
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "PGSZ-02: configure_memory must not error on 0x05 CMD_WRITE");
+
+    clear_bus_recording();
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "PGSZ-02: flash4_write_execute must not error on 4-byte zero write crossing 128B boundary");
+    /* page_size=128: SDP fires at addr 126 (first_byte) AND addr 128 (128%128==0, page_start). Count=2.
+     * page_size=256 (heuristic): SDP fires at addr 126 only (128%256=128≠0, not a 256B boundary). Count=1.
+     * count=2 PROVES firmware consumed handle->page_size=128, NOT the heuristic 256. */
+    int sdp_count = count_sdp_occurrences();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, sdp_count,
+        "PGSZ-02: handle->page_size=128 must fire 2 SDPs crossing addr 128 (128B boundary); "
+        "page_size=256 (heuristic) would fire only 1 (addr 128 is not a 256B boundary)");
+}
+
+/*
+ * test_pgsz02_zero_page_size_falls_back_to_heuristic
+ *
+ * PGSZ-02 / CR-01 zero-init guard: when handle->page_size == 0 (absent wire field,
+ * zero-initialized handle), flash4_write_execute must fall back to flash4_page_size(mem_size).
+ * For mem_size=524288 (512KB W29C040), the heuristic returns 256.
+ *
+ * Setup: protocol=0x05, mem_size=524288, handle->page_size=0 (zero-initialized default).
+ *        address=126, data_size=4 (same window as override test — identical discriminant).
+ *
+ *   - page_size=0 → fallback → 256: SDP at addr 126 only (addr 128 is NOT a 256B boundary:
+ *                   128 % 256 == 128 ≠ 0). Count = 1.
+ *   - page_size=128: would fire 2 SDPs (discriminant).
+ *
+ * Asserting count=1 PROVES page_size==0 falls back to heuristic (256), not to 128.
+ *
+ * Zero-init guard: `h = {}` in C++ value-initializes all members to 0, so page_size=0
+ * by default (no explicit set). Verifies the CRITICAL_CORRECTNESS requirement that
+ * zero-initialized firestarter_handle_t instances degrade safely to the heuristic.
+ */
+void test_pgsz02_zero_page_size_falls_back_to_heuristic(void) {
+    firestarter_handle_t h = {};  /* zero-initialized — page_size==0 by default */
+    h.protocol   = 0x05;
+    h.cmd        = CMD_WRITE;
+    h.response_code = RESPONSE_CODE_OK;
+    h.chip_id    = 0;
+    h.mem_size   = 524288;  /* 512KB W29C040 — heuristic → 256B */
+    /* h.page_size = 0 (zero-initialized) — must trigger fallback to flash4_page_size(524288)=256 */
+    h.address    = 126;     /* same window as override test: crosses 128B boundary at addr 128 */
+    h.data_size  = 4;       /* Bytes 126,127,128,129 — identical discriminant window */
+    /* data_buffer zero-initialized: rurp_read_data_buffer()=0 → DQ7 poll passes. */
+
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "PGSZ-02 fallback: configure_memory must not error on 0x05 CMD_WRITE");
+
+    clear_bus_recording();
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "PGSZ-02 fallback: flash4_write_execute must not error on 4-byte zero write crossing 128B boundary");
+    /* page_size=0 → heuristic 256: SDP fires at addr 126 only (128%256=128≠0, not a 256B boundary). Count=1.
+     * page_size=128 (if fallback failed): would fire 2 SDPs at addr 126 + addr 128.
+     * count=1 PROVES zero page_size falls back to flash4_page_size(524288)=256. */
+    int sdp_count = count_sdp_occurrences();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, sdp_count,
+        "PGSZ-02 fallback: handle->page_size=0 must fall back to flash4_page_size(524288)=256 "
+        "— addr 128 is NOT a 256B boundary (128%%256=128≠0); count=2 would mean fallback failed");
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -555,6 +664,10 @@ int main(int argc, char** argv) {
 
     /* Phase 94 Plan 01: FIX-01a firmware defense-in-depth (T-93-CANERASE / D-06) */
     RUN_TEST(test_flash4_init_no_vpp_when_can_erase_protocol5);
+
+    /* Phase 94 Plan 02: PGSZ-02 consumption proof (handle->page_size safe fallback) */
+    RUN_TEST(test_pgsz02_handle_page_size_overrides_heuristic);
+    RUN_TEST(test_pgsz02_zero_page_size_falls_back_to_heuristic);
 
     return UNITY_END();
 }
