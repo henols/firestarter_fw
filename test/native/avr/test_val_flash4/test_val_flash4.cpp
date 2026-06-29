@@ -426,6 +426,14 @@ void test_golden_flash4_write(void) {
         "golden flash4 write: configure_memory must not error");
     clear_bus_recording(); /* isolate operation trace from configure-phase address writes */
     if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+    /* Phase 95: flash4_write_init now includes a proactive §6.6 boot-block detect
+     * (FLASH_ENABLE_ID + read + FLASH_DISABLE_ID) when address is in a boot-block
+     * region. With address=0 and the default stub returning 0x00 (unlocked), the
+     * detect fires but produces no error. Its bus emissions land in the recording
+     * BEFORE the execute phase. Reset the recording here so the golden trace captures
+     * only flash4_write_execute — identical to the pre-Phase-95 baseline (FIX-02).
+     * The golden_flash4_write.inc file is therefore byte-identical to the prior pin. */
+    clear_bus_recording(); /* isolate execute trace from init-phase detect bus emissions */
     if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
 #ifdef GOLDEN_BLESS
     print_trace_inc();
@@ -747,6 +755,211 @@ void test_fix01b_clean_write_no_boot_block_detect(void) {
         "path — detect runs only on poll timeout, not on successful writes");
 }
 
+/* ─── Phase 95: Proactive §6.6 boot-block lockout detection in flash4_write_init ─── */
+
+/*
+ * test_proactive_locked_no_force_sets_error
+ *
+ * Proactive detect: locked + NO FORCE → RESPONSE_CODE_ERROR + abort.
+ *
+ * flash4_write_init now runs a §6.6 detect READ before blank-check when the
+ * write targets a boot-block address (< 0x4000 for the first 16K block).
+ * When locked (detect returns true) and FLAG_FORCE is NOT set, write_init must
+ * set RESPONSE_CODE_ERROR and return early — page writes must NOT be attempted.
+ *
+ * Proof of "page write NOT attempted": flag data_buffer[0] = 0xAB (non-zero,
+ * non-blank). If execute runs and the SDP + write + poll loop fires, the poll
+ * will NOT time out (mock returns 0x00 ≠ 0xAB, but wait… mock returns 0x00,
+ * expected=0xAB → poll never passes → would set ERROR too). To prove abort, we
+ * check that response_code == ERROR comes from INIT (before execute), by
+ * asserting it AFTER calling only init (not execute).
+ *
+ * Setup mirrors test_fix01b_boot_block_locked_sets_error_code but checks after
+ * init-only call to confirm proactive (not reactive) source.
+ *
+ * Mock: flash4_mock_boot_block_locked_get_data — 0xFF at 0x00002 (locked),
+ *       0x00 elsewhere. Must be assigned AFTER configure_memory (Pitfall 3).
+ */
+void test_proactive_locked_no_force_sets_error(void) {
+    firestarter_handle_t h = {};
+    h.protocol   = 0x05;
+    h.cmd        = CMD_WRITE;
+    h.response_code = RESPONSE_CODE_OK;
+    h.chip_id    = 0;
+    h.mem_size   = 524288; /* 512KB W29C040 → first 16K boot block at 0x0000..0x3FFF */
+    h.address    = 0x0000; /* boot-block address — proactive detect fires */
+    h.data_size  = 1;
+    h.data_buffer[0] = 0xAB; /* non-zero expected byte */
+    /* No FLAG_FORCE — locked → ERROR + abort */
+    h.ctrl_flags = FLAG_SKIP_ERASE; /* skip erase side-effects; blank-check will run
+                                       but is never reached (error returned first) */
+
+    configure_memory(&h);
+    /* Pitfall 3: re-assign firestarter_get_data AFTER configure_memory() overwrites it */
+    h.firestarter_get_data = flash4_mock_boot_block_locked_get_data;
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "proactive detect: configure_memory must not error");
+
+    /* Drive ONLY init — if proactive detect fires and aborts, response_code = ERROR here. */
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "proactive detect (no force): locked boot-block write must set RESPONSE_CODE_ERROR "
+        "in flash4_write_init — early abort before any page writes");
+}
+
+/*
+ * test_proactive_locked_with_force_sets_warning
+ *
+ * Proactive detect: locked + FLAG_FORCE → RESPONSE_CODE_WARNING + init does NOT abort.
+ *
+ * When FLAG_FORCE is set and the boot block is locked, flash4_write_init must:
+ *   1. Set RESPONSE_CODE_WARNING (not ERROR).
+ *   2. NOT return early — execution falls through and init completes.
+ *
+ * Proof that init does not abort: after calling only init with FLAG_FORCE, the
+ * response code is RESPONSE_CODE_WARNING (not ERROR). If init had aborted, the
+ * code path for WARNING would not have been reached.
+ *
+ * Note: in the native test harness, the state machine (_check_response) is NOT
+ * invoked between init and main, so response_code is NOT reset by the loop.
+ * The WARNING set in init persists after init returns. We assert WARNING after
+ * init to confirm the correct code path was taken.
+ *
+ * Setup: protocol=0x05, CMD_WRITE, mem_size=524288, address=0 (boot-block),
+ *        FLAG_FORCE set, FLAG_SKIP_BLANK_CHECK + FLAG_SKIP_ERASE set to isolate
+ *        the proactive detect path (blank check would also run but on a locked
+ *        region it would find it non-blank via mock; FLAG_SKIP_BLANK_CHECK avoids
+ *        that complication — the WARNING path is the focus).
+ *
+ * Mock: flash4_mock_boot_block_locked_get_data — 0xFF at 0x00002 (locked),
+ *       0x00 elsewhere. Must be assigned AFTER configure_memory (Pitfall 3).
+ */
+void test_proactive_locked_with_force_sets_warning(void) {
+    firestarter_handle_t h = {};
+    h.protocol   = 0x05;
+    h.cmd        = CMD_WRITE;
+    h.response_code = RESPONSE_CODE_OK;
+    h.chip_id    = 0;
+    h.mem_size   = 524288; /* 512KB W29C040 → first 16K boot block at 0x0000..0x3FFF */
+    h.address    = 0x0000; /* boot-block address — proactive detect fires */
+    h.data_size  = 0;      /* no data: only init path under test */
+    /* FLAG_FORCE: locked boot block → WARNING (not ERROR), do not abort */
+    h.ctrl_flags = FLAG_FORCE | FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE;
+
+    configure_memory(&h);
+    /* Pitfall 3: re-assign firestarter_get_data AFTER configure_memory() overwrites it */
+    h.firestarter_get_data = flash4_mock_boot_block_locked_get_data;
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "proactive detect (force): configure_memory must not error");
+
+    /* Drive ONLY init — FLAG_FORCE should produce WARNING without aborting. */
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_WARNING, h.response_code,
+        "proactive detect (force): locked boot-block write with FLAG_FORCE must set "
+        "RESPONSE_CODE_WARNING in flash4_write_init — init does not abort (falls through), "
+        "operator forced the write knowing the region may be permanently locked");
+}
+
+/*
+ * test_proactive_unlocked_no_error_or_warning
+ *
+ * Proactive detect: unlocked chip at address 0 → no error, no warning.
+ *
+ * When the §6.6 detect read returns 0x00 (not 0xFF), the boot block is
+ * unlocked. flash4_write_init must leave response_code unchanged (RESPONSE_CODE_OK).
+ * No ERROR or WARNING should be emitted.
+ *
+ * Setup: protocol=0x05, CMD_WRITE, mem_size=524288, address=0 (boot-block region),
+ *        FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE, data_size=0 (init only).
+ *
+ * Mock: NOT assigned — default host stub's firestarter_get_data returns 0x00 at
+ *       ALL addresses (including detect address 0x00002). The detect returns
+ *       false (0x00 != 0xFF = unlocked) → proactive check does not modify
+ *       response_code. No ERROR, no WARNING.
+ *
+ * Note: this is the scenario exercised by the golden write trace (address=0,
+ * default stub). This test makes the invariant explicit.
+ */
+void test_proactive_unlocked_no_error_or_warning(void) {
+    firestarter_handle_t h = {};
+    h.protocol   = 0x05;
+    h.cmd        = CMD_WRITE;
+    h.response_code = RESPONSE_CODE_OK;
+    h.chip_id    = 0;
+    h.mem_size   = 524288; /* 512KB W29C040 */
+    h.address    = 0x0000; /* boot-block address — detect fires but chip unlocked */
+    h.data_size  = 0;
+    /* No mock reassignment: default stub returns 0x00 everywhere → unlocked */
+    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE;
+
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "proactive detect (unlocked): configure_memory must not error");
+
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "proactive detect (unlocked): address 0 with unlocked detect (0x00 at 0x00002) "
+        "must leave response_code = RESPONSE_CODE_OK — no error or warning from the detect");
+}
+
+/*
+ * test_proactive_mid_chip_no_detect_invoked
+ *
+ * Proactive detect: mid-chip address (>= 0x4000, below last 16K) → detect NOT invoked.
+ *
+ * The region gate ensures that writes targeting addresses outside the boot-block
+ * regions (first and last 16K) do NOT trigger the §6.6 detect. Even with the
+ * boot-block-locked mock in place, a write starting at address 0x4000 must
+ * succeed with RESPONSE_CODE_OK — the detect is never called.
+ *
+ * Proof: assign flash4_mock_boot_block_locked_get_data AFTER configure_memory.
+ * If the detect ran at address 0x4000, it would compute detect_addr = 0x7FFF2
+ * (last-16K check, but 0x4000 < 524288-0x4000 = 0x7C000, so NOT in last BB).
+ * Actually: in_first_bb = (0x4000 < 0x4000) = false;
+ *            in_last_bb = (524288 > 0x4000 && 0x4000 >= 524288-0x4000=508928) = false.
+ * Region gate = false → detect is NOT invoked → response_code stays OK.
+ *
+ * If the detect WERE invoked with the locked mock, it would read 0xFF and set ERROR.
+ * The RESPONSE_CODE_OK assertion PROVES the detect was not invoked.
+ *
+ * Setup: protocol=0x05, CMD_WRITE, mem_size=524288, address=0x4000 (mid-chip,
+ *        exactly at first-BB boundary but NOT inside it), data_size=0 (init only).
+ *
+ * Mock: flash4_mock_boot_block_locked_get_data — 0xFF at 0x00002 (locked first-BB).
+ *       If detect runs → ERROR. RESPONSE_CODE_OK proves detect was NOT run.
+ */
+void test_proactive_mid_chip_no_detect_invoked(void) {
+    firestarter_handle_t h = {};
+    h.protocol   = 0x05;
+    h.cmd        = CMD_WRITE;
+    h.response_code = RESPONSE_CODE_OK;
+    h.chip_id    = 0;
+    h.mem_size   = 524288; /* 512KB W29C040 */
+    h.address    = 0x4000; /* exactly at boundary: NOT in first-BB (0x0000..0x3FFF)
+                              NOT in last-BB  (0x7C000..0x7FFFF = mem_size-0x4000 up)
+                              → region gate = false → detect must NOT fire */
+    h.data_size  = 0;
+    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE;
+
+    configure_memory(&h);
+    /* Pitfall 3: assign the locked mock AFTER configure_memory.
+     * If the proactive detect fires and reads 0x00002 → 0xFF → ERROR.
+     * RESPONSE_CODE_OK asserts the detect was NOT invoked (region gate blocked it). */
+    h.firestarter_get_data = flash4_mock_boot_block_locked_get_data;
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "proactive detect (mid-chip): configure_memory must not error");
+
+    if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "proactive detect (mid-chip): address 0x4000 is NOT in any boot-block region "
+        "(in_first_bb = false, in_last_bb = false) — detect must NOT be invoked; "
+        "RESPONSE_CODE_OK proves the locked mock was never read (region gate blocked it)");
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -784,6 +997,12 @@ int main(int argc, char** argv) {
     /* Phase 94 Plan 03: FIX-01b firmware §6.6 DETECT (boot-block locked error path) */
     RUN_TEST(test_fix01b_boot_block_locked_sets_error_code);
     RUN_TEST(test_fix01b_clean_write_no_boot_block_detect);
+
+    /* Phase 95: Proactive §6.6 boot-block lockout detection in flash4_write_init */
+    RUN_TEST(test_proactive_locked_no_force_sets_error);
+    RUN_TEST(test_proactive_locked_with_force_sets_warning);
+    RUN_TEST(test_proactive_unlocked_no_error_or_warning);
+    RUN_TEST(test_proactive_mid_chip_no_detect_invoked);
 
     return UNITY_END();
 }

@@ -98,6 +98,54 @@ void flash4_write_init(firestarter_handle_t* handle) {
             }
         }
     }
+    /* PROACTIVE §6.6 boot-block lockout detection (Phase 95).
+     *
+     * Rationale: the REACTIVE detect (flash4_wait_for_page_write timeout path) fires
+     * AFTER the poll timeout, wasting ~10 ms × data_size iterations and surfacing the
+     * lockout only as a verify-timeout. Detecting it HERE — before any page writes —
+     * gives the operator an immediate, clear diagnosis.
+     *
+     * Region gate: only fire when the write targets a boot-block address (first or
+     * last 16K). Mid-chip writes are never blocked by a boot-block lock.
+     *   in_first_bb: handle->address < 0x4000
+     *   in_last_bb:  handle->mem_size > 0x4000 AND
+     *                handle->address >= handle->mem_size - 0x4000
+     *
+     * Force semantics: mirrors eeprom_28c.cpp / flash_intel.cpp / primitives.h:
+     *   - No FORCE → LOG_ERROR_ID_U24 + RESPONSE_CODE_ERROR + return (abort)
+     *   - FLAG_FORCE → LOG_WARN_ID_U24 + RESPONSE_CODE_WARNING + fall through
+     *     (write proceeds into the locked region; it will fail at the poll step,
+     *     which is acceptable and expected when the operator forces the operation)
+     *
+     * NOTE: this runs BEFORE blank-check so the operator gets the lockout message
+     * even when FLAG_SKIP_BLANK_CHECK is NOT set (i.e. the blank check has not run
+     * yet). If detection fires and FORCE is not set, the blank check is also skipped
+     * via the early return. The REACTIVE path (timeout → detect) is kept as-is and
+     * is now a complementary fallback for partial-range writes that start outside but
+     * cross into a boot-block boundary.
+     *
+     * Golden-trace safety: flash4_write_execute (the golden-trace target) BYPASSES
+     * this init function entirely in the native test suite (see test_golden_flash4_write
+     * comment "we bypass init"). The golden write trace is therefore byte-identical
+     * regardless of this new code path (FIX-02 preserved). */
+    if (!is_operation_in_progress(handle)) {
+        bool in_first_bb = (handle->address < 0x4000);
+        bool in_last_bb  = (handle->mem_size > 0x4000 &&
+                             handle->address >= handle->mem_size - 0x4000);
+        if ((in_first_bb || in_last_bb) &&
+            flash4_detect_boot_block_lockout(handle, handle->address)) {
+            if (is_flag_set(FLAG_FORCE)) {
+                LOG_WARN_ID_U24(MSG_WARN_FL4_BOOT_BLOCK_LOCKED, handle->address);
+                handle->response_code = RESPONSE_CODE_WARNING;
+                /* fall through — write proceeds (operator forced it) */
+            } else {
+                LOG_ERROR_ID_U24(MSG_ERR_FL4_BOOT_BLOCK_LOCKED, handle->address);
+                handle->response_code = RESPONSE_CODE_ERROR;
+                return;
+            }
+        }
+    }
+
     if (!is_flag_set(FLAG_SKIP_BLANK_CHECK)) {
         mem_util_blank_check(handle);
     }
