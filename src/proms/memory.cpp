@@ -278,6 +278,46 @@ void memory_set_data(firestarter_handle_t* handle, uint32_t address, uint8_t dat
     handle->firestarter_set_address(handle, address);
     rurp_write_data_buffer(data);
     delayMicroseconds(3);  // Needed for slower address changes like slow ROMs and "Power through address lines"
+
+    /* RC-1 / Phase 98 Plan 02 deliberate PGM-assert (D-01 belt):
+     * For 0x08 EPROM_QUICK, 32-pin, ≤256K (A18 = bit 18 = mask 0x40000 unused):
+     *   AM27C020.pdf: program cycle requires CE=VIL AND PGM=VIL.  Plan 01's
+     *   DIP32_27C020 pinout took pin 31 OFF the address bus so line 22 is no
+     *   longer driven by an address bit.  This gated write is the "suspenders"
+     *   half of D-01: it EXPLICITLY holds pin 31's bus line (CTRL_ADDRESS_LINE_18)
+     *   at the program-active LOW level (VIL) across the CE-pulse window.
+     *
+     *   Q1 RESOLVED (2026-06-30): static-high-pins would drive HIGH (VIH) —
+     *   the RURP latch path has no inversion.  PGM program-active is VIL (LOW),
+     *   so the assert MUST be a firmware clear/hold-low, not a static_high_mask.
+     *
+     *   Gate: protocol==0x08 && pins==32 && mem_size<=262144 ensures the 0x08
+     *   bit (CTRL_VPP_P1_ENABLE_REV2 == CTRL_ADDRESS_LINE_18_REV2 == 0x08 on
+     *   Rev 2.0) NEVER fires for a 512K/1M A18 user (D-04 firmware belt).
+     *
+     *   HIGH-1 / RC-1 caveat (no over-claim): under RC-1 the addr-0 register
+     *   state is byte-unchanged by this fix — pin 31 is already at VIL at addr 0
+     *   because line 22 is neither an address bit (DIP32_27C020 has 18 address
+     *   pins, A0-A17) nor in static_high_mask.  If Phase 99 still shows 0 bits
+     *   at addr 0 that is CONSISTENT WITH the analysis, not a new bug.
+     *   Phase 99 is the sole empirical gate.
+     *
+     *   MED-5 (verified no-op): program_mismatched_bytes already holds
+     *   CTRL_VPP_P1_ENABLE across the FULL program window (set before the byte
+     *   loop, cleared after).  That per-buffer hold strictly encompasses every
+     *   per-byte CE pulse in this function.  No redundant per-byte P1 re-assertion
+     *   is added here — only the explicit PGM line hold-LOW (CTRL_ADDRESS_LINE_18
+     *   clear), which is a DISTINCT control from the P1 VPP routing. */
+    if (handle->protocol == 0x08 && handle->pins == 32 && handle->mem_size <= 262144) {
+        /* Deliberate PGM=VIL hold-LOW: read current CONTROL register state,
+         * explicitly clear CTRL_ADDRESS_LINE_18 (pin 31 / line 22), and write
+         * it back.  This emits a recorded CONTROL_REGISTER write (the
+         * implementation artifact that Test A / RC-98A asserts on) and holds
+         * pin 31 at the program-active level through the CE pulse below. */
+        rurp_register_t ctrl = rurp_read_from_register(CONTROL_REGISTER);
+        rurp_write_to_register(CONTROL_REGISTER, ctrl & ~CTRL_ADDRESS_LINE_18);
+    }
+
     rurp_chip_enable();
     delayMicroseconds(handle->pulse_delay);
     rurp_chip_disable();
