@@ -55,9 +55,15 @@
 #define TYPE_SRAM 4
 #define TYPE_FLASH_TYPE_4 5
 
-#ifndef min
-#define min(a, b) ((a) < (b) ? (a) : (b))
-#endif
+// IN-03 fix: the previous `#define min(a,b) ((a)<(b)?(a):(b))` evaluated
+// each argument twice — safe today (memory_read_execute's operands below are
+// side-effect-free) but a latent double-evaluation footgun for any future
+// `min(f(), g())` call. Replaced with a single-evaluation inline function.
+// Named `mem_min` (not `min`) to avoid colliding with any `<algorithm>`
+// std::min or Arduino-provided `min()` macro elsewhere in the build.
+static inline int32_t mem_min(int32_t a, int32_t b) {
+    return (a < b) ? a : b;
+}
 
 void memory_read_execute(firestarter_handle_t* handle);
 void memory_write_execute(firestarter_handle_t* handle);
@@ -216,7 +222,7 @@ void mem_util_set_address(firestarter_handle_t* handle, uint32_t address) {
 }
 
 void memory_read_execute(firestarter_handle_t* handle) {
-    int buf_size = min(handle->mem_size - handle->address, DATA_BUFFER_SIZE);
+    int buf_size = mem_min(handle->mem_size - handle->address, DATA_BUFFER_SIZE);
     LOG_DEBUG_ID_SUB_U24(DBG_READING_FROM_ADDRESS, handle->address);
     for (int i = 0; i < buf_size; i++) {
         uint8_t data = handle->firestarter_get_data(handle, handle->address + i);
@@ -393,10 +399,14 @@ typedef struct {
 
 #define BLANK_CHECK_CHUNK_SIZE 2048
 void uint32_to_bytes(char* buffer, int pos, uint32_t value) {
+    // IN-01 fix: explicit distinct indices — the prior `buffer[pos]=...;
+    // buffer[pos++]=...;` sequence wrote the original index twice (24-bit
+    // then 16-bit shift) and dropped the >>0 byte entirely. Each of the four
+    // bytes now lands at its own offset.
     buffer[pos] = (value >> 24) & 0xFF;
-    buffer[pos++] = (value >> 16) & 0xFF;
-    buffer[pos++] = (value >> 8) & 0xFF;
-    buffer[pos++] = value & 0xFF;
+    buffer[pos + 1] = (value >> 16) & 0xFF;
+    buffer[pos + 2] = (value >> 8) & 0xFF;
+    buffer[pos + 3] = value & 0xFF;
 }
 
 void mem_util_blank_check(firestarter_handle_t* handle) {
