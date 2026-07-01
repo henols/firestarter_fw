@@ -279,44 +279,60 @@ void memory_set_data(firestarter_handle_t* handle, uint32_t address, uint8_t dat
     rurp_write_data_buffer(data);
     delayMicroseconds(3);  // Needed for slower address changes like slow ROMs and "Power through address lines"
 
-    /* RC-1 / Phase 98 Plan 02 deliberate PGM-assert (D-01 belt):
-     * For 0x08 EPROM_QUICK, 32-pin, ≤256K (A18 = bit 18 = mask 0x40000 unused):
-     *   AM27C020.pdf: program cycle requires CE=VIL AND PGM=VIL.  Plan 01's
-     *   DIP32_27C020 pinout took pin 31 OFF the address bus so line 22 is no
-     *   longer driven by an address bit.  This gated write is the "suspenders"
-     *   half of D-01: it EXPLICITLY holds pin 31's bus line (CTRL_ADDRESS_LINE_18)
-     *   at the program-active LOW level (VIL) across the CE-pulse window.
+    /* RC-1 / Phase 98 Plan 04 CORRECTED FIX (reverts Plan 02's inert A18-clear):
      *
-     *   Q1 RESOLVED (2026-06-30): static-high-pins would drive HIGH (VIH) —
-     *   the RURP latch path has no inversion.  PGM program-active is VIL (LOW),
-     *   so the assert MUST be a firmware clear/hold-low, not a static_high_mask.
+     * Plan 02 gated a clear of logical CTRL_ADDRESS_LINE_18 to "hold PGM LOW"
+     * for 0x08 EPROM_QUICK 32-pin ≤256K chips (AM27C020). That was WRONG on
+     * BOTH hardware revisions:
+     *   - Rev 2.0: CTRL_ADDRESS_LINE_18 folds to CTRL_ADDRESS_LINE_18_REV2,
+     *     which is THE SAME PHYSICAL BIT as CTRL_VPP_P1_ENABLE_REV2 (both
+     *     0x08, rurp_pinout.h:122/128). That bit is held HIGH for VPP routing
+     *     throughout the whole program pulse (program_mismatched_bytes) — so
+     *     clearing "CTRL_ADDRESS_LINE_18" was a physical NO-OP on pin 31; it
+     *     never reached the socket (CR-01, confirmed via operator schematic
+     *     study).
+     *   - Rev 0/1 (legacy): CTRL_ADDRESS_LINE_18 is a DISTINCT physical bit
+     *     (0x20) from CTRL_VPP_P1_ENABLE (0x08). There the clear DID reach the
+     *     socket — but at the WRONG pin: 0x20 is a genuine A18 address line on
+     *     the legacy layout, not pin 31 / PGM. Clearing it would have silently
+     *     corrupted addressing on any chip that actually uses A18.
      *
-     *   Gate: protocol==0x08 && pins==32 && mem_size<=262144 ensures the 0x08
-     *   bit (CTRL_VPP_P1_ENABLE_REV2 == CTRL_ADDRESS_LINE_18_REV2 == 0x08 on
-     *   Rev 2.0) NEVER fires for a 512K/1M A18 user (D-04 firmware belt).
+     * CORRECTED MECHANISM (operator-confirmed via schematic, this plan):
+     * Pin 31 on the AM27C020 is /PGM, and physically /PGM IS the RW
+     * (read/write) line — CTRL_READ_WRITE, physical bit 0x40. This bit is
+     * REVISION-INVARIANT: it is in the Rev-2 passthrough mask
+     * (rurp_hw_rev_utils.h:23) AND is copied verbatim in the Rev-0/1
+     * `ctrl_reg = data` passthrough (rurp_hw_rev_utils.h:30) — so it reaches
+     * pin 31 unchanged on legacy, Rev 1, and Rev 2 hardware alike
+     * (rurp_pinout.h:82/94/113/125).
      *
-     *   HIGH-1 / RC-1 caveat (no over-claim): under RC-1 the addr-0 register
-     *   state is byte-unchanged by this fix — pin 31 is already at VIL at addr 0
-     *   because line 22 is neither an address bit (DIP32_27C020 has 18 address
-     *   pins, A0-A17) nor in static_high_mask.  If Phase 99 still shows 0 bits
-     *   at addr 0 that is CONSISTENT WITH the analysis, not a new bug.
-     *   Phase 99 is the sole empirical gate.
+     * 98-03 (host half) assigned pin 31 to the RW line on DIP32_27C020
+     * (`rw-pin:[31]` -> pin_conversions[32][31]=22 -> config.rw_line=22). The
+     * EXISTING rw_line mechanism already does the work: mem_util_remap_address_bus
+     * (below, called with WRITE_FLAG=0 for this write path) ORs
+     * `read_write << config.rw_line` into the remapped address; that bit lands
+     * in the top_address CONTROL byte at mem_util_calculate_top_address_register
+     * (CTRL_READ_WRITE = 0x40 mask) via handle->firestarter_set_address ->
+     * mem_util_set_address -> rurp_write_to_register(CONTROL_REGISTER, ...)
+     * a few lines above this comment. WRITE_FLAG=0 means pin 31 is held LOW
+     * (program-active VIL) for the full CE-pulse window below (address/CONTROL
+     * write happens once per byte, before rurp_chip_enable/delayMicroseconds/
+     * rurp_chip_disable) — no additional per-byte CONTROL write is needed here.
      *
-     *   MED-5 (verified no-op): program_mismatched_bytes already holds
-     *   CTRL_VPP_P1_ENABLE across the FULL program window (set before the byte
-     *   loop, cleared after).  That per-buffer hold strictly encompasses every
-     *   per-byte CE pulse in this function.  No redundant per-byte P1 re-assertion
-     *   is added here — only the explicit PGM line hold-LOW (CTRL_ADDRESS_LINE_18
-     *   clear), which is a DISTINCT control from the P1 VPP routing. */
-    if (handle->protocol == 0x08 && handle->pins == 32 && handle->mem_size <= 262144) {
-        /* Deliberate PGM=VIL hold-LOW: read current CONTROL register state,
-         * explicitly clear CTRL_ADDRESS_LINE_18 (pin 31 / line 22), and write
-         * it back.  This emits a recorded CONTROL_REGISTER write (the
-         * implementation artifact that Test A / RC-98A asserts on) and holds
-         * pin 31 at the program-active level through the CE pulse below. */
-        rurp_register_t ctrl = rurp_read_from_register(CONTROL_REGISTER);
-        rurp_write_to_register(CONTROL_REGISTER, ctrl & ~CTRL_ADDRESS_LINE_18);
-    }
+     * No gate is needed: rw_line is 0xFF (disabled) for every pinout except
+     * DIP32_27C020 (and the existing DIP32_SST39SF040 WE-line precedent), so
+     * this mechanism is structurally inert for any chip that does not assign
+     * pin 31 to the RW line — including the 27C040 (pin 31 = A18) and any
+     * 512K/1M part (D-04 alias-collision guard: no CONTROL-register mutation
+     * is performed here anymore, so there is nothing left that could corrupt
+     * A18 on those parts; WR-04).
+     *
+     * GOOD NEWS: the AM27C020 write is NOT unsupportable on Rev 2 — pin 31
+     * reaches RW fine via CTRL_READ_WRITE; Plan 02 simply asserted the wrong
+     * bit. Phase 99 (Leonardo + Rev 2.0 bench) remains the sole empirical
+     * proof that bits flip on silicon; Rev 0/1 is covered by this
+     * revision-agnostic code path + the WR-01 native test only, not bench
+     * this milestone. */
 
     rurp_chip_enable();
     delayMicroseconds(handle->pulse_delay);
