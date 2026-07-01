@@ -72,6 +72,18 @@
 
 #define ADDRESS_LINES_SIZE 20
 
+/* MAX_27C020_SIZE: the <=256K (262144 byte) size boundary for 0x08
+ * (EPROM_QUICK) 32-pin parts where pin 31 (A18 on DIP32_STD) is
+ * structurally unused as an address line and is safe to repurpose as
+ * DIP32_27C020's PGM/RW strobe (see memory.cpp's CR-1 comment block).
+ * Chips above this boundary (512K AM27C040, 1M AM27C080) legitimately
+ * use pin 31 = A18 and MUST stay on DIP32_STD (D-04 alias guard).
+ * Mirrors the host-side constant of the same name/value in
+ * firestarter_app/tools/build_db.py (98-03's resolve_pinout_key size
+ * gate) — a divergence between the two is a hardware-damage A18 risk;
+ * see IN-02 / T-98-18 and tests/test_revision_constants_parity.py. */
+#define MAX_27C020_SIZE 262144
+
 typedef struct bus_config {
     uint8_t address_lines[ADDRESS_LINES_SIZE];  // Array mapping address lines
     uint32_t address_mask;                      // Mask for address lines
