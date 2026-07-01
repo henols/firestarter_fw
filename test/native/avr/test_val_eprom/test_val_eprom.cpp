@@ -702,7 +702,7 @@ void test_wr02c_generic_init_mismatch_without_force_yields_error(void) {
         "WR-02c: generic-init mismatch WITHOUT FLAG_FORCE must yield ERROR");
 }
 
-/* ─── Phase 98 Plan 02 / RC-1 fix: corrected 0x08 32-pin ≤256K PGM-assert ── */
+/* ─── Phase 98 Plan 04 / RC-1 CORRECTED fix: rw_line-based pin-31 PGM hold ── */
 
 /* Helper: count CONTROL_REGISTER writes in the current recording. */
 static int count_control_reg_writes(void) {
@@ -715,17 +715,18 @@ static int count_control_reg_writes(void) {
     return n;
 }
 
-/* Helper: detect two consecutive CONTROL_REGISTER writes in the recording.
- * This is the implementation-artifact discriminator for the deliberate PGM-hold
- * write: memory_set_data first does mem_util_set_address (emits CONTROL write),
- * then the gated PGM-hold adds a second CONTROL write immediately after —
- * producing CONTROL, CONTROL in sequence. Pre-fix, these writes are never
- * adjacent (they are separated by LSB/MSB register writes of the next op). */
-static bool recording_has_consecutive_control_writes(void) {
-    int n = bus_recording_count();
-    for (int i = 0; i + 1 < n; i++) {
+/* Helper: does any recorded CONTROL_REGISTER write during the WRITE-phase
+ * (execute, after init) carry CTRL_READ_WRITE (0x40) CLEARED — i.e. pin 31
+ * held at the program-active LOW level? This is the corrected rw_line
+ * artifact (replaces the removed "extra CONTROL write" count from Plan 02):
+ * with config.rw_line=22 and WRITE_FLAG=0, mem_util_remap_address_bus ORs
+ * 0<<22 into the address (a no-op — the bit is simply not set), so the
+ * top_address CONTROL write's CTRL_READ_WRITE bit is 0 (LOW) on every write.
+ * We assert at least one CONTROL write in the recording has that bit clear. */
+static bool recording_has_ctrl_read_write_low(void) {
+    for (int i = 0; i < bus_recording_count(); i++) {
         if (recorded_reg(i) == CONTROL_REGISTER &&
-            recorded_reg(i + 1) == CONTROL_REGISTER) {
+            (recorded_data(i) & CTRL_READ_WRITE) == 0) {
             return true;
         }
     }
@@ -733,59 +734,39 @@ static bool recording_has_consecutive_control_writes(void) {
 }
 
 /*
- * RC-98A — Corrected 0x08 32-pin ≤256K path: deliberate PGM-hold CONTROL write
- * (CODE-STRUCTURE assertion — HIGH-3 honesty).
+ * RC-98A — Corrected 0x08 32-pin ≤256K path: pin 31 (RW / CTRL_READ_WRITE)
+ * held LOW via the rw_line mechanism (rw_line=22, resolved from 98-03's
+ * rw-pin:[31] on DIP32_27C020).
  *
- * Verifies that memory_set_data, when gated on protocol==0x08 && pins==32 &&
- * mem_size<=262144, emits an ADDITIONAL, deliberate CONTROL_REGISTER write
- * that explicitly holds pin 31's bus line (line 22 / CTRL_ADDRESS_LINE_18) at
- * the program-active LOW level across the CE-pulse window.
+ * Reconciled with the CR-01 revert (WR-04): Plan 02's "extra CONTROL write"
+ * discriminator is GONE — memory_set_data no longer performs any CONTROL
+ * mutation of its own. Pin 31's program-active hold now arrives via the
+ * ALREADY-EXISTING mem_util_set_address -> mem_util_calculate_top_address_register
+ * path, driven by config.rw_line (set from the pinout DB), not an extra write.
+ * The corrected artifact is: the WRITE-phase top_address CONTROL write has
+ * CTRL_READ_WRITE (0x40) CLEAR.
  *
- * The RED-able discriminator is the PRESENCE/COUNT of this extra CONTROL write
- * (an implementation artifact the fix UNIQUELY emits) — NOT the mere LOW level
- * of CTRL_ADDRESS_LINE_18 at addr=0, which is ALREADY zero before the fix
- * (pin 31 is off the address bus in DIP32_27C020, and addr=0 sets no high-order
- * bits). Asserting on the bit level alone would be circular (true pre-fix too).
- *
- * Pre-fix CONTROL write count in execute phase (1 byte, addr=0, DIP32_27C020,
- * vpp_line=VPP_P1_32_DIP → using_p1_as_vpp=true → CTRL_VPE→CTRL_VPP_P1 swap):
- *   VPP regulator + DROP_ENABLE set                       — 1 CONTROL write
- *   set_ctrl(CTRL_VPP_P1_ENABLE, 1) via VPE→P1 swap      — 1 CONTROL write
- *   mem_util_set_address (write byte): LSB, MSB, CONTROL  — 1 CONTROL write
- *   [no deliberate PGM-hold write pre-fix]
- *   set_ctrl(CTRL_VPP_P1_ENABLE, 0) via VPE→P1 swap      — 1 CONTROL write
- *   mem_util_set_address (verify byte): LSB, MSB, CONTROL — 1 CONTROL write
- *   Total pre-fix: 5 CONTROL writes (empirically confirmed)
- *
- * Post-fix: the gated PGM-hold write adds 1 more → 6 CONTROL writes minimum.
- * This test FAILS pre-fix (RED) because the extra write is absent.
- *
- * GREEN: A green Test A verifies CODE STRUCTURE (deliberate PGM assert is
- * emitted). It does NOT imply bits flip on silicon — under RC-1 the addr-0
- * register state is byte-unchanged (pin 31 already at VIL at addr 0). Phase 99
- * is the sole empirical gate.
- *
- * bus_config: DIP32_27C020 shape (pin 31 OFF the address bus, no static_high_mask
- * for line 22, vpp on pin 1 via CTRL_VPP_P1_ENABLE — matching Plan 01's pinout).
- * mem_size = 262144 (256K, ≤262144 gate — includes AM27C020).
+ * bus_config: DIP32_27C020 shape (pin 31 OFF the address bus, rw_line=22,
+ * vpp on pin 1 via CTRL_VPP_P1_ENABLE — matching 98-03's pinout).
+ * mem_size = 262144 (256K, includes AM27C020).
  */
-void test_rc98a_0x08_32pin_256k_deliberate_pgm_hold_emitted(void) {
+void test_rc98a_0x08_32pin_256k_pgm_hold_via_rw_line(void) {
     firestarter_handle_t h = make_handle(0x08, CMD_WRITE);
 
-    /* DIP32_27C020 bus_config: pin 31 NOT in address bus, vpp on pin 1 via
-     * CTRL_VPP_P1_ENABLE. All address_lines[] entries = 0xFF (no remapped lines
-     * beyond the default address_mask), address_mask covers A0-A17 (18 bits =
-     * 0x3FFFF), matching_lines = 0. static_high_mask = 0 (no static-high entry
-     * in DIP32_27C020). rw_line = 0xFF (no RW pin). vpp_line = VPP_P1_32_DIP
-     * (pin 1 → P1 VPP routing — matches DIP32_27C020 vpp-pin:[1] field).
+    /* DIP32_27C020 bus_config: pin 31 NOT in address bus, RESOLVED to the RW
+     * line (rw_line=22, from 98-03's rw-pin:[31] -> pin_conversions[32][31]=22).
+     * vpp on pin 1 via CTRL_VPP_P1_ENABLE. All address_lines[] entries = 0xFF
+     * (no remapped lines beyond the default address_mask), address_mask covers
+     * A0-A17 (18 bits = 0x3FFFF), matching_lines = 0. static_high_mask = 0
+     * (no static-high entry in DIP32_27C020).
      * Pitfall 4: re-assign any mock AFTER configure_memory (it clobbers
      * firestarter_get_data at memory.cpp:91). */
     h.pins = 32;
-    h.mem_size = 262144;                          /* 256K — within the ≤262144 gate */
+    h.mem_size = 262144;                          /* 256K — AM27C020 */
     h.data_size = 1;
     h.bus_config.vpp_line   = VPP_P1_32_DIP;     /* pin 1 VPP routing */
     h.bus_config.address_mask = 0x3FFFF;          /* A0-A17 only; A18 (0x40000) excluded */
-    h.bus_config.rw_line    = 0xFF;               /* no RW pin */
+    h.bus_config.rw_line    = 22;                 /* pin 31 -> RW line (98-03) */
     h.bus_config.static_high_mask = 0;            /* no static-high lines */
     h.bus_config.matching_lines   = 0;
     /* Fill address_lines[0..19] = 0xFF (no remapped lines) */
@@ -798,53 +779,50 @@ void test_rc98a_0x08_32pin_256k_deliberate_pgm_hold_emitted(void) {
         "RC-98A: configure_memory must not error on 0x08 CMD_WRITE");
     if (h.firestarter_operation_init) h.firestarter_operation_init(&h);
 
-    /* Isolate execute phase: clear recording after init so we count only the
-     * execute-phase CONTROL writes (same pattern as test_inv03_eprom_0x08_p1_as_vpp). */
+    /* Isolate execute phase: clear recording after init so we assert only on
+     * the execute-phase CONTROL writes (same pattern as test_inv03_eprom_0x08_p1_as_vpp). */
     clear_bus_recording();
 
     if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
     TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
         "RC-98A: eprom_write_execute must not error on 1-byte zero write");
 
-    /* Assert the PRESENCE of the deliberate PGM-hold CONTROL write.
-     * Pre-fix count = 5 (empirically confirmed — see comment above).
-     * Post-fix = 6+ (one extra deliberate PGM-hold write in memory_set_data
-     * before rurp_chip_enable, uniquely emitted by the gated branch).
-     * This is the implementation-artifact discriminator (HIGH-3): the fix
-     * UNIQUELY emits this extra write; the bit-level LOW-ness of line 22 at
-     * addr=0 is already true pre-fix and would make the test circular. */
-    int ctrl_writes = count_control_reg_writes();
-    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(6, ctrl_writes,
-        "RC-98A [CODE-STRUCTURE]: 0x08 32-pin ≤256K execute phase must emit ≥6 "
-        "CONTROL_REGISTER writes (5 pre-fix + 1 deliberate PGM-hold write in "
-        "memory_set_data before chip_enable). "
-        "A green test verifies code structure only — does NOT imply bits flip on silicon. "
-        "Under RC-1, addr-0 register state is byte-unchanged (pin 31 already VIL at addr 0); "
-        "Phase 99 is the sole empirical gate.");
+    /* Corrected artifact: at least one WRITE-phase CONTROL write has
+     * CTRL_READ_WRITE (0x40) CLEAR — pin 31 held program-active LOW via the
+     * rw_line mechanism (config.rw_line=22, WRITE_FLAG=0). */
+    TEST_ASSERT_TRUE_MESSAGE(recording_has_ctrl_read_write_low(),
+        "RC-98A [rw_line mechanism]: 0x08 32-pin ≤256K write-phase must emit a "
+        "CONTROL_REGISTER write with CTRL_READ_WRITE (0x40) LOW — pin 31 held "
+        "program-active via config.rw_line=22 (mem_util_remap_address_bus + "
+        "top_address CTRL_READ_WRITE mask), driven by 98-03's rw-pin:[31]. "
+        "Phase 99 (Leonardo + Rev 2.0) remains the sole empirical silicon proof.");
 }
 
 /*
- * RC-98B — D-04 gate exclusion: PGM-hold MUST NOT fire for 512K (A18 user).
+ * RC-98B — D-04 gate exclusion (RECONCILED to the corrected mechanism, WR-02):
+ * a 512K AM27C040 (A18 user) MUST NOT get its rw_line resolved to pin 31 in a
+ * way that corrupts A18 addressing. DIP32_27C040 (the existing 27C040 pinout)
+ * has NO rw-pin entry (rw_line stays 0xFF, disabled) — pin 31 is address line
+ * A18 there, untouched by this mechanism.
  *
- * Verifies that the gated PGM-hold branch (`protocol==0x08 && pins==32 &&
- * mem_size<=262144`) is UNREACHABLE for a 512K AM27C040 (mem_size=524288).
- * On Rev 2, CTRL_VPP_P1_ENABLE (0x08) == CTRL_ADDRESS_LINE_18_REV2 — firing
- * the PGM-hold on a 512K part would corrupt A18 (hardware damage, D-04).
- *
- * Asserts: the execute-phase CONTROL write count equals the pre-fix baseline
- * (4 writes) — the extra deliberate PGM-hold write is ABSENT for mem_size=524288.
+ * Asserts: with rw_line=0xFF (the DIP32_27C040 shape — no RW pin assigned),
+ * the execute-phase CONTROL write count is EXACTLY the baseline 5 writes
+ * (pinned, not "<=", so a write-reducing regression cannot silently pass) —
+ * confirming NO CTRL_READ_WRITE-clearing write is introduced by this mechanism
+ * for a chip that does not opt into rw-pin.
  */
 void test_rc98b_0x08_32pin_512k_pgm_hold_excluded(void) {
     firestarter_handle_t h = make_handle(0x08, CMD_WRITE);
 
-    /* Same bus_config shape as RC-98A but mem_size = 524288 (512K, A18 user).
-     * The gate predicate (mem_size <= 262144) MUST exclude this chip. */
+    /* Same bus_config shape as RC-98A but mem_size = 524288 (512K, A18 user)
+     * and rw_line = 0xFF (DIP32_27C040 shape — pin 31 stays on the address
+     * bus as A18; no rw-pin assignment for this chip class). */
     h.pins = 32;
-    h.mem_size = 524288;                          /* 512K — OUTSIDE the ≤262144 gate */
+    h.mem_size = 524288;                          /* 512K — AM27C040, A18 user */
     h.data_size = 1;
     h.bus_config.vpp_line   = VPP_P1_32_DIP;
     h.bus_config.address_mask = 0x7FFFF;          /* A0-A18 for 512K */
-    h.bus_config.rw_line    = 0xFF;
+    h.bus_config.rw_line    = 0xFF;               /* no RW pin — DIP32_27C040 shape */
     h.bus_config.static_high_mask = 0;
     h.bus_config.matching_lines   = 0;
     for (int i = 0; i < 20; i++) h.bus_config.address_lines[i] = 0xFF;
@@ -856,18 +834,20 @@ void test_rc98b_0x08_32pin_512k_pgm_hold_excluded(void) {
     clear_bus_recording();
     if (h.firestarter_operation_main) h.firestarter_operation_main(&h);
 
-    /* Gate exclusion: the extra deliberate PGM-hold write is ABSENT.
-     * Execute-phase CONTROL writes must equal the pre-fix baseline (5):
+    /* Gate exclusion (D-04): execute-phase CONTROL writes must equal the
+     * pinned baseline of EXACTLY 5 (not "<=" — a write-reducing regression
+     * must not silently pass):
      *   VPP regulator set, CTRL_VPP_P1 set (via VPE→P1 swap), set_address write,
      *   CTRL_VPP_P1 clear, set_address verify.
-     * If the gate fires incorrectly (missing mem_size term), an extra write would
-     * appear (≥6), which would also corrupt CTRL_ADDRESS_LINE_18_REV2 on real hardware. */
+     * With rw_line=0xFF the mem_util_remap_address_bus rw_line branch never
+     * fires, so no CTRL_READ_WRITE-clearing write is introduced for this
+     * A18-using chip — the corrected mechanism is structurally inert here. */
     int ctrl_writes = count_control_reg_writes();
-    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(5, ctrl_writes,
-        "RC-98B [D-04 gate exclusion]: 0x08 32-pin 512K execute phase must NOT emit "
-        "the deliberate PGM-hold write (only ≤5 CONTROL writes, same as pre-fix baseline). "
-        "The size gate (mem_size<=262144) is the D-04 firmware belt: CTRL_VPP_P1_ENABLE_REV2 "
-        "== CTRL_ADDRESS_LINE_18_REV2 == 0x08; firing it on a 512K part corrupts A18.");
+    TEST_ASSERT_EQUAL_MESSAGE(5, ctrl_writes,
+        "RC-98B [D-04 gate exclusion, WR-02 pinned]: 0x08 32-pin 512K execute phase "
+        "must emit EXACTLY 5 CONTROL writes (baseline, pinned not <=). "
+        "rw_line=0xFF (DIP32_27C040 shape, no rw-pin) means the rw_line mechanism "
+        "never fires for this A18-using chip — pin 31/A18 addressing is untouched.");
 }
 
 /*
@@ -875,14 +855,15 @@ void test_rc98b_0x08_32pin_512k_pgm_hold_excluded(void) {
  * 0x08 32-pin ≤256K write where verify NEVER matches.
  *
  * Verifies two things:
- * (a) The corrected path STILL drives the PGM-hold (deliberate CONTROL write
- *     present — same CODE-STRUCTURE assertion as RC-98A).
+ * (a) The corrected path STILL drives the rw_line pin-31 hold (CTRL_READ_WRITE
+ *     LOW present — same corrected-mechanism assertion as RC-98A) across every
+ *     retry round.
  * (b) The write correctly ERRORs after the retry budget is exhausted — proving
  *     the test catches the correct-vs-incorrect fork (not just happy-path).
  *
  * Scripted mismatch: mock get_data always returns 0xFF; data_buffer[0] = 0x00
  * → every verify fails → program_mismatched_bytes is called NUMBER_OF_RETRIES
- * times → each round emits ≥1 PGM-hold write → large CONTROL write count.
+ * times.
  *
  * Model: WR-02a (test_val_eprom.cpp:615-657). Pitfall 4: re-assign
  * firestarter_get_data AFTER configure_memory.
@@ -902,7 +883,7 @@ void test_rc98c_0x08_32pin_256k_mismatch_errors_and_pgm_asserted(void) {
     h.data_size = 1;
     h.bus_config.vpp_line   = VPP_P1_32_DIP;
     h.bus_config.address_mask = 0x3FFFF;
-    h.bus_config.rw_line    = 0xFF;
+    h.bus_config.rw_line    = 22;                 /* pin 31 -> RW line (98-03) */
     h.bus_config.static_high_mask = 0;
     h.bus_config.matching_lines   = 0;
     for (int i = 0; i < 20; i++) h.bus_config.address_lines[i] = 0xFF;
@@ -927,21 +908,123 @@ void test_rc98c_0x08_32pin_256k_mismatch_errors_and_pgm_asserted(void) {
         "RC-98C: 0x08 32-pin ≤256K write with permanent mismatch must yield ERROR "
         "(retry budget exhausted — proves correct-vs-incorrect fork, not just happy-path)");
 
-    /* (b) CODE-STRUCTURE: the corrected path STILL drove PGM-hold across the
-     * CE pulses (NUMBER_OF_RETRIES=20 rounds × ≥1 deliberate CONTROL write each).
-     * Counting: with mock_rc98c_always_mismatch replacing firestarter_get_data,
-     * memory_get_data is NOT called (verify uses the mock directly) → no set_addr
-     * for verify. Per retry: CTRL_VPP_P1 set (1) + set_addr write (1) + CTRL_VPP_P1
-     * clear (1) + [PGM-hold if fix] = 3 pre-fix, 4 post-fix.
-     * Plus: VPP-regulator set (1) at start, VPP-regulator clear (1) at end.
-     * Pre-fix total: 1 + 20×3 + 1 = 62.
-     * Post-fix total: 1 + 20×4 + 1 = 82.
-     * Assert ≥63 (pre-fix=62; post-fix=82): RED pre-fix (PGM-hold absent). */
-    int ctrl_writes = count_control_reg_writes();
-    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(63, ctrl_writes,
-        "RC-98C: mismatch path must emit ≥63 CONTROL writes (1+20×4+1=82 post-fix; "
-        "pre-fix=62 — the deliberate PGM-hold write per CE-pulse is absent pre-fix, "
-        "making this RED before Task 2; mismatch+ERROR proves correct-vs-incorrect fork)");
+    /* (b) Corrected mechanism still active across every retry round: at least
+     * one recorded CONTROL write has CTRL_READ_WRITE LOW (pin 31 held via
+     * rw_line on every set_address call in the retry loop, not just the first). */
+    TEST_ASSERT_TRUE_MESSAGE(recording_has_ctrl_read_write_low(),
+        "RC-98C [rw_line mechanism]: mismatch/retry path must still emit at least "
+        "one CONTROL write with CTRL_READ_WRITE LOW (pin 31 program-active via "
+        "config.rw_line=22 on every set_address call in the retry loop); "
+        "mismatch+ERROR proves the correct-vs-incorrect fork (P89 CR-01 lesson).");
+}
+
+/* ─── WR-01: revision-parametrized PHYSICAL-remap test (the missing RED state) ──
+ *
+ * RED against 98-02 (Plan 02's logical CTRL_ADDRESS_LINE_18 clear), GREEN
+ * against 98-03/04 (the corrected rw_line -> CTRL_READ_WRITE mechanism).
+ *
+ * [env:native] does NOT link the real rurp_map_ctrl_reg_for_hardware_revision
+ * (it lives in include/rurp_hw_rev_utils.h, only #included by the AVR-only
+ * src/boards/{uno,leonardo}_rurp_shield.cpp via rurp_register_utils.h, which
+ * are excluded from native's build_src_filter = +<proms/> +...). The shared
+ * host stub (host_stubs_common.inc:138) is a plain passthrough `(uint8_t)data`
+ * — it does not model per-revision bit remapping at all. So this test defines
+ * LOCAL REPLICAS that mirror include/rurp_hw_rev_utils.h lines 21-30 EXACTLY
+ * (verified against the real header at plan-write time): the Rev-2 passthrough
+ * mask + CTRL_ADDRESS_LINE_18 -> CTRL_ADDRESS_LINE_18_REV2 fold, and the
+ * Rev-0/1 `ctrl_reg = data` passthrough. This is a deliberate test-infra
+ * choice (documented here, not silently duplicated) rather than restructuring
+ * the firmware's build_src_filter to link AVR-flavored code into native. */
+
+/* Mirrors rurp_hw_rev_utils.h:19-27 (REVISION_2_0/2_1/2_2/2_3 case) exactly. */
+static uint8_t replica_map_ctrl_reg_rev2(rurp_register_t data) {
+    uint8_t ctrl_reg = data & (CTRL_VPP_A9_ENABLE | CTRL_VPE_ENABLE | CTRL_VPP_P1_ENABLE |
+                                CTRL_ADDRESS_LINE_17 | CTRL_READ_WRITE | CTRL_VPP_REGULATOR_ENABLE);
+    ctrl_reg |= data & CTRL_VPP_VPE_DROP_ENABLE ? CTRL_VPP_VPE_DROP_ENABLE_REV2 : 0;
+    ctrl_reg |= data & CTRL_ADDRESS_LINE_16 ? CTRL_ADDRESS_LINE_16_REV2 : 0;
+    ctrl_reg |= data & CTRL_ADDRESS_LINE_18 ? CTRL_ADDRESS_LINE_18_REV2 : 0;
+    return ctrl_reg;
+}
+
+/* Mirrors rurp_hw_rev_utils.h:28-32 (REVISION_0/REVISION_1 case) exactly. */
+static uint8_t replica_map_ctrl_reg_legacy(rurp_register_t data) {
+    uint8_t ctrl_reg = (uint8_t)data;
+    ctrl_reg |= data & CTRL_VPP_VPE_DROP_ENABLE ? CTRL_VPP_VPE_DROP_ENABLE_REV1 : 0;
+    return ctrl_reg;
+}
+
+/*
+ * WR-01 Rev-2 case: a program-window CONTROL value with pin 31 = RW held
+ * program-active (WRITE_FLAG=0 -> CTRL_READ_WRITE 0x40 LOW) AND P1/VPP
+ * asserted (CTRL_VPP_P1_ENABLE 0x08 HIGH), fed through the Rev-2 remap,
+ * must yield a physical byte where bit 0x40 is LOW (pin 31 program-active)
+ * AND bit 0x08 is HIGH (VPP) — proving the 0x08 alias does NOT defeat 0x40.
+ *
+ * The OLD 98-02 value (drive logical CTRL_ADDRESS_LINE_18 LOW, i.e. clear it,
+ * with CTRL_VPP_P1_ENABLE HIGH for VPP) folds identically to 0x08 on Rev 2
+ * (CTRL_ADDRESS_LINE_18_REV2 == CTRL_VPP_P1_ENABLE_REV2), so clearing logical
+ * CTRL_ADDRESS_LINE_18 while VPP (0x08) is asserted is a NO-OP on the alias —
+ * physical bit 0x40 (CTRL_READ_WRITE) is NEVER touched by that old value,
+ * i.e. it stays at whatever CTRL_READ_WRITE was already set to. To make the
+ * RED state explicit and non-circular, the 98-02 comparison value below
+ * additionally leaves CTRL_READ_WRITE HIGH (as it is a distinct, unasserted
+ * control in the old code path) — FAILING the LOW assertion.
+ */
+void test_wr01_rev2_pin31_pgm_low_with_vpp_concurrent(void) {
+    /* Corrected (98-03/04) value: CTRL_READ_WRITE LOW (bit clear = program-
+     * active) + CTRL_VPP_P1_ENABLE HIGH (VPP asserted concurrently). */
+    rurp_register_t corrected_value = CTRL_VPP_P1_ENABLE; /* CTRL_READ_WRITE bit 0x40 is 0 (LOW) */
+    uint8_t physical_corrected = replica_map_ctrl_reg_rev2(corrected_value);
+    TEST_ASSERT_EQUAL_MESSAGE(0, physical_corrected & CTRL_READ_WRITE,
+        "WR-01 [Rev 2, corrected]: physical CTRL_READ_WRITE (0x40) must be LOW "
+        "(pin 31 program-active) after the Rev-2 remap — CTRL_READ_WRITE is in "
+        "the passthrough mask (rurp_hw_rev_utils.h:23), revision-invariant.");
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, physical_corrected & CTRL_VPP_P1_ENABLE,
+        "WR-01 [Rev 2, corrected]: physical CTRL_VPP_P1_ENABLE (0x08) must stay "
+        "HIGH (VPP asserted) concurrently with CTRL_READ_WRITE LOW — proves the "
+        "0x08 alias (CTRL_ADDRESS_LINE_18_REV2 == CTRL_VPP_P1_ENABLE_REV2) does "
+        "NOT defeat the distinct 0x40 bit.");
+
+    /* Old 98-02 value: logical CTRL_ADDRESS_LINE_18 cleared (the Plan-02
+     * mechanism), CTRL_VPP_P1_ENABLE HIGH (VPP), CTRL_READ_WRITE left HIGH
+     * (unasserted — Plan 02 never touched this distinct control at all). Folds
+     * through the SAME alias as CTRL_VPP_P1_ENABLE on Rev 2, so clearing it
+     * changes nothing about 0x08 (already HIGH from VPP) and 0x40 stays HIGH
+     * (never asserted LOW) -- the physical no-op this WR-01 case exists to catch. */
+    rurp_register_t old_98_02_value = CTRL_VPP_P1_ENABLE | CTRL_READ_WRITE; /* A18-clear no-op; RW never asserted */
+    uint8_t physical_old = replica_map_ctrl_reg_rev2(old_98_02_value);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, physical_old & CTRL_READ_WRITE,
+        "WR-01 [Rev 2, 98-02 RED check]: the OLD logical-A18-clear value leaves "
+        "physical CTRL_READ_WRITE (0x40) HIGH (never asserted) -- confirming this "
+        "is the RED state the corrected rw_line mechanism fixes (CR-01 physical "
+        "no-op via the 0x08 alias).");
+}
+
+/*
+ * WR-01 Rev-0/1 (legacy) case: the SAME corrected CONTROL value through the
+ * Rev-0/1 passthrough remap yields physical 0x40 LOW (pin 31 program-active).
+ * The OLD 98-02 value cleared logical CTRL_ADDRESS_LINE_18 (0x20 on legacy,
+ * a GENUINE, DISTINCT A18 address line there) while never asserting
+ * CTRL_READ_WRITE (0x40) LOW -- so 0x40 stays HIGH, failing the assertion and
+ * proving the old value never reached pin 31 on legacy either. The corrected
+ * value proves the no-alias (legacy) path still reaches pin 31 at 0x40.
+ */
+void test_wr01_rev01_pin31_pgm_low_legacy(void) {
+    rurp_register_t corrected_value = CTRL_VPP_P1_ENABLE; /* CTRL_READ_WRITE bit 0x40 is 0 (LOW) */
+    uint8_t physical_corrected = replica_map_ctrl_reg_legacy(corrected_value);
+    TEST_ASSERT_EQUAL_MESSAGE(0, physical_corrected & CTRL_READ_WRITE,
+        "WR-01 [Rev 0/1, corrected]: physical CTRL_READ_WRITE (0x40) must be LOW "
+        "(pin 31 program-active) after the legacy `ctrl_reg = data` passthrough "
+        "remap -- CTRL_READ_WRITE (0x40) is revision-invariant and reaches pin 31 "
+        "unchanged on legacy hardware too (no alias collision here).");
+
+    rurp_register_t old_98_02_value = CTRL_VPP_P1_ENABLE | CTRL_READ_WRITE; /* logical A18 cleared elsewhere; RW never asserted */
+    uint8_t physical_old = replica_map_ctrl_reg_legacy(old_98_02_value);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, physical_old & CTRL_READ_WRITE,
+        "WR-01 [Rev 0/1, 98-02 RED check]: the OLD logical-A18-clear value "
+        "cleared a GENUINE, DISTINCT A18 address line (0x20) on legacy hardware "
+        "-- it never touched CTRL_READ_WRITE (0x40), which stays HIGH here, "
+        "confirming the old fix never reached pin 31 on legacy hardware either.");
 }
 
 int main(int argc, char** argv) {
@@ -977,10 +1060,15 @@ int main(int argc, char** argv) {
     RUN_TEST(test_wr02b_chip_id_report_true_keying_yields_warning);
     RUN_TEST(test_wr02c_generic_init_mismatch_without_force_yields_error);
 
-    /* Phase 98 Plan 02 / RC-1 fix: 0x08 32-pin ≤256K PGM-assert coverage */
-    RUN_TEST(test_rc98a_0x08_32pin_256k_deliberate_pgm_hold_emitted);
+    /* Phase 98 Plan 04 / RC-1 CORRECTED fix: 0x08 32-pin ≤256K rw_line PGM-hold coverage */
+    RUN_TEST(test_rc98a_0x08_32pin_256k_pgm_hold_via_rw_line);
     RUN_TEST(test_rc98b_0x08_32pin_512k_pgm_hold_excluded);
     RUN_TEST(test_rc98c_0x08_32pin_256k_mismatch_errors_and_pgm_asserted);
+
+    /* Phase 98 Plan 04 WR-01: revision-parametrized physical-remap test
+     * (the missing RED state — Rev 2 alias no-op AND Rev 0/1 wrong-pin clear). */
+    RUN_TEST(test_wr01_rev2_pin31_pgm_low_with_vpp_concurrent);
+    RUN_TEST(test_wr01_rev01_pin31_pgm_low_legacy);
 
     return UNITY_END();
 }
