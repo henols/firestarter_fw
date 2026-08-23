@@ -230,6 +230,52 @@ rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* ha
     return top_address;
 }
 
+
+/* Shared VPP-mismatch report (payload unchanged):
+ *   [measured_V u16 BE][measured_tenths u16 BE][expected_V u16 BE][expected_tenths u16 BE]
+ * Four byte-identical copies existed -- eprom.cpp x2, flash_intel.cpp x2 --
+ * holding 24 of the firmware's 30 __udivmodhi4 call sites between them.
+ * Arithmetic preserved EXACTLY, so this is de-duplication, not a behaviour
+ * change. Severity rides entirely in msg_id, because every
+ * LOG_{WARN,ERROR}_ID_BYTES macro is the same alias of LOG_ID_BYTES. */
+void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
+                             uint16_t expected_mv, uint8_t msg_id, uint8_t response_code) {
+    uint16_t _v0 = (uint16_t)((measured_mv + 50) / 1000);
+    uint16_t _v1 = (uint16_t)((((measured_mv + 50) / 100) % 10));
+    uint16_t _v2 = (uint16_t)((expected_mv + 50) / 1000);
+    uint16_t _v3 = (uint16_t)((((expected_mv + 50) / 100) % 10));
+    uint8_t _b[8];
+    _b[0] = (uint8_t)((_v0 >> 8) & 0xFF);
+    _b[1] = (uint8_t)(_v0 & 0xFF);
+    _b[2] = (uint8_t)((_v1 >> 8) & 0xFF);
+    _b[3] = (uint8_t)(_v1 & 0xFF);
+    _b[4] = (uint8_t)((_v2 >> 8) & 0xFF);
+    _b[5] = (uint8_t)(_v2 & 0xFF);
+    _b[6] = (uint8_t)((_v3 >> 8) & 0xFF);
+    _b[7] = (uint8_t)(_v3 & 0xFF);
+    LOG_ID_BYTES(msg_id, _b, 8);
+    handle->response_code = response_code;
+}
+
+/* Shared chip-ID mismatch report: 4 bytes, actual then expected, each u16 BE.
+ * Four copies existed -- flash_utils.cpp, flash_intel.cpp, eprom.cpp,
+ * eeprom_28c.cpp -- and they had already DRIFTED: three tested
+ * is_flag_set(FLAG_FORCE) inline while eprom.cpp took an error_code parameter,
+ * and eeprom_28c.cpp carried redundant casts. Callers now pass the decision as
+ * warn_only, so the semantic is stated once. */
+void mem_util_report_chip_id(firestarter_handle_t* handle, uint16_t actual, bool warn_only) {
+    if (actual == handle->chip_id) {
+        return;
+    }
+    uint8_t _b[4];
+    _b[0] = (uint8_t)((actual >> 8) & 0xFF);
+    _b[1] = (uint8_t)(actual & 0xFF);
+    _b[2] = (uint8_t)((handle->chip_id >> 8) & 0xFF);
+    _b[3] = (uint8_t)(handle->chip_id & 0xFF);
+    LOG_ID_BYTES(warn_only ? MSG_WARN_CHIP_ID_MISMATCH : MSG_ERR_CHIP_ID_MISMATCH, _b, 4);
+    handle->response_code = warn_only ? RESPONSE_CODE_WARNING : RESPONSE_CODE_ERROR;
+}
+
 void mem_util_split_delay(uint32_t us, uint32_t* out_ms, uint16_t* out_us) {
     if (us <= MEM_UTIL_DELAY_US_MAX) {
         *out_ms = 0;
@@ -386,9 +432,17 @@ uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t
     return reorg_address;
 }
 
-typedef struct {
-    uint32_t address;
-} blank_check_progress_data_t;
+/* Saved across the multi-call blank check.
+ *
+ * This WAS a 4-byte malloc of a one-uint32_t struct. That single allocation
+ * pulled the whole avr-libc allocator into the image -- malloc 312 B + free
+ * 274 B = 586 B -- and mem_util_blank_check was its ONLY caller. It also
+ * dereferenced the result UNCHECKED (`progress_data->address = ...` straight
+ * after the malloc), on a part with roughly 470 B of free RAM once `handle`
+ * (1115 B) and the jsmn token array (512 B) are accounted for. A file-scope
+ * static has the identical lifetime -- one command runs at a time -- with none
+ * of that. handle->progress_data is removed with it; nothing else read it. */
+static uint32_t blank_check_saved_address;
 
 #define BLANK_CHECK_CHUNK_SIZE 2048
 void uint32_to_bytes(char* buffer, int pos, uint32_t value) {
@@ -399,20 +453,14 @@ void uint32_to_bytes(char* buffer, int pos, uint32_t value) {
 }
 
 void mem_util_blank_check(firestarter_handle_t* handle) {
-    blank_check_progress_data_t* progress_data;
     if (!is_operation_in_progress(handle)) {
         set_operation_in_progress(handle);
-        handle->progress_data = malloc(sizeof(blank_check_progress_data_t));
-        progress_data = (blank_check_progress_data_t*)handle->progress_data;
-        progress_data->address = handle->address;
+        blank_check_saved_address = handle->address;
         handle->address = 0;
     } else {
-        progress_data = (blank_check_progress_data_t*)handle->progress_data;
         if (handle->address >= handle->mem_size) {
             clear_operation_in_progress(handle);
-            handle->address = progress_data->address;
-            free(handle->progress_data);
-            handle->progress_data = NULL;
+            handle->address = blank_check_saved_address;
             return;
         }
     }

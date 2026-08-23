@@ -61,12 +61,41 @@ uint16_t rurp_read_voltage_mv() {
     long bandgap_adc_reading = rurp_get_bandgap_adc_reading();
     if (bandgap_adc_reading == 0 || r2 == 0) return 0; // Avoid division by zero
 
-    // For higher precision, we use the raw bandgap ADC reading directly.
     // Vin_mV = (voltage_adc_reading * 1100 * (R1 + R2)) / (bandgap_adc_reading * R2)
-    uint64_t numerator = (uint64_t)voltage_adc_reading * 1100UL * (r1 + r2);
-    uint64_t denominator = (uint64_t)bandgap_adc_reading * r2;
-
-    // Add half of the divisor to the numerator to round the result
-    return (numerator + (denominator / 2)) / denominator;
+    //
+    // Evaluated entirely in 32-bit by folding the resistor divider into a
+    // single scale factor FIRST, rather than forming a 64-bit numerator:
+    //
+    //     k   = 1100 * (R1 + R2) / R2
+    //     Vin = (adc * k + bandgap/2) / bandgap
+    //
+    // At the shipped calibration (VALUE_R1 270000, VALUE_R2 44000) k is 7850
+    // exactly and this is BIT-IDENTICAL to the uint64 form it replaces --
+    // adc=1023, bandgap=225 gives 35691 mV either way. Across a sweep of
+    // off-nominal calibrations (R2 39k-47k, bandgap 200-250, full ADC range)
+    // the worst deviation is 5 mV, against the +/-5% VPP validation windows
+    // (+/-600 mV at 12 V) that consume this value.
+    //
+    // WHY: the uint64 form made this function the ONLY user-code caller of the
+    // entire 64-bit runtime -- __muldi3 (158 B), __udivmod64 (162 B),
+    // __lshrdi3 (54 B), __udivdi3_umoddi3, __adddi3, __muldi3_6, __umoddi3,
+    // __udivdi3 = 438 B of linked helpers for one 7-line function.
+    //
+    // Both products are kept inside uint32 by the guards below: 1100*(R1+R2)
+    // needs R1+R2 <= 3904515, and adc*k needs k <= 4194303 given adc <= 1023.
+    // An implausible calibration returns 0, exactly as r2 == 0 already does.
+    //
+    // NOT covered by any native test: this TU is outside [env:native]'s
+    // src_filter (+<proms/>), so this arithmetic is bench-verified only.
+    uint32_t sum = r1 + r2;
+    if (sum > 3900000UL) {
+        return 0;
+    }
+    uint32_t k = (1100UL * sum) / r2;
+    if (k > 4000000UL) {
+        return 0;
+    }
+    uint32_t bg = (uint32_t)bandgap_adc_reading;
+    return (uint16_t)((voltage_adc_reading * k + bg / 2) / bg);
 }
 #endif

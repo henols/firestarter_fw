@@ -300,22 +300,7 @@ static void eeprom28c_check_chip_id(firestarter_handle_t* handle) {
     uint16_t chip_id = handle->firestarter_get_data(handle, mfr_addr) << 8;
     chip_id |= handle->firestarter_get_data(handle, mfr_addr + 1);
     handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_A9_ENABLE, 0);
-    if (chip_id != handle->chip_id) {
-        {
-            uint8_t _b[4];
-            _b[0] = (uint8_t)(((uint16_t)chip_id >> 8) & 0xFF);
-            _b[1] = (uint8_t)((uint16_t)chip_id & 0xFF);
-            _b[2] = (uint8_t)(((uint16_t)handle->chip_id >> 8) & 0xFF);
-            _b[3] = (uint8_t)((uint16_t)handle->chip_id & 0xFF);
-            if (is_flag_set(FLAG_FORCE)) {
-                LOG_WARN_ID_BYTES(MSG_WARN_CHIP_ID_MISMATCH, _b, 4);
-                handle->response_code = RESPONSE_CODE_WARNING;
-            } else {
-                LOG_ERROR_ID_BYTES(MSG_ERR_CHIP_ID_MISMATCH, _b, 4);
-                handle->response_code = RESPONSE_CODE_ERROR;
-            }
-        }
-    }
+    mem_util_report_chip_id(handle, chip_id, is_flag_set(FLAG_FORCE));
 }
 
 // FIX-01: a 0x0D-local, remap-aware command-sequence emitter. Unlike the

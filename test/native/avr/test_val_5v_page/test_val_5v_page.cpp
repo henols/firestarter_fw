@@ -235,9 +235,10 @@ static firestarter_handle_t make_write_handle_with_data(void) {
  * entered, and is_flag_set(FLAG_SKIP_BLANK_CHECK) is false so the deleted
  * conditional's guard would have been satisfied. mem_size is a small 2048 --
  * BLANK_CHECK_CHUNK_SIZE (memory.cpp:393) -- because mem_util_blank_check
- * sets is_operation_in_progress and mallocs progress_data on its FIRST call
- * regardless of mem_size, so the oracle below does not depend on how large
- * mem_size is. */
+ * sets is_operation_in_progress on its FIRST call regardless of mem_size, so
+ * the oracle below does not depend on how large mem_size is. (It used to save
+ * its address into a 4-byte malloc as well; that is now a file-scope static and
+ * the handle field is gone, which changes nothing about this oracle.) */
 static firestarter_handle_t make_write_init_handle_blank_check_enabled(void) {
     firestarter_handle_t h = {};
     h.protocol   = 0x05;
@@ -317,12 +318,17 @@ void test_5v_page_write_execute_no_vpp(void) {
 /* Case (ERASE-02): with FLAG_SKIP_BLANK_CHECK and FLAG_CAN_ERASE both clear,
  * one call to flash_5v_page_write_init, driven through the dispatch
  * pointer (not by function name, so this exercises what configure_memory
- * actually wired), must leave is_operation_in_progress FALSE and
- * progress_data NULL. mem_util_blank_check is the ONLY setter of either
- * observable on this path (memory.cpp:401-405), so a FALSE/NULL pair here
- * is the single-shot-INIT proof, not an assumption of symmetry with the
+ * actually wired), must leave is_operation_in_progress FALSE.
+ * mem_util_blank_check is the ONLY setter of that flag on this path, so FALSE
+ * here is the single-shot-INIT proof, not an assumption of symmetry with the
  * 0x0D case (test_case30, test_eeprom28c_sdp.cpp). RED before Task 2's
- * deletion, GREEN after. */
+ * deletion, GREEN after.
+ *
+ * The second observable this case used to pair with it -- progress_data NULL --
+ * no longer exists: mem_util_blank_check keeps its saved address in a
+ * file-scope static instead of a 4-byte malloc, and the handle field went with
+ * the allocation. Same statement still sets the flag above, so the behaviour
+ * under test is unchanged. */
 void test_5v_page_write_init_no_blank_check_with_flag_clear_erase02(void) {
     firestarter_handle_t h = make_write_init_handle_blank_check_enabled();
     configure_memory(&h);
@@ -336,10 +342,13 @@ void test_5v_page_write_init_no_blank_check_with_flag_clear_erase02(void) {
         "mem_util_blank_check is the only setter of this flag on the write-INIT "
         "path, so TRUE here would mean the pre-write blank check still ran and "
         "left a multi-call INIT loop pending");
-    TEST_ASSERT_NULL_MESSAGE(h.progress_data,
-        "ERASE-02: h.progress_data must be NULL -- a non-NULL value means "
-        "mem_util_blank_check allocated a blank_check_progress_data_t block, "
-        "i.e. the pre-write blank check still ran");
+    /* The companion `h.progress_data must be NULL` assertion is GONE, and so is
+     * the field: mem_util_blank_check no longer mallocs a
+     * blank_check_progress_data_t (it keeps its saved address in a file-scope
+     * static), so there is no allocation left to observe. This is a loss of a
+     * redundant PROBE, not of coverage -- is_operation_in_progress above is set
+     * by the same statement of the same function that used to do the malloc, so
+     * the behaviour under test is still pinned. */
     TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
         "ERASE-02: the removed blank check can no longer fail a write on a "
         "non-blank part");

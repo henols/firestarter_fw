@@ -6,6 +6,7 @@
  */
 
 #include "flash_utils.h"
+#include "memory_utils.h"
 #include <Arduino.h>
 #include "rurp_shield.h"
 #include "rurp_pinout.h"
@@ -102,18 +103,5 @@ uint8_t flash_util_read_in_id_mode(firestarter_handle_t* handle, uint32_t addres
 
 void flash_util_check_chip_id_execute(firestarter_handle_t* handle) {
     uint16_t chip_id = flash_util_get_chip_id(handle);
-    if (chip_id != handle->chip_id) {
-        uint8_t _b[4];
-        _b[0] = (uint8_t)((chip_id >> 8) & 0xFF);
-        _b[1] = (uint8_t)(chip_id & 0xFF);
-        _b[2] = (uint8_t)((handle->chip_id >> 8) & 0xFF);
-        _b[3] = (uint8_t)(handle->chip_id & 0xFF);
-        if (is_flag_set(FLAG_FORCE)) {
-            LOG_WARN_ID_BYTES(MSG_WARN_CHIP_ID_MISMATCH, _b, 4);
-            handle->response_code = RESPONSE_CODE_WARNING;
-        } else {
-            LOG_ERROR_ID_BYTES(MSG_ERR_CHIP_ID_MISMATCH, _b, 4);
-            handle->response_code = RESPONSE_CODE_ERROR;
-        }
-    }
+    mem_util_report_chip_id(handle, chip_id, is_flag_set(FLAG_FORCE));
 }

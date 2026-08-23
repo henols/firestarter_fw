@@ -1785,10 +1785,13 @@ void test_case30_write_init_no_blank_check_with_flag_clear_erase01(void) {
         "eeprom28c_write_init call with FLAG_SKIP_BLANK_CHECK clear -- mem_util_blank_check is "
         "the only setter of this flag on the write-INIT path, so TRUE here would mean the "
         "pre-write blank check still ran and left a multi-call INIT loop pending");
-    TEST_ASSERT_NULL_MESSAGE(h.progress_data,
-        "Case 30 (ERASE-01): h.progress_data must be NULL -- a non-NULL value means "
-        "mem_util_blank_check allocated a blank_check_progress_data_t block, i.e. the "
-        "pre-write blank check still ran");
+    /* The companion `h.progress_data must be NULL` assertion is GONE, and so is
+     * the field: mem_util_blank_check no longer mallocs a
+     * blank_check_progress_data_t (it keeps its saved address in a file-scope
+     * static), so there is no allocation left to observe. This is a loss of a
+     * redundant PROBE, not of coverage -- is_operation_in_progress above is set
+     * by the same statement of the same function that used to do the malloc, so
+     * the behaviour under test is still pinned. */
     sdp_assert_stream_equals(SDP_FIXED_DIP28_28C256, SDP_FIXED_DIP28_28C256_LEN,
         "Case 30 (ERASE-01): with FLAG_SKIP_BLANK_CHECK clear, the AT28C256/DIP28_28C256 stream "
         "must now be byte-identical to the golden captured with the flag SET -- the D-07 policy "

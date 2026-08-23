@@ -38,44 +38,15 @@ static void flash_intel_check_vpp(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB_U16(DBG_CHECKING_VPP_VOLTAGE, vpp_mv);
     if (vpp_mv > (uint32_t)handle->vpp_mv + 500) {
         {
-            uint16_t _v0 = (uint16_t)((vpp_mv + 50) / 1000);
-            uint16_t _v1 = (uint16_t)((((vpp_mv + 50) / 100) % 10));
-            uint16_t _v2 = (uint16_t)((handle->vpp_mv + 50) / 1000);
-            uint16_t _v3 = (uint16_t)((((handle->vpp_mv + 50) / 100) % 10));
-            uint8_t _b[8];
-            _b[0] = (uint8_t)((_v0 >> 8) & 0xFF);
-            _b[1] = (uint8_t)(_v0 & 0xFF);
-            _b[2] = (uint8_t)((_v1 >> 8) & 0xFF);
-            _b[3] = (uint8_t)(_v1 & 0xFF);
-            _b[4] = (uint8_t)((_v2 >> 8) & 0xFF);
-            _b[5] = (uint8_t)(_v2 & 0xFF);
-            _b[6] = (uint8_t)((_v3 >> 8) & 0xFF);
-            _b[7] = (uint8_t)(_v3 & 0xFF);
-            if (is_flag_set(FLAG_FORCE)) {
-                LOG_WARN_ID_BYTES(MSG_WARN_VPP_HIGH, _b, 8);
-                handle->response_code = RESPONSE_CODE_WARNING;
-            } else {
-                LOG_ERROR_ID_BYTES(MSG_ERR_VPP_HIGH, _b, 8);
-                handle->response_code = RESPONSE_CODE_ERROR;
-            }
+            bool force = is_flag_set(FLAG_FORCE);
+            mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv,
+                                    force ? MSG_WARN_VPP_HIGH : MSG_ERR_VPP_HIGH,
+                                    force ? RESPONSE_CODE_WARNING : RESPONSE_CODE_ERROR);
         }
     } else if (vpp_mv < (uint32_t)handle->vpp_mv * 95 / 100) {
         {
-            uint16_t _v0 = (uint16_t)((vpp_mv + 50) / 1000);
-            uint16_t _v1 = (uint16_t)((((vpp_mv + 50) / 100) % 10));
-            uint16_t _v2 = (uint16_t)((handle->vpp_mv + 50) / 1000);
-            uint16_t _v3 = (uint16_t)((((handle->vpp_mv + 50) / 100) % 10));
-            uint8_t _b[8];
-            _b[0] = (uint8_t)((_v0 >> 8) & 0xFF);
-            _b[1] = (uint8_t)(_v0 & 0xFF);
-            _b[2] = (uint8_t)((_v1 >> 8) & 0xFF);
-            _b[3] = (uint8_t)(_v1 & 0xFF);
-            _b[4] = (uint8_t)((_v2 >> 8) & 0xFF);
-            _b[5] = (uint8_t)(_v2 & 0xFF);
-            _b[6] = (uint8_t)((_v3 >> 8) & 0xFF);
-            _b[7] = (uint8_t)(_v3 & 0xFF);
-            LOG_WARN_ID_BYTES(MSG_WARN_VPP_LOW, _b, 8);
-            handle->response_code = RESPONSE_CODE_WARNING;
+            mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv,
+                                    MSG_WARN_VPP_LOW, RESPONSE_CODE_WARNING);
         }
     }
     // NO regulator clear — caller continues to use CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE through the write pulse.
@@ -189,18 +160,5 @@ void flash_intel_check_chip_id(firestarter_handle_t* handle) {
     uint16_t chip_id = handle->firestarter_get_data(handle, 0x0000) << 8;
     chip_id |= handle->firestarter_get_data(handle, 0x0001);
     handle->firestarter_set_data(handle, 0, 0xFF);  // exit autoselect
-    if (chip_id != handle->chip_id) {
-        uint8_t _b[4];
-        _b[0] = (uint8_t)((chip_id >> 8) & 0xFF);
-        _b[1] = (uint8_t)(chip_id & 0xFF);
-        _b[2] = (uint8_t)((handle->chip_id >> 8) & 0xFF);
-        _b[3] = (uint8_t)(handle->chip_id & 0xFF);
-        if (is_flag_set(FLAG_FORCE)) {
-            LOG_WARN_ID_BYTES(MSG_WARN_CHIP_ID_MISMATCH, _b, 4);
-            handle->response_code = RESPONSE_CODE_WARNING;
-        } else {
-            LOG_ERROR_ID_BYTES(MSG_ERR_CHIP_ID_MISMATCH, _b, 4);
-            handle->response_code = RESPONSE_CODE_ERROR;
-        }
-    }
+    mem_util_report_chip_id(handle, chip_id, is_flag_set(FLAG_FORCE));
 }

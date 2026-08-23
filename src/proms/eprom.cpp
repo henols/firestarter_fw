@@ -712,44 +712,15 @@ void eprom_check_vpp(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB_U16(DBG_CHECKING_VPP_VOLTAGE, vpp_mv);
     if (vpp_mv > (uint32_t)handle->vpp_mv + 500) {
         {
-            uint16_t _v0 = (uint16_t)((vpp_mv + 50) / 1000);
-            uint16_t _v1 = (uint16_t)((((vpp_mv + 50) / 100) % 10));
-            uint16_t _v2 = (uint16_t)((handle->vpp_mv + 50) / 1000);
-            uint16_t _v3 = (uint16_t)((((handle->vpp_mv + 50) / 100) % 10));
-            uint8_t _b[8];
-            _b[0] = (uint8_t)((_v0 >> 8) & 0xFF);
-            _b[1] = (uint8_t)(_v0 & 0xFF);
-            _b[2] = (uint8_t)((_v1 >> 8) & 0xFF);
-            _b[3] = (uint8_t)(_v1 & 0xFF);
-            _b[4] = (uint8_t)((_v2 >> 8) & 0xFF);
-            _b[5] = (uint8_t)(_v2 & 0xFF);
-            _b[6] = (uint8_t)((_v3 >> 8) & 0xFF);
-            _b[7] = (uint8_t)(_v3 & 0xFF);
-            if (is_flag_set(FLAG_FORCE)) {
-                LOG_WARN_ID_BYTES(MSG_WARN_VPP_HIGH, _b, 8);
-                handle->response_code = RESPONSE_CODE_WARNING;
-            } else {
-                LOG_ERROR_ID_BYTES(MSG_ERR_VPP_HIGH, _b, 8);
-                handle->response_code = RESPONSE_CODE_ERROR;
-            }
+            bool force = is_flag_set(FLAG_FORCE);
+            mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv,
+                                    force ? MSG_WARN_VPP_HIGH : MSG_ERR_VPP_HIGH,
+                                    force ? RESPONSE_CODE_WARNING : RESPONSE_CODE_ERROR);
         }
     } else if (vpp_mv < (uint32_t)handle->vpp_mv * 95 / 100) {
         {
-            uint16_t _v0 = (uint16_t)((vpp_mv + 50) / 1000);
-            uint16_t _v1 = (uint16_t)((((vpp_mv + 50) / 100) % 10));
-            uint16_t _v2 = (uint16_t)((handle->vpp_mv + 50) / 1000);
-            uint16_t _v3 = (uint16_t)((((handle->vpp_mv + 50) / 100) % 10));
-            uint8_t _b[8];
-            _b[0] = (uint8_t)((_v0 >> 8) & 0xFF);
-            _b[1] = (uint8_t)(_v0 & 0xFF);
-            _b[2] = (uint8_t)((_v1 >> 8) & 0xFF);
-            _b[3] = (uint8_t)(_v1 & 0xFF);
-            _b[4] = (uint8_t)((_v2 >> 8) & 0xFF);
-            _b[5] = (uint8_t)(_v2 & 0xFF);
-            _b[6] = (uint8_t)((_v3 >> 8) & 0xFF);
-            _b[7] = (uint8_t)(_v3 & 0xFF);
-            LOG_WARN_ID_BYTES(MSG_WARN_VPP_LOW, _b, 8);
-            handle->response_code = RESPONSE_CODE_WARNING;
+            mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv,
+                                    MSG_WARN_VPP_LOW, RESPONSE_CODE_WARNING);
         }
     }
     handle->firestarter_set_control_register(handle, EPROM_HV_ALL_OFF_MASK, 0);  // VPP-03: shared composite (was REGULATOR | DROP)
@@ -795,20 +766,7 @@ void eprom_generic_init(firestarter_handle_t* handle) {
 void eprom_internal_check_chip_id(firestarter_handle_t* handle, uint8_t error_code) {
     LOG_DEBUG_ID_SUB(DBG_CHECK_CHIP_ID);
     uint16_t chip_id = eprom_get_chip_id(handle);
-    if (chip_id != handle->chip_id) {
-        uint8_t _b[4];
-        _b[0] = (uint8_t)((chip_id >> 8) & 0xFF);
-        _b[1] = (uint8_t)(chip_id & 0xFF);
-        _b[2] = (uint8_t)((handle->chip_id >> 8) & 0xFF);
-        _b[3] = (uint8_t)(handle->chip_id & 0xFF);
-        if (error_code == RESPONSE_CODE_WARNING) {
-            LOG_WARN_ID_BYTES(MSG_WARN_CHIP_ID_MISMATCH, _b, 4);
-            handle->response_code = RESPONSE_CODE_WARNING;
-        } else {
-            LOG_ERROR_ID_BYTES(MSG_ERR_CHIP_ID_MISMATCH, _b, 4);
-            handle->response_code = RESPONSE_CODE_ERROR;
-        }
-    }
+    mem_util_report_chip_id(handle, chip_id, error_code == RESPONSE_CODE_WARNING);
 }
 // Use this function to set the control register and flip CTRL_VPE_ENABLE bit to CTRL_VPE_ENABLE or CTRL_VPP_P1_ENABLE
 void eprom_internal_set_control_register(firestarter_handle_t* handle, rurp_register_t bit, bool state) {

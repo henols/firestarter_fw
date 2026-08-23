@@ -5,6 +5,9 @@
  * Permission is hereby granted under MIT license.
  */
 
+#include <stddef.h>
+#include <string.h>
+
 #include "json_parser.h"
 #include <stdio.h>
 
@@ -15,16 +18,6 @@ uint8_t get_cmd(const char* json, jsmntok_t* tokens, int pos);
 int parse_bus_config(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle);
 
 bool get_flags(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_memory_size(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_address(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_chip_id(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_pin_count(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_delay(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_vpp_mv(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_algorithm(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_read_settling(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_read_strobe(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_page_size(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
 
 bool get_rw_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
 bool get_vpp_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
@@ -65,21 +58,87 @@ const char key_read_strobe[]   PROGMEM = "read-strobe-us";
  * against the underscore form would silently never match. */
 const char key_page_size[]     PROGMEM = "page-size";
 
-typedef struct {
-    PGM_P key;
-    bool (*parser_func)(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-} key_parser_t;
+/* T-44-01 sane max (~1ms); caps both read-timing knobs. Hoisted above the
+ * field table below, which is now the site that applies it. */
+#define READ_TIMING_MAX_US 1000UL   /* T-44-01 sane max (~1ms); caps both knobs */
 
-static const key_parser_t key_parsers[] PROGMEM = {
-    {key_mem_size, get_memory_size}, {key_address, get_address},         {key_flags, get_flags},
-    {key_chip_id, get_chip_id},      {key_pin_count, get_pin_count},     {key_pulse_delay, get_delay},
-    {key_vpp_mv, get_vpp_mv},        {key_algorithm, get_algorithm},
-    /* Phase 44 — read-timing sweep knobs (RCA-01 causal proof, D-04) */
-    {key_read_settling, get_read_settling},                              {key_read_strobe, get_read_strobe},
-    /* Phase 149 — page-size seam (PGSZ-01/PGSZ-02) */
-    {key_page_size, get_page_size},
+/* Phase-agnostic field table (replaces key_parser_t / key_parsers[]).
+ *
+ * WHY THIS SHAPE. The old table matched the wire key, then called a get_*
+ * stub that RE-MATCHED the very same key via extract_num's hidden jsoneq --
+ * so every key lived in flash twice and every field cost a redundant
+ * jsoneq_ call. Worse, those stubs were reached through a PROGMEM function
+ * pointer, so gcc could not inline them: each kept a full 4-argument ABI
+ * prologue for what is one strtoul and one store. Measured at 1012 B across
+ * 11 stubs, against 0 B for the five IDENTICAL stubs (get_r1/r2/rev/rw_pin/
+ * vpp_pin) that are called directly with a literal key and inline away.
+ *
+ * This table is now the single source of truth for wire key -> handle field
+ * -> clamp. `width` is derived from the member itself with sizeof, so it can
+ * never drift from the field it writes.
+ *
+ * get_flags is deliberately NOT here: json_parse_config calls it directly at
+ * two sites, where it must still match its own key. It inlines there, so it
+ * costs nothing. */
+typedef struct {
+    PGM_P    key;
+    uint8_t  offset; /* offsetof() into firestarter_handle_t */
+    uint8_t  width;  /* 1, 2 or 4 -- sizeof the member, never hand-written */
+    uint16_t clamp;  /* 0 = unclamped */
+} field_desc_t;
+
+#define FIELD(k, member, cl)                                     \
+    { k, (uint8_t)offsetof(firestarter_handle_t, member),          \
+      (uint8_t)sizeof(((firestarter_handle_t*)0)->member), (cl) }
+
+static const field_desc_t FIELDS[] PROGMEM = {
+    FIELD(key_mem_size,      mem_size,          0),
+    FIELD(key_address,       address,           0),
+    FIELD(key_flags,         ctrl_flags,        0),
+    FIELD(key_chip_id,       chip_id,           0),
+    FIELD(key_pin_count,     pins,              0),
+    FIELD(key_pulse_delay,   pulse_delay,       0),
+    FIELD(key_vpp_mv,        vpp_mv,            0),
+    FIELD(key_algorithm,     protocol,          0),
+    /* Phase 44 -- read-timing sweep knobs, clamp preserved from the deleted
+     * get_read_settling / get_read_strobe stubs (T-44-01). */
+    FIELD(key_read_settling, read_settling_us,  READ_TIMING_MAX_US),
+    FIELD(key_read_strobe,   read_strobe_us,    READ_TIMING_MAX_US),
+    /* Phase 149 -- page-size seam (PGSZ-01/PGSZ-02) */
+    FIELD(key_page_size,     page_size,         0),
 };
 
+/* Every field above must sit below data_buffer, or a uint8_t offset truncates
+ * and this writes into the wrong member. Guarded, not assumed. */
+_Static_assert(offsetof(firestarter_handle_t, page_size) < 256,
+               "firestarter_handle_t reordered: a FIELDS offset no longer fits uint8_t");
+
+/* Writes the low `width` bytes of v at the member's offset. Correct on AVR and
+ * on the little-endian PY32F071 ARM port; a big-endian target would break HERE
+ * and nowhere else. */
+static void store_field(firestarter_handle_t* handle, const field_desc_t* fd,
+                        unsigned long v) {
+    uint16_t clamp = pgm_read_word(&fd->clamp);
+    if (clamp && v > clamp) {
+        v = clamp;
+    }
+    uint8_t width = pgm_read_byte(&fd->width);
+    /* Saturate rather than truncate. A wire value wider than its member would
+     * otherwise have its high bytes silently dropped -- and for `algorithm`
+     * that is a SAFETY issue, not cosmetics: 0x105 would land as 0x05 and
+     * dispatch into configure_flash_5v_page instead of reaching
+     * configure_memory's fail-closed tail. Saturating sends it to the member's
+     * max instead, which is not a known protocol, so it still fail-closes.
+     * One site covers every narrow field (pins, chip_id, vpp_mv, page_size),
+     * which the deleted per-stub form could never do. */
+    if (width < sizeof(v)) {
+        unsigned long max = (1UL << (width * 8)) - 1UL;
+        if (v > max) {
+            v = max;
+        }
+    }
+    memcpy((uint8_t*)handle + pgm_read_byte(&fd->offset), &v, width);
+}
 int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle) {
     handle->address = 0;
     handle->ctrl_flags = 0;
@@ -123,11 +182,11 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
         }
 
         bool found = false;
-        for (size_t j = 0; j < sizeof(key_parsers) / sizeof(key_parsers[0]); j++) {
-            PGM_P key = (PGM_P)pgm_read_ptr(&key_parsers[j].key);
+        for (uint8_t j = 0; j < sizeof(FIELDS) / sizeof(FIELDS[0]); j++) {
+            PGM_P key = (PGM_P)pgm_read_ptr(&FIELDS[j].key);
             if (jsoneq_(json, key_token, key) == 0) {
-                bool (*parser_func)(const char*, jsmntok_t*, int, firestarter_handle_t*) = (void*)pgm_read_ptr(&key_parsers[j].parser_func);
-                parser_func(json, tokens, token_idx, handle);
+                store_field(handle, &FIELDS[j],
+                            simple_strtoul(json + tokens[token_idx + 1].start));
                 token_idx += 2; // Skip key and simple value
                 found = true;
                 break;
@@ -298,33 +357,12 @@ bool get_flags(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_
     extract_long("flags", handle->ctrl_flags);
 }
 
-bool get_memory_size(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_long("memory-size", handle->mem_size);
-}
 
-bool get_address(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_long("address", handle->address);
-}
 
-bool get_chip_id(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_int("chip-id", handle->chip_id);
-}
 
-bool get_pin_count(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_int("pin-count", handle->pins);
-}
 
-bool get_delay(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_long("pulse-delay", handle->pulse_delay);
-}
 
-bool get_vpp_mv(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_int("vpp_mv", handle->vpp_mv);
-}
 
-bool get_algorithm(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_long("algorithm", handle->protocol);
-}
 
 bool get_rw_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
     extract_int("rw-pin", handle->bus_config.rw_line);
@@ -358,25 +396,8 @@ bool get_rev(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t*
  *   read_settling_us == 0 → no settling delay (explicit test point; D-04)
  *   read_strobe_us   == 0 → use firmware default 3µs (preserves current behaviour)
  */
-#define READ_TIMING_MAX_US 1000UL   /* T-44-01 sane max (~1ms); caps both knobs */
 
-bool get_read_settling(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    if (jsoneq(json, &tokens[pos], "read-settling-delay") == 0) {
-        unsigned long v = simple_strtoul(json + tokens[pos + 1].start);
-        handle->read_settling_us = (uint32_t)(v > READ_TIMING_MAX_US ? READ_TIMING_MAX_US : v);
-        return 1;
-    }
-    return 0;
-}
 
-bool get_read_strobe(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    if (jsoneq(json, &tokens[pos], "read-strobe-us") == 0) {
-        unsigned long v = simple_strtoul(json + tokens[pos + 1].start);
-        handle->read_strobe_us = (uint32_t)(v > READ_TIMING_MAX_US ? READ_TIMING_MAX_US : v);
-        return 1;
-    }
-    return 0;
-}
 
 /*
  * Phase 149 — page-size seam (PGSZ-01/PGSZ-02, D-07).
@@ -386,6 +407,3 @@ bool get_read_strobe(const char* json, jsmntok_t* tokens, int pos, firestarter_h
  * silent fallback) lives in the 0x0D handler (eeprom28c_page_mask), which
  * keeps json_parse algorithm-agnostic and costs the fewest bytes here.
  */
-bool get_page_size(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_int("page-size", handle->page_size);
-}

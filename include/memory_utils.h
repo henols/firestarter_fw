@@ -48,6 +48,9 @@ rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* ha
  * delayMicroseconds calls, so the arithmetic is the only part a test off
  * real hardware can verify.
  */
+void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
+                             uint16_t expected_mv, uint8_t msg_id, uint8_t response_code);
+void mem_util_report_chip_id(firestarter_handle_t* handle, uint16_t actual, bool warn_only);
 void mem_util_split_delay(uint32_t us, uint32_t* out_ms, uint16_t* out_us);
 void mem_util_delay_us(uint32_t us);
 
