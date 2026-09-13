@@ -98,23 +98,6 @@ jobs:
             --language cpp
           git diff --exit-code include/messages.h
 
-      # The vector-catalog pair below mirrors the messages.toml pair above and
-      # exists in build.yml already. They were absent here, so a beta push --
-      # the one push that produces a published artefact -- was the only path
-      # NOT checking frame_vectors.h for codegen drift. Added when build.yml
-      # stopped running on beta, so that removing the duplicate build does not
-      # quietly remove a gate along with it.
-      - name: Vector catalog validity check
-        run: python3 tools/catalog/codegen_vectors.py --catalog tools/catalog/frame-vectors.toml --check
-
-      - name: Codegen drift gate (frame_vectors.h)
-        run: |
-          python3 tools/catalog/codegen_vectors.py \
-            --catalog tools/catalog/frame-vectors.toml \
-            --target include/frame_vectors.h \
-            --language cpp-vectors
-          git diff --exit-code include/frame_vectors.h
-
       - name: Install PlatformIO Core
         run: pip install --upgrade platformio
 

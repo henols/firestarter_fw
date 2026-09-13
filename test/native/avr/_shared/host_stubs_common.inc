@@ -50,8 +50,8 @@
  * Recording bus stub — Phase 71 HARN-01 / D-04.
  * Define HOST_STUBS_RECORD_BUS before including this file to activate the
  * recording version. Existing suites (test_dispatch, test_cobs_*,
- * test_read_timing, test_messages, test_data_input, test_not_implemented,
- * test_frame_vectors) MUST NOT define this flag — flag off = today's no-op
+ * test_read_timing, test_messages, test_data_input, test_not_implemented)
+ * MUST NOT define this flag — flag off = today's no-op
  * behavior is preserved byte-exactly. This is an opt-IN guard (inverse of
  * the opt-OUT HOST_STUBS_CUSTOM_VOLTAGE_MV / HOST_STUBS_CUSTOM_HW_REVISION
  * guards above). */

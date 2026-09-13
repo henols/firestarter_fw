@@ -569,25 +569,24 @@ def test_clean_avr_all_three_envs_pass():
 
 
 def test_clean_native_both_envs_pass():
-    """Coverage 2 — both captured_test_native*.log files exit 0 with 185 and 17 in PASS:.
+    """Coverage 2 — both captured_test_native*.log files exit 0 with 179 and 16 in PASS:.
 
-    Plan 185-01 (CLAIM-04/CLAIM-05) updated captured_test_native_summary.log and
-    captured_test_native_nodevtools_summary.log IN PLACE again, 184 -> 185
-    cases/succeeded (suites unchanged at 17) -- both were genuinely RE-CAPTURED
+    Plan 188-06 (TOOLS-06/D-08/D-20) updated captured_test_native_summary.log and
+    captured_test_native_nodevtools_summary.log IN PLACE again, 185 -> 179
+    cases/succeeded and 17 -> 16 suites -- both were genuinely RE-CAPTURED
     from real `pio test -e native` / `-e native_nodevtools` runs at this plan's
-    tree position, following the same in-place convention Phases 149, 151, 153 and
-    158 all used (D-09: these two fixtures are never severed). No severance
-    needed here, unlike the AVR captured_build_*.log family: this is the ONLY leg
-    in this module that consumes either native summary fixture, so nothing else
-    depends on 185 staying frozen -- planted_size_baseline_suites_errored.log
-    (Coverage 5) is its own independent, statically-planted fixture, not derived
-    from these two at test time.
+    tree position, following the same in-place convention Phases 149, 151, 153,
+    158 and 185 all used (D-09: these two fixtures are never severed). No
+    severance needed here, unlike the AVR captured_build_*.log family: this is
+    the ONLY leg in this module that consumes either native summary fixture, so
+    nothing else depends on 179/16 staying frozen -- planted_size_baseline_suites_errored.log
+    (Coverage 5) is its own independent, statically-planted fixture, re-derived
+    from these two at this same plan's boundary rather than left stale.
 
-    RECONCILIATION: this leg was correctly anticipated (before observation) as
-    one of the exhaustive four legs that couple to size_baseline.json's live
-    figures moving; the observed case-count movement (184 -> 185) matches Phase
-    183's own measurement, confirming no further drift occurred between 183-05
-    and this plan's own re-capture."""
+    RECONCILIATION: the observed case/suite drop (185/17 -> 179/16) matches
+    D-08's own deletion of the test_frame_vectors suite (6 cases, 1 suite),
+    confirming no other suite moved between Phase 185 and this plan's own
+    re-capture."""
     for env_name, fixture in (
         ("native", "captured_test_native_summary.log"),
         ("native_nodevtools", "captured_test_native_nodevtools_summary.log"),
@@ -598,8 +597,8 @@ def test_clean_native_both_envs_pass():
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
         assert "PASS:" in result.stdout
-        assert "185" in result.stdout, f"Expected '185' in output. Got:\n{result.stdout}"
-        assert "17" in result.stdout, f"Expected '17' in output. Got:\n{result.stdout}"
+        assert "179" in result.stdout, f"Expected '179' in output. Got:\n{result.stdout}"
+        assert "16" in result.stdout, f"Expected '16' in output. Got:\n{result.stdout}"
 
 
 def test_planted_flash_regression_flips_checker_to_failure():
