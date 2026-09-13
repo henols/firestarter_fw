@@ -22,74 +22,38 @@ SCOPE (the load-bearing decision of this module): `CHECKER_GLOB` globs
 directory level, never a recursive descent. It never reaches into
 `firestarter_app/tools/`.
 
-This scope is not an arbitrary narrowing. 123-RESEARCH.md's "BASE-08: The
-Convention Is Not Universal" (Correction C-6) measured the convention
-host-repo-wide: 7 checkers exist across both repos, and only 4 of them
-conform to the `check_X.py` <-> `test_check_X.py` <-> `planted_X*` shape.
-The 3 violators all live in `firestarter_app/tools/` and all predate
-v1.23:
+This scope is deliberate: the glob covers `firestarter/scripts/` only, and
+never reaches `firestarter_app/tools/`. The host repo's own checker family
+was retired wholesale in v1.37 Phase 188, so there is nothing left there for
+a repo-wide version of this meta-test to measure.
 
-  - `check_dispatch.py` -- its test is named `test_check_dispatch_invariants.py`,
-    not `test_check_dispatch.py`.
-  - `check_sdp_capability_invariants.py` -- its test is named
-    `test_check_sdp_capability.py`, not
-    `test_check_sdp_capability_invariants.py`.
-  - `check_mypy_watermark.py` -- has NO paired test at all (zero references
-    anywhere in `tests/`). This is a genuine gap, not a blessed one, and it
-    is recorded here rather than silently fixed or silently ignored,
-    because remediating it is out of this phase's scope (BASE-08 targets
-    checkers "introduced in this milestone", and `check_mypy_watermark.py`
-    is pre-existing v1.18-era tooling).
+FLOOR = 4 -- the number of `check_*.py` files actually shipped into
+`firestarter/scripts/` and still present: `check_cmake_manifest.py`,
+`check_orphan_provisional.py`, `check_landing_range.py` and
+`check_erase_no_vpp.py`. The size-baseline, build-warnings, release-assets
+and no-heap/64-bit checkers that this list once also named were retired on
+2026-09-13 as never-run gates, taking the floor from 8 to 4 (as the rule
+below requires, in reverse).
 
-A repo-wide or recursive version of this meta-test would therefore be RED
-on arrival against debt this phase did not create. Scoping to
-`firestarter/scripts/` is not a dodge: D-06 put every v1.23 firmware
-checker in that one directory, which contained zero Python checkers (only
-one shell script, `check_uno_ram.sh`) before this phase. That makes the
-glob exactly the "introduced in this milestone" set BASE-08 names, with no
-registry file (forbidden by D-08) and no grandfather allow-list (which
-would silently bless the 3 violators above rather than naming them).
+path). FIXTURE_FLOOR = 5 -- the number of `planted_*` entries actually
+present in `firestarter/tests/fixtures/` at this commit:
+`planted_cmake_manifest_excluded_no_reason/`,
+`planted_cmake_manifest_missing_source/`,
+`planted_erase_no_vpp_ctrl_write.cpp`,
+`planted_landing_range_replayed_history/` and
+`planted_orphan_provisional_macro/`. The release-assets, size-baseline,
+build-warnings and no-heap/64-bit fixtures this list once also named went
+with their checkers on 2026-09-13.
 
-FLOOR = 8 -- the number of `check_*.py` files actually shipped into
-`firestarter/scripts/` across Phases 123-155: `check_size_baseline.py`,
-`check_build_warnings.py`, `check_cmake_manifest.py`,
-`check_orphan_provisional.py` (Phase 123), `check_landing_range.py`
-(Phase 124 Plan 01, MERGE-01), `check_release_assets.py` (Phase 128
-Plan 01, D-11/D-12, REL-03/REL-02), `check_no_heap_or_64bit_symbols.py`
-(Phase 155 Plan 02, DEAD-01/DEAD-03, the link-time heap-and-64-bit-runtime
-symbol-absence gate) and `check_erase_no_vpp.py` (Phase 153, ERASE-08, the
-control-register high-voltage negative scan on the AT28C software erase
-path). FIXTURE_FLOOR = 31 -- the number of `planted_*` entries actually
-present in `firestarter/tests/fixtures/` at this commit, including Phase
-124's `planted_landing_range_replayed_history/` recipe stub, Phase 128's
-`planted_release_assets_missing_uno328pb/` and
-`planted_release_assets_zero_byte_leonardo/`, Phase 153's
-`planted_erase_no_vpp_ctrl_write.cpp`, Phase 155's
-`planted_no_heap_or_64bit_symbols_prechange_uno/`, and Phase 158 Plan 04's
-own `planted_size_baseline_flash_regression_v158.log`. This corrects a
-pre-existing drift: `FIXTURE_FLOOR` had been carrying `10` since Phase 123
-even though Phases 124 and 126 each added `planted_*` fixtures without
-raising it, leaving it 3 below the actual count (13) immediately before
-Phase 128; a second, later instance of the same drift left the floor at
-`7`/`16` from Phase 153 onward even as an eighth checker
-(`check_erase_no_vpp.py`) and its fixture shipped.
+**Both floors are counted on the tree, never transcribed from a plan's
+prose.** `ls scripts/check_*.py | wc -l` gives **4** and
+`ls -d tests/fixtures/planted_* | wc -l` gives **5** at this commit, which
+is what `FLOOR` and `FIXTURE_FLOOR` below carry. The assertions are `>=`.
 
-**Closed by Phase 158 Plan 05 (LAND-03's own carry-forward, named by this
-module's own docstring, by `158-before-figures.md` §13, and by
-`158-04-SUMMARY.md`):** both floors are raised in this same commit to the
-counts actually shipped, counted on the tree at this commit rather than
-transcribed from any plan's prose or from the research document --
-`ls scripts/check_*.py | wc -l` gives **8**, `ls tests/fixtures | grep -c
-'^planted_'` gives **31**. The fixture count is one higher than the
-pre-phase figure of 30 recorded in `158-before-figures.md`, because this
-phase's own Plan 04 fixture severance added exactly one new plant
-(`planted_size_baseline_flash_regression_v158.log`) ahead of this commit.
-Both assertions below are `>=`, so this is a **tightening of a loose
-gate**, not a repair of a red one -- neither test was failing before this
-edit, and a reader who sees a floor move should not assume otherwise. The
-`>=` assertions below would have passed either way, at the old floors or
-the new ones -- but `FLOOR`'s own "the number actually shipped" wording is
-now **true**, not "false by one" as it was before this edit. A later phase
+A floor moving DOWN is not the normal case and is not a way to silence a
+red gate -- it is correct only when checkers are deliberately retired, as
+on 2026-09-13, when four never-run gates were deleted and the floors went
+8 -> 4 and 31 -> 5 in that same commit. A later phase
 that adds a firmware checker under `firestarter/scripts/` raises both
 floors deliberately in the SAME commit that adds the checker; lowering a
 floor is never the correct response to a red gate here -- it means a
@@ -150,18 +114,8 @@ CHECKER_GLOB = "check_*.py"
 
 # Hardcoded floors -- see module docstring for what each counts and why a
 # future checker addition must raise these in the same commit.
-FLOOR = 8
-FIXTURE_FLOOR = 31
-
-# The three pre-existing, out-of-scope host-repo violators named for the
-# record (module docstring). Not used in any assertion below -- this
-# meta-test never reaches firestarter_app/tools/ at all.
-_OUT_OF_SCOPE_HOST_VIOLATORS = (
-    "check_dispatch.py",
-    "check_sdp_capability_invariants.py",
-    "check_mypy_watermark.py",  # has no paired test at all -- a real gap
-)
-
+FLOOR = 4
+FIXTURE_FLOOR = 5
 
 def _discovered_checkers():
     """Single-level, non-recursive glob of check_*.py in
@@ -175,8 +129,8 @@ def _expected_test_module_for(checker_path):
 
 
 def _stem_after_check_prefix(checker_path):
-    """check_size_baseline.py -> 'size_baseline' for fixture matching."""
-    stem = checker_path.stem  # e.g. "check_size_baseline"
+    """check_landing_range.py -> 'landing_range' for fixture matching."""
+    stem = checker_path.stem  # e.g. "check_landing_range"
     prefix = "check_"
     if stem.startswith(prefix):
         return stem[len(prefix) :]

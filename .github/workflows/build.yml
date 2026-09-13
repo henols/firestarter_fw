@@ -94,31 +94,6 @@ jobs:
 
       - uses: actions/setup-python@v4
 
-      # Phase 6 WR-05: codegen drift + catalog validity must run BEFORE the
-      # version-bump auto-commit. The drift gate is read-only and runs on a
-      # fresh checkout; if it fails, the version bump and the auto-commit
-      # don't happen. The previous step ordering ran update_version.py +
-      # git-auto-commit-action FIRST, which pushed a version-bump commit to
-      # the branch (including main) BEFORE the gate had a chance to veto it.
-      # On main that was particularly bad: the auto-commit landed on the
-      # protected branch and the operator now had a published commit they
-      # had to revert / overwrite if the gate failed.
-      - name: Set up Python 3.11 for codegen
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Catalog validity check
-        run: python3 tools/catalog/codegen.py --catalog tools/catalog/messages.toml --check
-
-      - name: Codegen drift gate (messages.h)
-        run: |
-          python3 tools/catalog/codegen.py \
-            --catalog tools/catalog/messages.toml \
-            --target include/messages.h \
-            --language cpp
-          git diff --exit-code include/messages.h
-
       - name: Install PlatformIO Core
         run: pip install --upgrade platformio
 

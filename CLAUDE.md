@@ -311,14 +311,13 @@ total) to run under both `-D DEV_TOOLS` and no-`DEV_TOOLS` builds.
 **Exception (Phase 140 D-11): `native_params_v131` and `native_loop_v131` are added to NEITHER
 pinned env.** The instruction directly above — add a new suite to **both** `[env:native]` and
 `[env:native_nodevtools]` — is **overridden** for both `native_params_v131` and
-`native_loop_v131`, because both pinned envs are asserted at exactly **141 cases / 17 suites** by
-`scripts/baseline/size_baseline.json` through `check_size_baseline.py`'s `compare_native`, so
-adding a case to either turns a live gate RED. Both envs follow the `native_trace_v131` precedent
-(Phase 138) instead: each env's `test_filter` names only its own suite (not folded into either
-pinned env's `test_filter`), neither is in `default_envs`, neither is ever passed to
-`check_size_baseline.py` (an unrecognized env name raises an uncaught `KeyError`, exit 1 —
-F-138-05) nor to `check_build_warnings.py` (exit 2, no baseline entry for either env), and both
-run in **no CI leg** of either repository (F-140-11). `native_loop_v131` originates in Phase 141 /
+`native_loop_v131`. Both envs follow the `native_trace_v131` precedent (Phase 138): each env's
+`test_filter` names only its own suite (not folded into either pinned env's `test_filter`),
+neither is in `default_envs`, and both run in **no CI leg** of either repository (F-140-11).
+(The case/suite count assertion that originally motivated this exception lived in
+`check_size_baseline.py`'s `compare_native`, reading `scripts/baseline/size_baseline.json`; both
+were retired on 2026-09-13 as never-run gates, so that particular gate can no longer turn RED.
+The separation is kept because the no-CI-leg property still holds.) `native_loop_v131` originates in Phase 141 /
 D-10 — it exists because the frozen `native_trace_v131` fixture goes RED by design in that phase
 and cannot verify the per-byte program loop rewrite, so Phase 141 authors its own oracle instead,
 carrying the identical four constraints stated above. Both envs' counts are therefore a

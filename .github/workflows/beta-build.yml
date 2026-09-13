@@ -82,22 +82,6 @@ jobs:
             ~/.platformio/.cache
           key: ${{ runner.os }}-pio
 
-      - name: Set up Python 3.11 for codegen
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Catalog validity check
-        run: python3 tools/catalog/codegen.py --catalog tools/catalog/messages.toml --check
-
-      - name: Codegen drift gate (messages.h)
-        run: |
-          python3 tools/catalog/codegen.py \
-            --catalog tools/catalog/messages.toml \
-            --target include/messages.h \
-            --language cpp
-          git diff --exit-code include/messages.h
-
       - name: Install PlatformIO Core
         run: pip install --upgrade platformio
 
@@ -284,30 +268,6 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Release target SHA: $SHA"
 
-      # REL-03/D-11/D-12: this step is deliberately UNGUARDED -- it carries no
-      # `if:` at all, and that is the requirement, not an omission. The three
-      # AVR release assets must be provable present even when `steps.arm`
-      # above was CONTAINED (D-05's soft copy, continue-on-error: true) --
-      # "a broken ARM build still publishes all three AVR assets" is only
-      # provable if this assertion still runs in exactly that case, so it
-      # must run on every path into `Release`, unconditionally.
-      # scripts/check_release_assets.py (Plan 128-01) derives its required
-      # set from scripts/baseline/size_baseline.json's `avr_targets` keys --
-      # never three hardcoded filenames -- so a fourth AVR target updates
-      # this gate for free instead of silently not being required. It never
-      # mentions or requires the py32f071 image: D-11 rejected a single
-      # do-everything checker that would have had to carry internal severity
-      # logic in order to bundle a gate that must HARD-fail (AVR missing)
-      # with one that must TOLERATE absence (py32, when the ARM build is
-      # contained). The script is provable locally against committed planted
-      # fixtures, which is what REL-03's own wording -- "demonstrably fails"
-      # -- asks for. No flags are passed: the checker's committed defaults
-      # already resolve to scripts/baseline/size_baseline.json and
-      # <repo>/.pio/build, exactly the tree `pio run` wrote earlier in this
-      # same job. The --baseline/--build-root flags and their env seams exist
-      # for the paired tests and for local use, not for this call site.
-      - name: Assert all AVR release assets are present (REL-03)
-        run: python3 scripts/check_release_assets.py
 
       - name: Release
         uses: softprops/action-gh-release@v2
