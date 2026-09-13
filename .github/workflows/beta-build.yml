@@ -88,9 +88,8 @@ jobs:
       - name: Run native unit tests
         run: pio test -e native
 
-      # Same rationale as the vector gates above: -D DEV_TOOLS lives in the
-      # shared [env] block, so without this leg the no-DEV_TOOLS build is never
-      # compiled on the branch that ships.
+      # -D DEV_TOOLS lives in the shared [env] block, so without this leg the
+      # no-DEV_TOOLS build is never compiled on the branch that ships.
       - name: Run native unit tests (no DEV_TOOLS)
         run: pio test -e native_nodevtools
 
