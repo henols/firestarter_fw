@@ -47,18 +47,11 @@ asserts on all eleven for that reason; both totals (438 B named-subset,
 528 B full blob) are recorded here as this gate's own documentation, per
 `.planning/v1.33/155-before-figures.md` section 4.
 
-Two env seams, both read with committed defaults, both overridable by an
-argv flag (argv wins over env, env wins over the default) -- the same
-precedence convention as `check_release_assets.py`:
+One env seam, read with a committed default and overridable by an argv flag
+(argv wins over env, env wins over the default):
 
-  - `FIRESTARTER_SIZE_BASELINE` (reused from `check_release_assets.py`;
-    default `scripts/baseline/size_baseline.json`). READ ONLY: this gate
-    derives only the `avr_targets` key set from it and never writes the
-    file -- re-anchoring or rebuilding the baseline is LAND-01 / Phase 158's
-    job, not this gate's.
-  - `FIRESTARTER_PIO_BUILD_ROOT` (reused from `check_release_assets.py`;
-    default `<repo>/.pio/build`). It exists for the identical recorded
-    reason as `check_release_assets.py`'s own copy: `firestarter/.gitignore`
+  - `FIRESTARTER_PIO_BUILD_ROOT` (default `<repo>/.pio/build`). It exists for
+    the recorded reason that `firestarter/.gitignore`
     line 1 is the bare pattern `.pio`, which matches at any depth, so a
     committed fixture cannot live under a real `.pio/build/...` path.
 
@@ -75,15 +68,11 @@ A fourth seam, `--nm-output TARGET=PATH` (repeatable), lets the gate read a
 committed, captured TEXT listing for a target instead of invoking the
 toolchain at all. This is the seam the paired pytest uses to stay hermetic
 in CI leg 3, where no AVR toolchain need exist -- mirroring the dominant
-fixture family in this repo (`captured_build_*.log`, `planted_size_baseline_*.log`
-are all committed text captures of tool output, never binaries). No binary
-ELF fixture is committed by this plan.
+fixture family in this repo (committed text captures of tool output, never
+binaries). No binary ELF fixture is committed.
 
-**House convention: a manual argv parser, not argparse.** `check_release_assets.py`
-uses this shape and calls it house convention, mirroring `check_size_baseline.py`'s
-own `_parse_argv`. (`check_erase_no_vpp.py` uses `argparse` instead -- both
-precedents exist in this repo; the manual form is the majority idiom, and is
-what this module follows.)
+**House convention: a manual argv parser, not argparse.** (`check_erase_no_vpp.py`
+uses `argparse` instead -- both precedents exist in this repo.)
 
 Exit codes:
   0 -- every resolved target's listing contains zero heap-set matches, zero
@@ -129,7 +118,7 @@ Usage:
     python3 scripts/check_no_heap_or_64bit_symbols.py
     python3 scripts/check_no_heap_or_64bit_symbols.py --build-root .pio/build
     python3 scripts/check_no_heap_or_64bit_symbols.py --nm-output uno=tests/fixtures/planted_no_heap_or_64bit_symbols_prechange_uno/avr-nm-uno.txt
-    python3 scripts/check_no_heap_or_64bit_symbols.py --baseline scripts/baseline/size_baseline.json --nm /path/to/avr-nm
+    python3 scripts/check_no_heap_or_64bit_symbols.py --nm /path/to/avr-nm
 """
 import json
 import os
@@ -138,18 +127,15 @@ import sys
 from pathlib import Path
 
 # Resolve the repo root from this file's location so the gate behaves
-# identically regardless of the caller's working directory (mirrors
-# check_release_assets.py:82-86 / check_size_baseline.py:87-91).
+# identically regardless of the caller's working directory.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Reused seam (check_release_assets.py / check_size_baseline.py /
-# check_build_warnings.py already read this exact name). READ ONLY here --
-# see module docstring.
-FIRESTARTER_SIZE_BASELINE = os.environ.get(
-    "FIRESTARTER_SIZE_BASELINE", str(REPO_ROOT / "scripts" / "baseline" / "size_baseline.json")
-)
+# Accepted and ignored: the size baseline this once read is deleted. Kept only
+# so an existing --baseline argument or FIRESTARTER_SIZE_BASELINE export stays
+# non-fatal.
+FIRESTARTER_SIZE_BASELINE = os.environ.get("FIRESTARTER_SIZE_BASELINE")
 
-# Reused seam (check_release_assets.py, Phase 128 research finding F-6): a
+# A
 # fixture tree cannot contain a real .pio/build/... layout because
 # .gitignore line 1 is the bare pattern ".pio", which matches at any depth.
 FIRESTARTER_PIO_BUILD_ROOT = os.environ.get(
@@ -226,10 +212,8 @@ class GateError(Exception):
 
 
 def _parse_argv(argv):
-    """Manual argv parser -- house convention, mirrors check_release_assets.py
-    / check_size_baseline.py's own _parse_argv (check_erase_no_vpp.py uses
-    argparse instead; both precedents exist in this repo, and the manual
-    form is the majority idiom).
+    """Manual argv parser -- house convention (check_erase_no_vpp.py uses
+    argparse instead; both precedents exist in this repo).
 
     Recognises --baseline PATH, --build-root PATH, --nm PATH, and a
     repeatable --nm-output TARGET=PATH. Raises SystemExit(2) on a malformed
@@ -376,27 +360,20 @@ def _scan_listing(text):
     return heap_found, di64_found, anchors_found
 
 
-def _resolve_targets(nm_output, baseline_path):
-    """Resolve the target list: from --nm-output entries if given,
-    otherwise from the baseline's avr_targets keys. Returns
-    (targets_sorted, error_message_or_None). An unreadable/unparseable
-    baseline, a non-object baseline, or a missing/non-object avr_targets
-    key is reported as an error (caller treats this as exit 2)."""
+AVR_TARGETS = ("uno", "uno328pb", "leonardo")
+
+
+def _resolve_targets(nm_output, baseline_path=None):
+    """Resolve the target list: from --nm-output entries if given, otherwise
+    the AVR targets this repo builds. Returns (targets_sorted, error_or_None).
+
+    Previously read the `avr_targets` keys of scripts/baseline/size_baseline.json.
+    That file is gone, along with the size-baseline gate it served, so the set is
+    stated here directly. `baseline_path` is accepted and ignored so the existing
+    --baseline flag and FIRESTARTER_SIZE_BASELINE env seam stay non-fatal."""
     if nm_output:
         return sorted(nm_output.keys()), None
-
-    try:
-        with open(baseline_path, encoding="utf-8") as f:
-            baseline = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        return None, f"could not read/parse baseline {baseline_path}: {e}"
-
-    if not isinstance(baseline, dict):
-        return None, f"baseline {baseline_path} is not a JSON object"
-
-    avr_targets = baseline.get("avr_targets")
-    if "avr_targets" not in baseline or not isinstance(avr_targets, dict):
-        return None, f"baseline {baseline_path} has no object-valued 'avr_targets' key"
+    return sorted(AVR_TARGETS), None
 
     return sorted(avr_targets.keys()), None
 

@@ -22,44 +22,21 @@ SCOPE (the load-bearing decision of this module): `CHECKER_GLOB` globs
 directory level, never a recursive descent. It never reaches into
 `firestarter_app/tools/`.
 
-This scope is not an arbitrary narrowing. 123-RESEARCH.md's "BASE-08: The
-Convention Is Not Universal" (Correction C-6) measured the convention
-host-repo-wide: 7 checkers exist across both repos, and only 4 of them
-conform to the `check_X.py` <-> `test_check_X.py` <-> `planted_X*` shape.
-The 3 violators all live in `firestarter_app/tools/` and all predate
-v1.23:
+This scope is deliberate: the glob covers `firestarter/scripts/` only, and
+never reaches `firestarter_app/tools/`. The host repo's own checker family
+was retired wholesale in v1.37 Phase 188, so there is nothing left there for
+a repo-wide version of this meta-test to measure.
 
-  - `check_dispatch.py` -- its test is named `test_check_dispatch_invariants.py`,
-    not `test_check_dispatch.py`.
-  - `check_sdp_capability_invariants.py` -- its test is named
-    `test_check_sdp_capability.py`, not
-    `test_check_sdp_capability_invariants.py`.
-  - `check_mypy_watermark.py` -- has NO paired test at all (zero references
-    anywhere in `tests/`). This is a genuine gap, not a blessed one, and it
-    is recorded here rather than silently fixed or silently ignored,
-    because remediating it is out of this phase's scope (BASE-08 targets
-    checkers "introduced in this milestone", and `check_mypy_watermark.py`
-    is pre-existing v1.18-era tooling).
+FLOOR = 5 -- the number of `check_*.py` files actually shipped into
+`firestarter/scripts/` and still present: `check_cmake_manifest.py`,
+`check_orphan_provisional.py`, `check_landing_range.py`,
+`check_no_heap_or_64bit_symbols.py` and `check_erase_no_vpp.py`. The
+size-baseline, build-warnings and release-assets checkers that this list
+once also named were retired on 2026-09-13 as never-run gates, and the
+floor was lowered from 8 to 5 in that same commit (as the rule below
+requires, in reverse).
 
-A repo-wide or recursive version of this meta-test would therefore be RED
-on arrival against debt this phase did not create. Scoping to
-`firestarter/scripts/` is not a dodge: D-06 put every v1.23 firmware
-checker in that one directory, which contained zero Python checkers (only
-one shell script, `check_uno_ram.sh`) before this phase. That makes the
-glob exactly the "introduced in this milestone" set BASE-08 names, with no
-registry file (forbidden by D-08) and no grandfather allow-list (which
-would silently bless the 3 violators above rather than naming them).
-
-FLOOR = 8 -- the number of `check_*.py` files actually shipped into
-`firestarter/scripts/` across Phases 123-155: `check_size_baseline.py`,
-`check_build_warnings.py`, `check_cmake_manifest.py`,
-`check_orphan_provisional.py` (Phase 123), `check_landing_range.py`
-(Phase 124 Plan 01, MERGE-01), `check_release_assets.py` (Phase 128
-Plan 01, D-11/D-12, REL-03/REL-02), `check_no_heap_or_64bit_symbols.py`
-(Phase 155 Plan 02, DEAD-01/DEAD-03, the link-time heap-and-64-bit-runtime
-symbol-absence gate) and `check_erase_no_vpp.py` (Phase 153, ERASE-08, the
-control-register high-voltage negative scan on the AT28C software erase
-path). FIXTURE_FLOOR = 31 -- the number of `planted_*` entries actually
+path). FIXTURE_FLOOR = 6 -- the number of `planted_*` entries actually
 present in `firestarter/tests/fixtures/` at this commit, including Phase
 124's `planted_landing_range_replayed_history/` recipe stub, Phase 128's
 `planted_release_assets_missing_uno328pb/` and
@@ -150,18 +127,8 @@ CHECKER_GLOB = "check_*.py"
 
 # Hardcoded floors -- see module docstring for what each counts and why a
 # future checker addition must raise these in the same commit.
-FLOOR = 8
-FIXTURE_FLOOR = 31
-
-# The three pre-existing, out-of-scope host-repo violators named for the
-# record (module docstring). Not used in any assertion below -- this
-# meta-test never reaches firestarter_app/tools/ at all.
-_OUT_OF_SCOPE_HOST_VIOLATORS = (
-    "check_dispatch.py",
-    "check_sdp_capability_invariants.py",
-    "check_mypy_watermark.py",  # has no paired test at all -- a real gap
-)
-
+FLOOR = 5
+FIXTURE_FLOOR = 6
 
 def _discovered_checkers():
     """Single-level, non-recursive glob of check_*.py in

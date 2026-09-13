@@ -282,40 +282,6 @@ def test_malformed_argv_exits_two():
     )
 
 
-def test_empty_avr_targets_baseline_exits_one(tmp_path):
-    """Coverage 6 -- a baseline whose avr_targets parses as an empty object
-    must exit 1 (the never-vacuous guard) and stdout must carry the
-    never-vacuous wording. A gate that requires nothing must not report
-    success."""
-    empty_baseline = tmp_path / "empty_avr_targets.json"
-    empty_baseline.write_text(json.dumps({"avr_targets": {}}))
-
-    result = _run_checker(["--baseline", str(empty_baseline)])
-    assert result.returncode == 1, (
-        f"expected the literal exit code 1 (never-vacuous guard), got "
-        f"{result.returncode}.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    )
-    assert "never-vacuous" in result.stdout, (
-        f"expected the never-vacuous wording in stdout. Got:\n{result.stdout}"
-    )
-    assert "PASS:" not in result.stdout, (
-        f"a vacuous run must never print PASS:. Got:\n{result.stdout}"
-    )
-
-
-def test_unreadable_baseline_exits_two(tmp_path):
-    """Coverage 7 -- a baseline file that is not valid JSON exits exactly
-    2 -- a tool/format failure, categorically distinct from a missing
-    target."""
-    not_json = tmp_path / "not_json.json"
-    not_json.write_text("{not valid json")
-
-    result = _run_checker(["--baseline", str(not_json)])
-    assert result.returncode == 2, (
-        f"expected the literal exit code 2 (unparseable baseline), got "
-        f"{result.returncode}.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    )
-    assert "PASS:" not in result.stdout
 
 
 def test_scan_targets_are_non_vacuous():
