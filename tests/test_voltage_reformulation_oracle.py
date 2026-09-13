@@ -470,11 +470,17 @@ def test_shipped_c_matches_the_transcribed_formula():
 
 
 def test_no_sixty_four_bit_type_remains_in_the_function_body():
-    """Coverage: a cheap, CI-resident second oracle for DEAD-03 -- asserts
+    """Coverage: the CI-resident source-level oracle for DEAD-03 -- asserts
     the 64-bit type name is absent from the comment-stripped body of
-    rurp_read_voltage_mv, catching a regression at source level even when
-    nobody re-runs the avr-nm symbol gate. RED by construction until task
-    2 of this same plan lands."""
+    rurp_read_voltage_mv.
+
+    This was the SECOND oracle; the link-time avr-nm symbol gate that was
+    the first (check_no_heap_or_64bit_symbols.py) was retired on 2026-09-13
+    as a never-run gate, so this is now the only automated DEAD-03 check --
+    and it is much narrower. It reads one function's source text for one
+    type name, where the retired gate read three linked ELFs for eleven
+    symbols. A 64-bit runtime pulled in from any other translation unit,
+    or through inlining, is no longer caught by anything."""
     text = _strip_comments(_SCAN_RURP_COMMON.read_text())
     body = _extract_function_body(text, "rurp_read_voltage_mv")
     matches = _UINT64_RE.findall(body)
