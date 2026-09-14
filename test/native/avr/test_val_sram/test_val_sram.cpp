@@ -4,21 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Tier-1 validation suite for the SRAM family.
- * HARN-01 / D-07 / T-71-SRAM-FALSE / Pitfall 2 (from 71-RESEARCH.md).
- *
- * Documents the CURRENT SRAM no-op state (sram.cpp:15-17 is a one-liner with
- * no function-pointer wiring). This is a GREEN baseline for Phase 71.
- *
- * FIX-01 will change this suite: once VAL-06 (Phase 73) resolves
- * whether SRAM should perform register writes, the assertions here will be
- * updated. Until then:
- *   - configure_sram itself records ZERO register writes (pure no-op).
- *   - configure_memory for SRAM protocols records only address-setup writes
- *     (LSB/MSB/CONTROL from mem_util_set_address) with NO VPP-enable bits.
- *   - h.firestarter_operation_init is NULL after configure_memory for SRAM
- *     (configure_sram does not wire up an init function).
- *
  * Two-tier assertions:
  *   1. Direct handler test (configure_sram called standalone): bus_recording_count()
  *      == 0 — documents the handler is a pure no-op with zero side-effects.
@@ -27,9 +12,6 @@
  *      proves SRAM never reaches the VPP regulator through any dispatch path.
  *
  * Protocols covered: 0x0E (SRAM_5V), 0x27 (SRAM_NVRAM), 0x28, 0x29.
- *
- * VAL-06 deferred: Whether SRAM should write any registers is an open question.
- * This suite's GREEN state pins the current no-op as the Phase-71 baseline.
  */
 
 #include <Arduino.h>
@@ -70,15 +52,7 @@ static firestarter_handle_t make_handle(uint32_t protocol, uint8_t cmd) {
     return h;
 }
 
-/* ─── Direct handler tests: configure_sram records ZERO writes ─────────────
- * These tests call configure_sram standalone (no configure_memory overhead).
- * configure_sram is sram.cpp:15-17: LOG_DEBUG_ID_SUB(DBG_CONFIGURING_SRAM) —
- * a single LOG call with NO rurp_write_to_register calls.
- * FIX-01 will update these GREEN tests when VAL-06 is resolved. */
-
 void test_sram_handler_direct_0x0E_records_zero_writes(void) {
-    /* configure_sram is currently a no-op (sram.cpp:15-17) — assert zero writes.
-     * FIX-01 will change this; until then GREEN = confirmed no-op. */
     firestarter_handle_t h = make_handle(0x0E, CMD_READ);
     h.firestarter_set_control_register = NULL; /* not needed for direct test */
     configure_sram(&h);
@@ -153,8 +127,6 @@ int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
 
-    /* Direct handler tests: configure_sram standalone = zero register writes
-     * (pins the Phase-71 no-op baseline; Phase 74 FIX-01 will revisit) */
     RUN_TEST(test_sram_handler_direct_0x0E_records_zero_writes);
     RUN_TEST(test_sram_handler_direct_0x27_records_zero_writes);
     RUN_TEST(test_sram_handler_direct_0x28_records_zero_writes);

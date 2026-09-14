@@ -49,10 +49,6 @@ void setUp(void) {
 void tearDown(void) {
 }
 
-/* Build a zero-initialized handle with only the three named fields set.
- * mem_type is retained as a vestigial (ignored) parameter to avoid
- * touching every call site now that firestarter_handle_t.mem_type is gone
- * (Phase 105 removal). */
 static firestarter_handle_t make_handle(uint32_t protocol, uint8_t mem_type, uint8_t cmd) {
     (void)mem_type;
     firestarter_handle_t h = {};
@@ -144,11 +140,6 @@ void test_protocol_0x0D_dispatches_eeprom28c(void) {
     TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
 }
 
-/* FIX-02A (Phase 74 Plan 02): configure_flash_5v_page must handle CMD_CHECK_CHIP_ID
- * by setting a non-NULL operation_main pointer (mirroring configure_flash_nor_unlock).
- * These three tests are RED before the fix (no case in configure_flash_5v_page switch
- * → firestarter_operation_main stays NULL). */
-
 void test_5v_page_check_chip_id_0x05_sets_operation(void) {
     firestarter_handle_t h = make_handle(0x05, 0, CMD_CHECK_CHIP_ID);
     configure_memory(&h);
@@ -177,12 +168,6 @@ void test_5v_page_check_chip_id_0x39_sets_operation(void) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
- * v1.22 Phase 119 D-06/D-07/D-08 (119-07 Task 3) — the complete
- * command-by-protocol matrix enumerated as native cases, made possible by
- * widening [env:native]/[env:native_nodevtools]'s build_src_filter
- * with operation_utils.cpp. RESEARCH F-E precomputed the full matrix, so
- * this is an enumeration to verify, not an exploration.
- *
  * One representative protocol value per family (every value within a
  * family routes to the IDENTICAL configure_* function -- see
  * firestarter/CLAUDE.md's dispatch-order table) EXCEPT where a group's own
@@ -216,11 +201,6 @@ static const protocol_family_row_t kAllProtocolFamilies[] = {
 };
 static const size_t kAllProtocolFamiliesCount = sizeof(kAllProtocolFamilies) / sizeof(kAllProtocolFamilies[0]);
 
-/* Case group 1 — LOCK-04's positive safety invariant. This is the case that
- * would have caught LOCK-04's disproven literal mechanism: a blanket
- * `default:` arm added to configure_eeprom28c makes 0x0D's CMD_READ/
- * CMD_VERIFY rows fail here, since configure_memory pre-sets their generic
- * mains at memory.cpp:48-58 BEFORE the protocol chain runs. */
 void test_case_group1_read_write_verify_never_null_main_for_any_protocol(void) {
     static const uint8_t cmds[] = {CMD_READ, CMD_WRITE, CMD_VERIFY};
     static const char* cmd_names[] = {"CMD_READ", "CMD_WRITE", "CMD_VERIFY"};
@@ -240,11 +220,6 @@ void test_case_group1_read_write_verify_never_null_main_for_any_protocol(void) {
     }
 }
 
-/* Case group 2 — LOCK-04's fail-closed claim. Every protocol OTHER THAN
- * 0x0D must leave CMD_SDP_UNLOCK/CMD_SDP_LOCK NULL-main, so the op-layer
- * guard refuses them -- LOCK-04's intent satisfied by D-06's generic guard
- * rather than by a per-handler default: arm, and provably total because it
- * needs no per-handler maintenance. */
 void test_case_group2_sdp_cmds_null_main_for_every_non_0x0d_protocol(void) {
     for (size_t i = 0; i < kAllProtocolFamiliesCount; i++) {
         uint32_t protocol = kAllProtocolFamilies[i].protocol;
@@ -273,13 +248,6 @@ void test_case_group2_sdp_cmds_null_main_for_every_non_0x0d_protocol(void) {
     }
 }
 
-/* Case group 3 — LOCK-02's dispatch half. On 0x0D, CMD_SDP_UNLOCK/
- * CMD_SDP_LOCK must set a non-NULL main and leave init/end NULL. RESEARCH
- * F-T's correction: NULL init/end does NOT mean those phases are skipped --
- * _execute_operation_house_keeping_func still calls op_wait_for_ack() and
- * still emits the INIT/END frame pairs. What is genuinely absent is the
- * DONE round-trip and any '#' data frame -- "no data payload, no DONE
- * round-trip", not "no INIT/END". */
 void test_case_group3_sdp_cmds_dispatch_on_0x0d_with_null_init_end(void) {
     firestarter_handle_t h_unlock = make_handle(0x0D, 0, CMD_SDP_UNLOCK);
     configure_memory(&h_unlock);
@@ -306,20 +274,6 @@ void test_case_group3_sdp_cmds_dispatch_on_0x0d_with_null_init_end(void) {
         "unlock above");
 }
 
-/* Case group 4a — ERASE-03: CMD_ERASE on 0x0D now dispatches to a real op.
- * added a `case CMD_ERASE:` arm to configure_eeprom28c's switch,
- * assigning only firestarter_operation_main (no init, no end). This split
- * off the erase half of the old combined group-4 function -- the old
- * function's name claimed BOTH commands left main NULL, and only the
- * chip-id half of that claim is still true after this change, so keeping
- * one function would leave a false name over a true assertion.
- *
- * This cell (CMD_ERASE, protocol 0x0D) has therefore LEFT Phase 119 D-06's
- * op-layer NULL-main guard's coverage -- dispatch resolving to a non-NULL
- * main is no longer, by itself, proof the erase is safe. The replacement
- * proof that the arm actually emits the AN-0544B six-write erase sequence
- * (not merely that dispatch resolves) is the stream-equality case in
- * test_eeprom28c_sdp.cpp (Cases 31-33), not this dispatch check. */
 void test_case_group4a_0x0d_erase_dispatches_to_a_real_op_erase03(void) {
     firestarter_handle_t h_erase = make_handle(0x0D, 0, CMD_ERASE);
     configure_memory(&h_erase);
@@ -442,8 +396,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_5v_page_check_chip_id_0x35_sets_operation);
     RUN_TEST(test_5v_page_check_chip_id_0x39_sets_operation);
 
-    /* v1.22 Phase 119 D-06/D-07/D-08 (119-07 Task 3): the complete
-     * command-by-protocol matrix, enumerated as native cases. */
     RUN_TEST(test_case_group1_read_write_verify_never_null_main_for_any_protocol);
     RUN_TEST(test_case_group2_sdp_cmds_null_main_for_every_non_0x0d_protocol);
     RUN_TEST(test_case_group3_sdp_cmds_dispatch_on_0x0d_with_null_init_end);

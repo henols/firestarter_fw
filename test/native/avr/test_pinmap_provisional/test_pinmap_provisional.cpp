@@ -4,19 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * MERGE-04's refusal suite, compiled ONLY under
- * [env:native_pinmap_provisional] (RURP_PINMAP_PROVISIONAL=1 in that env's
- * build_flags). This is the suite that proves the production build of
- * configure_memory() (src/proms/memory.cpp) actually consults
- * rurp_pinmap_refuses() and refuses every is_memory_cmd() command when the
- * pin map is provisional (D-11, D-12, D-13).
- *
- * RED-before-GREEN (T-124-34): this suite must FAIL on the eight
- * per-command cases the moment it is added, BEFORE configure_memory() is
- * wired to consult the guard (Task 3) -- a suite that is already green
- * before the production change proves nothing. See 124-08-SUMMARY.md for
- * the recorded RED baseline.
- *
  * Protocol choice, deliberate: every per-command case uses
  * PROTO_EPROM_28PIN (0x07), a protocol that dispatches successfully to a
  * REAL handler (configure_eprom(), which enables the 12V VPP boost
@@ -74,11 +61,6 @@ static firestarter_handle_t make_handle(uint32_t protocol, uint8_t cmd) {
     return h;
 }
 
-/* Shared assertion body for a single refused command: configure_memory()
- * must report RESPONSE_CODE_ERROR and leave all three operation function
- * pointers NULL -- the same refusal shape configure_not_implemented()
- * produces (D-13's mirrored template), proven per-command so a failure
- * names exactly which command stopped refusing. */
 static void assert_cmd_refused(uint8_t cmd, const char* cmd_name) {
     firestarter_handle_t h = make_handle(PROTO_EPROM_28PIN, cmd);
     configure_memory(&h);
@@ -94,10 +76,6 @@ static void assert_cmd_refused(uint8_t cmd, const char* cmd_name) {
     snprintf(msg, sizeof(msg), "%s: firestarter_operation_end must stay NULL when refused", cmd_name);
     TEST_ASSERT_NULL_MESSAGE(h.firestarter_operation_end, msg);
 }
-
-/* Nine per-command cases, is_memory_cmd()'s exact set (D-12's original
- * eight plus Phase 151's CMD_LOCK_STATUS, LOCK-02/OD-3), never one
- * aggregate loop -- a failure names which command stopped refusing. */
 
 void test_pinmap_provisional_refuses_cmd_read(void) {
     assert_cmd_refused(CMD_READ, "CMD_READ");
@@ -135,11 +113,6 @@ void test_pinmap_provisional_refuses_cmd_lock_status(void) {
     assert_cmd_refused(CMD_LOCK_STATUS, "CMD_LOCK_STATUS");
 }
 
-/* Negative control 1 -- the refusal PREDICATE itself: true for all NINE
- * is_memory_cmd() commands (D-12's original eight plus Phase 151's
- * CMD_LOCK_STATUS), false for a command outside the set. Proves the
- * predicate (not just configure_memory's use of it) is exactly
- * is_memory_cmd()'s set, under this env's RURP_PINMAP_PROVISIONAL=1. */
 void test_pinmap_refuses_predicate_truth_table(void) {
     TEST_ASSERT_TRUE_MESSAGE(rurp_pinmap_refuses(CMD_READ), "CMD_READ must be in the refused set");
     TEST_ASSERT_TRUE_MESSAGE(rurp_pinmap_refuses(CMD_WRITE), "CMD_WRITE must be in the refused set");
@@ -175,8 +148,6 @@ int main(int argc, char** argv) {
     (void)argv;
     UNITY_BEGIN();
 
-    /* Nine per-command refusal cases (MERGE-04, D-12; ninth added Phase 151
-     * LOCK-02/OD-3) */
     RUN_TEST(test_pinmap_provisional_refuses_cmd_read);
     RUN_TEST(test_pinmap_provisional_refuses_cmd_write);
     RUN_TEST(test_pinmap_provisional_refuses_cmd_erase);

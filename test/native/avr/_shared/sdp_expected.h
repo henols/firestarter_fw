@@ -3,26 +3,6 @@
  * Copyright (c) 2024 Henrik Olsson
  *
  * Permission is hereby granted under MIT license.
- *
- * Phase 116 Plan 05 — the single source of truth both Phase-116 native suites
- * (the always-green test_sdp_harness landed here, and the parked RED
- * test_eeprom28c_sdp landed in plan 116-06) assert their ordered strobe
- * streams against (D-06).
- *
- * Every literal array below was authored EMPIRICALLY from a recorded dump of
- * real production code (never hand-derived) — see 116-RESEARCH.md §"Confirming
- * the elision empirically before trusting an expected array" for the
- * dump-then-hand-check technique, and §F4/§F5 for the independently-produced
- * reference streams the captured dumps were cross-checked against.
- *
- * D-06 raises the bar over the closest in-tree analog
- * (test_val_5v_page.cpp:199-217's recording_contains_sdp_signature, a
- * sub-sequence scan): RESEARCH §F5 proves the shipped and remap-aware-fixed
- * streams have IDENTICAL length and, on DIP32_28C512_EEPROM, identical
- * address-byte values too — so containment or counting cannot discriminate
- * them. Only ORDERED, FULL-STREAM, element-by-element equality works, and
- * every comparator here is written to name the first diverging index rather
- * than merely report "not equal".
  */
 
 #ifndef __SDP_EXPECTED_H__
@@ -57,10 +37,6 @@ typedef struct {
 #define STROBE_KIND_DATA 1
 #define STROBE_KIND_PIN  2
 
-/* Returns the index of the first element where the LIVE recorded stream
- * differs from `expected` (treating a length mismatch as a divergence at the
- * shorter length), or -1 when they are equal. Never counts anything — D-06's
- * anti-pattern list forbids it — every comparison is positional. */
 static int sdp_first_divergence(const sdp_strobe_t* expected, int expected_len) {
     int recorded_len = strobe_count();
     int n = (recorded_len < expected_len) ? recorded_len : expected_len;
@@ -77,12 +53,6 @@ static int sdp_first_divergence(const sdp_strobe_t* expected, int expected_len) 
     return -1;
 }
 
-/* Asserts strobe_overflowed() is 0, asserts the recorded count equals
- * expected_len, then asserts element-by-element — and on mismatch, fails
- * with a message naming the diverging index and both the expected and
- * recorded {kind, pin, value} triple at that index. This is the ordered
- * full-stream equality D-06 requires; a sub-sequence scan or a count cannot
- * be substituted (116-RESEARCH.md §F5). */
 static void sdp_assert_stream_equals(const sdp_strobe_t* expected, int expected_len, const char* ctx) {
     TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), ctx);
     TEST_ASSERT_EQUAL_MESSAGE(expected_len, strobe_count(), ctx);
@@ -125,16 +95,6 @@ static int sdp_snapshot(sdp_strobe_t* out, int max_len) {
  * flash_execute_command(EEPROM_SDP_DISABLE) / FLASH_DISABLE_WRITE_PROTECTION
  * driven directly through flash_util_byte_flipping (fu_flash_fast_address).
  *
- * KEY FINDING (recorded here, not just in the summary): fu_flash_fast_address
- * writes ONLY LEAST_SIGNIFICANT_BYTE and MOST_SIGNIFICANT_BYTE — it never
- * consults handle->bus_config and never writes CONTROL_REGISTER at all
- * (116-RESEARCH.md §F4 footnote 1). The shipped stream is therefore
- * IDENTICAL byte-for-byte across every 0x0D pinout (DIP28_28C256,
- * DIP28_28C64, DIP24_2816, DIP32_28C512_EEPROM) — this single array is the
- * shipped ground truth for all four. Cross-checked element-by-element
- * against 116-RESEARCH.md §F4's independently-produced 54-entry stream;
- * see 116-05-SUMMARY.md for confirmation the captured dump matched exactly.
- *
  * Elision is real and load-bearing: write #4 (address 0x5555, payload 0xAA)
  * emits NO address latch at all (index 30) because the cached LSB/MSB
  * already hold 0x55/0x55 from write #3 -- rurp_write_to_register returns
@@ -168,17 +128,6 @@ static const sdp_strobe_t SDP_SHIPPED_DIP28_28C256[] = {
 #define SDP_SHIPPED_DIP28_28C256_LEN (int)(sizeof(SDP_SHIPPED_DIP28_28C256) / sizeof(SDP_SHIPPED_DIP28_28C256[0]))
 
 /* ─── FIXED (post-Phase-117 target) streams ─────────────────────────────────
- * These are the streams a remap-aware emitter built on
- * handle->firestarter_set_data (i.e. memory_set_data, routed through
- * mem_util_remap_address_bus -- exactly what FIX-01 specifies the fixed
- * emitter will be built on) produces for the same six {address, byte} pairs.
- * Authored the same empirical way: drive the reference emitter, dump, then
- * hand-check against 116-RESEARCH.md §F5's independently-derived (LSB, MSB)
- * latch table. Unlike SDP_SHIPPED, these DO depend on bus_config (the remap
- * is pinout-specific), so there is one array per distinct DIP28/DIP24/DIP32
- * pinout (AT28C010 and AT28C040 share the DIP32_28C512_EEPROM bus_config, so
- * they share this array too -- 116-02's D-09 finding).
- *
  * Structural note (RESEARCH §F5, true for every pinout): memory_set_data
  * calls rurp_chip_input() (OUTPUT_ENABLE->1) BEFORE the address write, while
  * fu_flash_flip_data calls it AFTER -- so the fixed per-write shape is
@@ -276,13 +225,6 @@ static const sdp_strobe_t SDP_FIXED_DIP24_2816[] = {
 };
 #define SDP_FIXED_DIP24_2816_LEN (int)(sizeof(SDP_FIXED_DIP24_2816) / sizeof(SDP_FIXED_DIP24_2816[0]))
 
-/* DIP32_28C512_EEPROM: remap is the IDENTITY function for this pinout under a
- * zero CONTROL seed (address_mask 0xFFFF, rw_line 20 folds into a bit this
- * handle never surfaces below bit 16) -- Pitfall 5 / CORRECTION 3. The
- * (LSB, MSB) address bytes are therefore IDENTICAL to the shipped stream;
- * only the OE-edge reordering distinguishes shipped from fixed here. This is
- * exactly why plan 116-06's DIP32 RED cases must use a deliberately stale
- * upper-address seed rather than a plain trace -- see 116-05-SUMMARY.md. */
 static const sdp_strobe_t SDP_FIXED_DIP32_28C512_EEPROM[] = {
     {2, 4, 1},
     {1, 0, 0x55}, {2, 1, 1}, {2, 1, 0},
@@ -309,31 +251,6 @@ static const sdp_strobe_t SDP_FIXED_DIP32_28C512_EEPROM[] = {
 };
 #define SDP_FIXED_DIP32_28C512_EEPROM_LEN (int)(sizeof(SDP_FIXED_DIP32_28C512_EEPROM) / sizeof(SDP_FIXED_DIP32_28C512_EEPROM[0]))
 
-/* ─── LOCK streams (Plan 119-05, LOCK-01) ────────────────────────────────────
- * Four goldens, one per distinct 0x0D pinout, pinning the PRODUCTION lock op
- * (eeprom28c_sdp_lock_execute, driven via CMD_SDP_LOCK / h.firestarter_operation_main)
- * -- i.e. the 3-write EEPROM_SDP_ENABLE table (AA-55-A0) emitted through the
- * SAME remap-aware handle->firestarter_set_data (memory_set_data) path the
- * SDP_FIXED_* unlock goldens above were recorded from. Each was authored
- * EMPIRICALLY (never hand-derived): a temporary #ifdef SDP_TRACE_DUMP block
- * in test_eeprom28c_sdp.cpp drove the lock op for each SDP_BUS_CONFIGS row
- * in the load-bearing order (configure_memory, THEN reset_register_cache,
- * THEN clear_strobes, THEN h.firestarter_operation_main(&h)), and the built
- * suite binary (.pio/build/native/firestarter_native, run directly --
- * `pio test` swallows printf) printed the ready-to-paste triples below.
- * Hand-checked element-by-element against the pre-existing SDP_FIXED_* unlock
- * arrays above (the LOCK stream shares write #1 and write #2 byte-for-byte
- * with the corresponding unlock array; write #3's LSB/MSB latches are also
- * shared, only its payload byte differs: 0xA0 here vs 0x80 there) before
- * pasting, at commit 4fcee1c (Plan 119-05 Task 1, this branch).
- *
- * RESEARCH A1 (119-RESEARCH.md) predicted, arithmetically, a 30-entry stream
- * with write #3's payload at index 27 (10 entries per un-elided write x 3
- * writes, none elided because each write's address differs from the write
- * immediately before it: 0x5555 -> 0x2AAA -> 0x5555). THE DUMP CONFIRMS THE
- * PREDICTION EXACTLY for all three non-DIP32 pinouts: length 30, payload
- * index 27, byte 0xA0. No discrepancy to record for those three.
- */
 static const sdp_strobe_t SDP_FIXED_LOCK_DIP28_28C256[] = {
     /* write #1  remap(0x5555)=0x9555  (LSB,MSB)=(0x55,0x95)  payload 0xAA */
     {2, 4, 1},

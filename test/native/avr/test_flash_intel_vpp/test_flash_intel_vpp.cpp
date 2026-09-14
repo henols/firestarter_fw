@@ -4,9 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * SAF-04 / SAF-06 Unity tests for flash_intel_write_init
- * VPP pre-pulse safety check.
- *
  * Five test cases exercise the flash_intel_check_vpp static helper (added in
  * Task 2) via the canonical dispatch path: configure_memory() → operation_init.
  * Mock VPP voltage and hardware revision are injected through suite-local
@@ -34,10 +31,6 @@ using namespace fakeit;
 extern "C" void set_mock_vpp_mv(uint16_t mv);
 extern "C" void set_mock_hw_rev(uint8_t rev);
 
-/* TU-private mocks for the handle. mock_set_ctrl_reg records the last write so
- * tests can assert hardware-state side effects (SAF-04 regression coverage:
- * after a high-VPP ERROR, CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE must be driven low so the
- * socket is not left at 12V on the unsafe-voltage early-return path). */
 static rurp_register_t s_last_ctrl_reg = 0;
 static bool s_last_ctrl_state = false;
 static unsigned s_ctrl_writes_with_p1_low = 0;
@@ -157,15 +150,6 @@ void test_flash_intel_rev0_skips_vpp_check(void) {
 }
 
 /*
- * SAF-04 regression: high-VPP ERROR must leave the regulator cleared.
- *
- * Reproduces a defect found in code review (CR-01): the original write_init
- * early-returned on RESPONSE_CODE_ERROR without driving CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE
- * low, leaving 12V applied to socket pin 1 after the firmware had just
- * detected unsafe over-voltage — the exact hazard the safety check exists
- * to prevent. flash_intel_cleanup is only called on the END phase; an INIT
- * error skips END entirely.
- *
  * Assertion: at least one write of CTRL_VPP_P1_ENABLE with state=false occurred
  * during the operation_init call, and the last control-register write was
  * the regulator-clear (state=false with the CTRL_VPP_P1_ENABLE bit set).
@@ -174,11 +158,6 @@ void test_flash_intel_high_vpp_error_clears_regulator(void) {
     set_mock_vpp_mv(12700);
     firestarter_handle_t h = make_intel_handle(12000, 0);
     configure_memory(&h);
-    /* configure_memory() rewires firestarter_set_control_register to
-     * memory_set_control_register → rurp_write_to_register (host-stub no-op),
-     * which would bypass our recorder. Re-assign the mock so this test can
-     * observe control-register writes from the production code path.
-     * Same D-10 pattern as test_eeprom28c_chip_id/. */
     h.firestarter_set_control_register = mock_set_ctrl_reg;
     h.firestarter_operation_init(&h);
     TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);

@@ -9,20 +9,20 @@
 #define __CONFIG_STORAGE_DUALSLOT_H__
 
 /*
- * Phase 126 (CFG-05, decisions D-02/D-03/D-15/D-16/D-17/D-19) -- the HAL-free
- * dual-slot config storage core. This is the algorithm that scans, validates,
+ * The HAL-free dual-slot config storage core.
+ * This is the algorithm that scans, validates,
  * selects and alternates over two flash slots; it never touches a register
  * and never includes a HAL header.
  *
- * WHY INJECTED PRIMITIVES (D-02):
+ * WHY INJECTED PRIMITIVES:
  *   This algorithm is compiled TWICE from this ONE source file: once linked
  *   against the real PY32 HAL (platform/py32f071/src/config_storage_flash.cpp
- *   supplies the primitives, Plan 126-08), and once linked against a RAM fake
- *   in tests/test_config_storage_dualslot.py (Plan 126-09). The tested code
+ *   supplies the primitives), and once linked against a RAM fake
+ *   in tests/test_config_storage_dualslot.py. The tested code
  *   is therefore the shipped code. Two alternatives were considered and
  *   rejected: an independent fake reimplementation living only in the test
- *   (rejected -- it proves a copy behaves, the exact hollow-gate shape Phases
- *   118 and 124 each had to unwind); and compiling the real backend against a
+ *   (rejected -- it proves a copy behaves, not the shipped code); and
+ *   compiling the real backend against a
  *   hand-written stub HAL header for the test to link against (rejected --
  *   the stub becomes an unversioned mirror of the pinned FetchContent SDK
  *   that the test venue cannot see, so it can silently drift from the real
@@ -32,19 +32,19 @@
  *   No HAL include and no platform `#error` guard appears anywhere below,
  *   because the host test harness compiles this file directly with a bare
  *   host g++. The `#error` platform guard belongs in the HAL glue TU
- *   (config_storage_flash.cpp), never here (126-PATTERNS.md).
+ *   (config_storage_flash.cpp), never here.
  *
- * RECORD FORMAT IS VENDORED (D-17):
+ * RECORD FORMAT IS VENDORED:
  *   The six-field layout below comes verbatim from blob `4b1a441`
  *   (platform/py32f071/CONFIG-STORAGE.md), and `rurp_configuration_t` is
- *   embedded byte-for-byte, unmodified by this phase -- which is what makes
- *   CFG-07's "schema unchanged" structurally true rather than merely
+ *   embedded byte-for-byte and unmodified -- which is what makes
+ *   "schema unchanged" structurally true rather than merely
  *   asserted in prose. The wrapper's `version` field is NOT `CONFIG_VERSION`
  *   (the `char[6]` literal "VER06" living inside `rurp_configuration_t`
  *   itself, include/rurp_shield.h:46) and must never be "reconciled" with it.
  *
- * COMMIT SEMANTICS -- D-16 AS AMENDED BY C-2:
- *   D-16's locked wording -- "erase the inactive slot, program the record
+ * COMMIT SEMANTICS:
+ *   The obvious shape -- "erase the inactive slot, program the record
  *   body, program the header/CRC word LAST" -- names a step that cannot be
  *   executed on this part. `py32f071_hal_flash.h`'s `IS_FLASH_TYPEPROGRAM`
  *   accepts exactly one value (`FLASH_TYPEPROGRAM_PAGE`); `FLASH_Program_Page`
@@ -69,7 +69,7 @@
  *   for this bound check, because anyone able to write flash can recompute a
  *   matching CRC over whatever content they choose.
  *
- * SIZES ARE SYMBOLIC (C-6):
+ * SIZES ARE SYMBOLIC:
  *   Host `long` is 8 bytes; the target's is 4. `sizeof(StoredConfiguration)`
  *   therefore measures 48 / 31 / 36 bytes on host / AVR / (computed) ARM, and
  *   `g++ -m32` is unavailable in this environment to reproduce a 32-bit host
@@ -78,7 +78,7 @@
  *   be written anywhere in this file or its implementation.
  *
  * FIRE-PROOF:
- *   tests/test_config_storage_dualslot.py (Plan 126-09) exercises this core
+ *   tests/test_config_storage_dualslot.py exercises this core
  *   directly (the six named behaviours plus the CRC known-answer vector).
  *   tests/test_py32_flash_map.py gates the flash map this core addresses
  *   (slot addresses, page size, erase-unit separation).
@@ -97,20 +97,19 @@ extern "C" {
 /**
  * CONFIG_MAGIC -- ASCII 'R' 'U' 'R' 'P' ("RURP"), tying the record to the
  * shield name already used throughout the firmware. This is a
- * THIS-MILESTONE CHOICE, explicitly NOT vendored (D-19): blob `4b1a441`
- * specifies the `magic` field but supplies no value for it. Describing this
- * constant as vendored would be the exact overclaim shape Phase 122's C-5
- * had to correct.
+ * LOCAL CHOICE, explicitly NOT vendored: blob `4b1a441`
+ * specifies the `magic` field but supplies no value for it, so this constant
+ * must never be described as vendored.
  *
  * It satisfies two hard constraints: it is neither `0xFFFFFFFF` -- what
  * erased NOR flash reads back as, which would make a blank slot look like a
- * valid record and collapse D-15's blank test into a CRC-collision
+ * valid record and collapse the blank test into a CRC-collision
  * inference -- nor `0x00000000`.
  */
 #define CONFIG_MAGIC ((uint32_t)0x52555250)
 
 /**
- * StoredConfiguration -- the vendored on-flash record (D-17), six fields in
+ * StoredConfiguration -- the vendored on-flash record, six fields in
  * blob `4b1a441`'s order:
  *   magic         -- separates "never written" and "garbage" from a real
  *                     record; validated first.
@@ -127,7 +126,7 @@ extern "C" {
  *                     arrives from flash and is used as a copy bound on a
  *                     Cortex-M0+ with 16 KiB of SRAM and no MPU configured.
  *   configuration -- rurp_configuration_t, embedded byte-for-byte and
- *                     unmodified by this phase (CFG-07).
+ *                     unmodified here.
  *   sequence      -- a monotonically incremented uint32_t. Drives
  *                     newest-wins selection on load and slot alternation on
  *                     save. Deliberately has NO wraparound branch: flash
@@ -150,7 +149,7 @@ typedef struct
 /**
  * rurp_flash_primitives_t -- the three flash operations this core needs,
  * injected so the same algorithm can be linked against the real HAL or a RAM
- * fake (D-02). `ctx` is opaque state handed back to every call unchanged.
+ * fake. `ctx` is opaque state handed back to every call unchanged.
  */
 typedef struct
 {
@@ -169,7 +168,7 @@ typedef struct
 
     /**
      * Program the whole 256-byte page backing slot `slot` from EXACTLY 64
-     * words. This is the ONLY program granularity the part offers (C-2):
+     * words. This is the ONLY program granularity the part offers:
      * `IS_FLASH_TYPEPROGRAM` accepts one value and `FLASH_Program_Page`
      * writes 64 words unconditionally, so the caller must always hand over
      * a full 64-word buffer -- the HAL reads 64 words regardless of the
@@ -178,7 +177,7 @@ typedef struct
      * A call on a page that was not just erased is a DEFECT, not a smaller
      * or silently-accepted overwrite: RM §4.2.3.2 step 2 requires reading
      * out a non-blank page's 64 words before programming over it, and
-     * `FLASH_Program_Page` does not do that (C-8) -- the HAL is only
+     * `FLASH_Program_Page` does not do that -- the HAL is only
      * correct on a page that is already blank. The RAM fake used by
      * tests/test_config_storage_dualslot.py asserts this as a fake-detected
      * failure.
@@ -213,16 +212,16 @@ uint32_t rurp_config_crc32(const void* data, size_t len);
  * with the strictly higher `sequence`. Copies into the caller's `blob`
  * (bounded by `len`) and returns true on success.
  *
- * Returns false when no valid candidate survives -- and D-15 records that
- * this is INDISTINGUISHABLE between "both slots blank" and "both slots
+ * Returns false when no valid candidate survives -- and that outcome is
+ * INDISTINGUISHABLE between "both slots blank" and "both slots
  * corrupt": policy above this core has exactly one recovery path to apply
  * either way.
  */
 bool rurp_dualslot_load(const rurp_flash_primitives_t* primitives, void* blob, size_t len);
 
 /**
- * rurp_dualslot_save -- persist `len` bytes from `blob` following the D-16
- * (as amended by C-2) commit shape: erase the inactive slot, build the
+ * rurp_dualslot_save -- persist `len` bytes from `blob` following the
+ * commit shape: erase the inactive slot, build the
  * whole record in a 4-byte-aligned 256-byte staging buffer, then program
  * that one page. The active slot is never touched. Returns true only if the
  * page program completed successfully; a non-`HAL_OK` result from either
@@ -231,7 +230,7 @@ bool rurp_dualslot_load(const rurp_flash_primitives_t* primitives, void* blob, s
 bool rurp_dualslot_save(const rurp_flash_primitives_t* primitives, const void* blob, size_t len);
 
 /*
- * The only absolute size claim anywhere in this core (C-6): true under all
+ * The only absolute size claim anywhere in this core: true under all
  * three compilers (host, AVR, ARM), unlike any literal size or offset would
  * be. No literal size or field offset may be written anywhere in this file
  * or its implementation -- use sizeof/offsetof instead.

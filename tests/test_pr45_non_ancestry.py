@@ -89,10 +89,6 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent
 
-# Exactly the ten commits `git rev-list origin/beta..origin/feature/common-vpp-calibration`
-# enumerates, in chronological order (RESEARCH C-3). Merge base with
-# origin/beta is a1953c22862ac3fb1e0111985946644a568aee36; PR #45's branch
-# tip is a47228d862b9b53e6d936d1d0993bee9fc74940e.
 PR45_SHAS = (
     "04fd9b3",
     "fc0b2c7",
@@ -106,10 +102,6 @@ PR45_SHAS = (
     "a47228d",
 )
 
-# Blob SHAs of PR #45's corresponding files (RESEARCH C-3), for the content-
-# divergence leg. D-09/D-10 already guarantee substantial divergence in the
-# hand-authored API surface; this is cheap corroboration, not the primary
-# proof (the primary proof is the ancestry check above).
 PR45_BLOBS = {
     "include/rurp_vpp.h": "c982173813b38ec745b59d6e02817f2504d6c6b4",
     "src/rurp_vpp.cpp": "fcbe009dffcd46139802f8779865a1d7aa331880",

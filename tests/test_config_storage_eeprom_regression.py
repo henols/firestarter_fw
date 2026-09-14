@@ -85,19 +85,13 @@ _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent
 _INCLUDE = _REPO_ROOT / "include"
 
-# Names BOTH the pre-refactor path and the post-refactor D-08 path from the
-# start, and is filtered to files that exist at collection time. Today only
-# the first resolves; after Plan 126-03 both do. This is legitimate because
-# D-08 locks the post-refactor path in advance -- it is what keeps this
-# module's blob SHA stable across the split, which is the whole point of
-# authoring it here rather than after.
 _CANDIDATE_SOURCES = (
     _REPO_ROOT / "src" / "rurp_config_utils.cpp",
     _REPO_ROOT / "src" / "boards" / "rurp_config_storage_eeprom.cpp",
 )
 _RESOLVED_SOURCES = tuple(p for p in _CANDIDATE_SOURCES if p.is_file())
 
-_CONFIG_START = 48  # EEPROM address (not a size) -- CFG-04 names it explicitly.
+_CONFIG_START = 48
 
 _ACCESS_RE = re.compile(r"^ACCESS (\w+) ([GP]) (\d+) (\d+)$")
 _SIZEOF_RE = re.compile(r"^SIZEOF (\d+)$")
@@ -283,7 +277,7 @@ def _compile(compiler, sources, include_dirs, output_path):
     -std=gnu++17 -Wall -Wextra and an -I entry for every directory in
     include_dirs (the repo include/ directory AND tmp_path, so the fake
     EEPROM.h shadows nothing real)."""
-    argv = [compiler, "-std=gnu++17", "-Wall", "-Wextra", "-DARDUINO_AVR_UNO"]  # Phase 126-03 fallback (D-04): opens src/boards/rurp_config_storage_eeprom.cpp's post-split three-board #if guard for this host compile; behaviourally inert for every OTHER resolved source because rurp_platform_compat.h gates its only AVR-only include on __AVR__ (compiler-supplied), never on ARDUINO_AVR_UNO
+    argv = [compiler, "-std=gnu++17", "-Wall", "-Wextra", "-DARDUINO_AVR_UNO"]
     for include_dir in include_dirs:
         argv += ["-I", str(include_dir)]
     argv += [str(source) for source in sources]

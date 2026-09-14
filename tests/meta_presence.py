@@ -62,10 +62,8 @@ from pathlib import Path
 
 import pytest
 
-# ---------------------------------------------------------------------------
 # The one seam: only the ROOT path is overridable, never the marker name.
 # ---------------------------------------------------------------------------
-#
 # Layout: firestarter/tests/meta_presence.py -> two parents up is the
 # firmware repo root; its PARENT is the meta repo root (the firmware repo is
 # a submodule OF the meta repo, not a sibling of it -- one level further up

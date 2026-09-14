@@ -136,7 +136,7 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
 
     while (1) {
         /* Delimiter-driven: wait until a byte is available.
-         * CR-02: bounded mid-frame inter-byte deadline — armed only once
+         * Bounded mid-frame inter-byte deadline — armed only once
          * decoding is underway (loop() gated entry on available()>0, so we
          * arrive here with at least the first byte already consumed).
          * On host silence past TIMEOUT_MS: drain (bounded) + return negative.

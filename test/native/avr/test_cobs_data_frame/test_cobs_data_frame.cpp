@@ -12,13 +12,6 @@
  *
  *     [COBS(payload + CRC8)][0x00 delimiter]
  *
- * These tests are RED against the CURRENT len_u16+XOR decoder — which is the
- * intended Wave-0 outcome.  They go GREEN when Plan 02 rewrites
- * `rurp_communication_read_data` with streaming COBS decode-in-place + CRC8.
- *
- * Covers: FRAME-01 (round-trip), FRAME-02 (SC2 bounded resync), FRAME-04
- * (all-zero 512 B payload).
- *
  * Mock wiring: uses `serial_read_mock.h` to drive a queued std::vector<uint8_t>
  * into `Serial.read` / `Serial.available` / `Serial.peek` —
  * mirroring the write-mock cadence in test_rurp_log_id.cpp.
@@ -49,19 +42,15 @@ extern "C" {
 
 using namespace fakeit;
 
-/* ------------------------------------------------------------------------ */
 /* Shared test state                                                         */
-/* ------------------------------------------------------------------------ */
 
 static char data_buffer[DATA_BUFFER_SIZE];
 static std::vector<uint8_t> rx_queue;
 static size_t rx_pos;
 
-/* ------------------------------------------------------------------------ */
 /* Reference CRC8 (poly 0x07, seed 0x00, no refl, no XOR) — table-free.    */
 /* Copied from test_rurp_log_id.cpp:76-85 so this suite is fully independent */
 /* of the production CRC8_TABLE in rurp_serial_utils.cpp.                   */
-/* ------------------------------------------------------------------------ */
 static uint8_t ref_crc8(const uint8_t* data, size_t n) {
     uint8_t crc = 0;
     for (size_t i = 0; i < n; i++) {
@@ -75,7 +64,6 @@ static uint8_t ref_crc8(const uint8_t* data, size_t n) {
     return crc;
 }
 
-/* ------------------------------------------------------------------------ */
 /* COBS encode helper — test-side only, used to build expected byte streams. */
 /*                                                                           */
 /* Encodes `src[0..len-1]` into `dst`, returns encoded byte count (without  */
@@ -85,7 +73,6 @@ static uint8_t ref_crc8(const uint8_t* data, size_t n) {
 /* run-code byte (run_len+1), then the non-zero bytes.  A 0x00 payload byte */
 /* emits a run-code of 1 with no data bytes.  A 254-run code byte is 0xFF   */
 /* (no implicit zero follows it per RFC COBS).                               */
-/* ------------------------------------------------------------------------ */
 static size_t test_cobs_encode(const uint8_t* src, size_t len, uint8_t* dst) {
     size_t out = 0;
     size_t code_pos = out++;        /* placeholder for first run-code */
@@ -133,9 +120,7 @@ static void build_cobs_frame_bytes(
     out_vec.push_back(0x00);  /* frame delimiter */
 }
 
-/* ------------------------------------------------------------------------ */
 /* setUp / tearDown                                                          */
-/* ------------------------------------------------------------------------ */
 
 /* Monotonically-increasing millis counter used by the millis() mock.
  * The current (pre-COBS) decoder has a 2 s timeout loop that calls millis().
@@ -171,9 +156,6 @@ void setUp(void) {
 void tearDown(void) {
 }
 
-/* ------------------------------------------------------------------------ */
-/* test_cobs_decode_valid_frame (FRAME-01)                                  */
-/*                                                                           */
 /* Feed COBS(payload+CRC8) + 0x00 for a known small payload.                */
 /* Assert rurp_communication_read_data returns the decoded length and the    */
 /* buffer matches the payload.                                               */
@@ -181,7 +163,6 @@ void tearDown(void) {
 /* RED against the current len_u16+XOR decoder: the current code reads 2    */
 /* bytes as a length prefix; with COBS bytes those will be wildly wrong,    */
 /* causing either a timeout (-3), oversize (-2), or checksum mismatch (-4). */
-/* ------------------------------------------------------------------------ */
 void test_cobs_decode_valid_frame(void) {
     /* Small known payload: {0x10, 0x20, 0x30} */
     uint8_t payload[] = { 0x10, 0x20, 0x30 };
@@ -198,16 +179,12 @@ void test_cobs_decode_valid_frame(void) {
     TEST_ASSERT_EQUAL_MEMORY(payload, data_buffer, payload_len);
 }
 
-/* ------------------------------------------------------------------------ */
-/* test_cobs_resync_bounded (FRAME-02 / SC2)                                */
-/*                                                                           */
 /* Feed [garbled frame][0x00][valid frame][0x00].                            */
 /* Assert:                                                                   */
 /*   (a) First rurp_communication_read_data call returns res < 0.            */
 /*   (b) A second call returns the correct decoded length with data_buffer   */
 /*       matching the expected payload (bounded recovery, not mere detection */
 /*       — VALIDATION.md SC2 shape).                                         */
-/* ------------------------------------------------------------------------ */
 void test_cobs_resync_bounded(void) {
     /* Valid payload for the SECOND frame. */
     uint8_t good_payload[] = { 0xAA, 0xBB, 0xCC, 0xDD };
@@ -243,14 +220,6 @@ void test_cobs_resync_bounded(void) {
     TEST_ASSERT_EQUAL_MEMORY(good_payload, data_buffer, good_len);
 }
 
-/* ------------------------------------------------------------------------ */
-/* test_cobs_all_zero_payload (FRAME-04 + Pitfall 2)                        */
-/*                                                                           */
-/* (CR-01) update: the PUSH overflow guard was lowered from */
-/* `out >= DATA_BUFFER_SIZE` to `out >= DATA_BUFFER_SIZE - 1` to reserve    */
-/* the NUL-terminator slot.  The largest payload the decoder now accepts is  */
-/* DATA_BUFFER_SIZE-1 (511 bytes).  A 512-byte payload overflows to -2.      */
-/*                                                                           */
 /* This test is updated to use DATA_BUFFER_SIZE-1 (511) bytes of all-zero   */
 /* payload — the maximum accepted size.  The COBS encoding property          */
 /* (no 0x00 in the body before the delimiter) is still verified.             */
@@ -260,10 +229,7 @@ void test_cobs_resync_bounded(void) {
 /* (ADR §4.2, UNCHANGED in v1.10) and never passes a 512-byte payload       */
 /* through this function in production.  The largest legitimate JSON command */
 /* is ~422 B (CONTEXT.md), well under the 511-byte cap.                     */
-/* ------------------------------------------------------------------------ */
 void test_cobs_all_zero_payload(void) {
-    /* DATA_BUFFER_SIZE-1 (511) bytes of zero — the largest accepted payload
-     * after the CR-01 PUSH guard change (Phase 51 Plan 04). */
     const size_t max_accepted = DATA_BUFFER_SIZE - 1;
     static uint8_t zero_payload[DATA_BUFFER_SIZE - 1];
     memset(zero_payload, 0, max_accepted);
@@ -281,9 +247,6 @@ void test_cobs_all_zero_payload(void) {
 
     int res = rurp_communication_read_data(data_buffer, DATA_BUFFER_SIZE - 1);
 
-    /* GREEN condition: decoded to DATA_BUFFER_SIZE-1 bytes of 0x00.
-     * CR-01 invariant: n <= DATA_BUFFER_SIZE-1, so data_buffer[n] = '\0'
-     * is always in-bounds. */
     TEST_ASSERT_GREATER_OR_EQUAL_INT(0, res);
     TEST_ASSERT_EQUAL_size_t(max_accepted, (size_t)res);
     for (int i = 0; i < res; i++) {
@@ -291,14 +254,7 @@ void test_cobs_all_zero_payload(void) {
     }
 }
 
-/* ------------------------------------------------------------------------ */
 /* test_cobs_254_run_then_zero                                               */
-/*                                                                           */
-/* 254 nonzero bytes immediately followed by one zero byte + a few more     */
-/* bytes.  This is the exact CR-01 trigger pattern: the Python encoder had   */
-/* a branch-order defect that silently dropped the 0x00 at the 254-run      */
-/* boundary.  The firmware decoder must reconstruct the payload exactly.     */
-/* ------------------------------------------------------------------------ */
 void test_cobs_254_run_then_zero(void) {
     /* 254 nonzero bytes + one zero + three more bytes = 258 bytes total. */
     uint8_t payload[258];
@@ -317,9 +273,7 @@ void test_cobs_254_run_then_zero(void) {
     TEST_ASSERT_EQUAL_MEMORY(payload, data_buffer, sizeof(payload));
 }
 
-/* ------------------------------------------------------------------------ */
 /* main                                                                      */
-/* ------------------------------------------------------------------------ */
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;

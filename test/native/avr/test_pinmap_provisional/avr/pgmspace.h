@@ -1,8 +1,4 @@
 /*
- * host-side stub for <avr/pgmspace.h>, for the
- * test_pinmap_provisional suite. Copied from test_dispatch/avr/pgmspace.h
- * (Phase 12 Wave 0), which every native suite directory carries.
- *
  * The pinmap-provisional test runs on platform = native (no AVR libc
  * available). `rurp_shield.h` unconditionally `#include <avr/pgmspace.h>`
  * to get the `PROGMEM` storage attribute and `pgm_read_*` accessors. On

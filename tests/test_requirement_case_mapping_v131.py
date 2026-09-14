@@ -159,12 +159,6 @@ _SCAN_SUITES = Path(
     os.environ.get("FIRESTARTER_CASE_MAP_SCAN_ROOT", str(_REPO_ROOT / _SUITES_REL))
 )
 
-# Mapped suites -- exactly three, each named as <dirname>/<dirname>.cpp
-# beneath the scan root. test_trace_eprom_v131 is DELIBERATELY EXCLUDED:
-# its case set is build-flag dependent (its sixth RUN_TEST sits inside
-# `#ifdef EPROM_V131_TRACE_DUMP`, which no env defines -- C-05), and it
-# proves TEST-06, not TEST-01...05 (see test_trace_suite_is_deliberately_
-# out_of_scope below).
 _MAPPED_SUITES = (
     "test_loop_eprom_v131",
     "test_vpp_eprom_v131",
@@ -172,13 +166,6 @@ _MAPPED_SUITES = (
 )
 _EXCLUDED_TRACE_SUITE = "test_trace_eprom_v131"
 
-# Hardcoded per-suite floors, as literal ints -- never derived. 88 is the
-# THREE-SUITE MAPPING denominator this gate uses (47 + 32 + 9) and must
-# never be confused with native_loop_v131's own per-PlatformIO-env figure
-# of 79 (47 + 32 only -- that env pairs test_loop_eprom_v131 with
-# test_vpp_eprom_v131 alone, never test_eprom_params_v131). The two numbers
-# measure different things; conflating them is the Pitfall-2 labelling
-# mistake 144-PATTERNS.md warns against.
 _SUITE_FLOORS = {
     "test_loop_eprom_v131": 47,
     "test_vpp_eprom_v131": 32,
@@ -227,12 +214,10 @@ def _line_of(text, idx):
     return text.count("\n", 0, idx) + 1
 
 
-# ---------------------------------------------------------------------------
 # Concatenation-built needles. Coverage 7 asserts none of these appear
 # verbatim anywhere in this module's own source -- see the module
 # docstring: a gate that quotes its forbidden tokens verbatim matches
 # itself and can never pass.
-# ---------------------------------------------------------------------------
 _NEEDLE_SKIP_CALL = "pytest" + ".skip"
 _NEEDLE_SKIPIF_MARKER = "mark" + ".skipif"
 _NEEDLE_DEPENDENCY_SKIP_CALL = "importor" + "skip"
@@ -243,11 +228,6 @@ _ALL_SELF_CHECK_NEEDLES = (
     ("a pytest dependency-skip call", _NEEDLE_DEPENDENCY_SKIP_CALL),
 )
 
-# ---------------------------------------------------------------------------
-# RUN_TEST extraction -- the tolerant form (F-03): a future macro
-# line-wrap or extra whitespace inside the parens cannot silently drop a
-# case from the extracted set.
-# ---------------------------------------------------------------------------
 _RUN_TEST_RE = re.compile(r"RUN_TEST\(\s*([A-Za-z0-9_]+)\s*\)")
 
 
@@ -283,18 +263,6 @@ def _extract_all_mapped_names():
     return {suite: _extract_run_test_names(_suite_path(suite)) for suite in _MAPPED_SUITES}
 
 
-# ---------------------------------------------------------------------------
-# The frozen requirement -> case map. Deliberately NOT auto-derived from
-# the suites below: the whole point of this gate is to catch an UNREVIEWED
-# RENAME OR DELETION, and a map derived FROM the suites could never detect
-# that -- it would simply re-describe whatever the suites currently
-# contain, which is the same failure shape D-01 exists to close (mirrors
-# the wording precedent at
-# firestarter_app/tests/test_revision_constants_parity.py:172-175's own
-# "deliberately NOT auto-derived" comment for its firmware->host map).
-# Adding, renaming or removing an entry here must be a deliberate edit to
-# this dict literal.
-# ---------------------------------------------------------------------------
 _REQUIREMENT_CASES = {
     "TEST-01": (
         "test_each_protocol_resolves_to_its_own_distinct_row",
@@ -313,17 +281,9 @@ _REQUIREMENT_CASES = {
         "test_loop03_overprogram_clamps_at_the_cap_rather_than_refusing",
         "test_loop03_overprogram_is_32_bit_safe_at_the_uint16_ceiling",
         "test_loop03_a_zero_cap_yields_no_overprogram_pulse",
-        # D-03 non-claim, carried here so it travels with the map: the
-        # arithmetic above is proven; the in-loop wiring on a LIVE row is
-        # NOT, because no shipped row sets overprogram_factor
-        # (eprom_params.cpp:50-52 -- all three rows carry 0). The next case
-        # is what witnesses that gap rather than papering over it.
         "test_loop04_no_live_row_emits_an_overprogram_pulse",
     ),
     "TEST-04": (
-        # The "reports the address" clause of TEST-04 is satisfied by the
-        # u24 address + u8 pulse count payload asserted INSIDE this case --
-        # not by a separate case of its own.
         "test_loop05_a_byte_that_misses_within_max_pulses_aborts_the_block",
         "test_loop05_the_loops_own_strobes_disable_the_high_voltage_route",
         "test_loop05_a_successful_block_does_not_disable_the_route",
@@ -336,15 +296,6 @@ _REQUIREMENT_CASES = {
         "test_loop06_an_already_matching_byte_is_read_once_and_never_pulsed",
         "test_loop06_a_block_of_only_skipped_bytes_emits_no_pulse_at_all",
         "test_loop06_the_ff_rule_does_not_suppress_the_final_verify_pass",
-        # C-04: CONTEXT.md's own prose nominates "the two fallback cases"
-        # for this requirement -- a phantom pair naming no existing case at
-        # all. The real shape is TWO FAMILIES OF THREE: the three
-        # test_0x0{7,8,B}_zero_pulse_delay_* cases below, plus their three
-        # nonzero_pulse_delay negative controls, which are the non-vacuity
-        # half (a fallback that fired unconditionally would pass the three
-        # zero_ cases and fail these three). This corrected six-case shape
-        # is what _REQUIREMENT_CASES freezes -- the phantom pair is not
-        # propagated into this map.
         "test_0x07_zero_pulse_delay_takes_the_1000us_fallback",
         "test_0x08_zero_pulse_delay_takes_the_100us_fallback",
         "test_0x0B_zero_pulse_delay_takes_the_500us_fallback",
@@ -355,9 +306,7 @@ _REQUIREMENT_CASES = {
 }
 
 
-# ---------------------------------------------------------------------------
 # Tests -- requirement -> case membership (Coverage 1-4).
-# ---------------------------------------------------------------------------
 
 
 def test_every_mapped_requirement_names_only_existing_cases():
@@ -463,9 +412,7 @@ def test_trace_suite_is_deliberately_out_of_scope():
     )
 
 
-# ---------------------------------------------------------------------------
 # Tests -- self-protection (Coverage 5-7).
-# ---------------------------------------------------------------------------
 
 
 def test_scan_targets_are_non_vacuous():
@@ -560,19 +507,12 @@ def test_own_needles_do_not_appear_verbatim_in_this_module():
         )
 
 
-# ---------------------------------------------------------------------------
-# D-18 planted-violation machinery (Coverage 8-9). Both legs prove this
-# module's own RED is locating, not just present: a pre-authored leg can be
-# UNREACHABLE, and RED alone proves nothing until it has also been seen to
-# pass for the right reason (D-18, 144-CONTEXT.md).
-#
 # A CHILD PROCESS is mandatory for both plants: _SCAN_SUITES binds at
 # IMPORT time, and monkeypatch.setenv cannot reach an already-imported
 # module-level value (S6). Copied structurally from
 # tests/test_flash_path_record_sync.py:269-305's own
 # `_run_gate_in_subprocess` and its FIRESTARTER_129_GATE_CHILD recursion
 # guard.
-# ---------------------------------------------------------------------------
 
 # The three mapped suites' REAL sources -- resolved via _REPO_ROOT directly
 # (never via _SCAN_SUITES/the seam), because these paths name the ONE true

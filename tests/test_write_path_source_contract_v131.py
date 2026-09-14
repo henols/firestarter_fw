@@ -158,12 +158,10 @@ _SCAN_EPROM = Path(
 # section for why.
 _SCAN_MEMORY = _REPO_ROOT / _MEMORY_REL
 
-# ---------------------------------------------------------------------------
 # Concatenation-built needles. Coverage 12 asserts none of these appear
 # verbatim anywhere in this module's own source -- see the module docstring
 # and the plan's own warning: a gate that quotes its forbidden tokens
 # verbatim matches itself and can never pass.
-# ---------------------------------------------------------------------------
 _NEEDLE_RETRY_MACRO = "NUMBER" + "_OF_RETRIES"
 _NEEDLE_PROGRAM_MISMATCHED_BYTES = "program_mismatched" + "_bytes"
 _NEEDLE_VERIFY_AND_UPDATE_MASK = "verify_and_update" + "_mask"
@@ -309,9 +307,7 @@ def _assert_identifier_absent(needle, label, stripped, target_rel):
     )
 
 
-# ---------------------------------------------------------------------------
 # Tests
-# ---------------------------------------------------------------------------
 
 
 def test_number_of_retries_macro_is_absent_from_the_write_path():

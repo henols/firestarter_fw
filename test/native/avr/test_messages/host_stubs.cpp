@@ -4,9 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * host stub TU for the test_messages suite.
- * WR-06 — shared stub body lives in ../_shared/host_stubs_common.inc.
- *
  * test_messages stubs the host-side AVR-only symbols that
  * boards/rurp_serial_utils.cpp indirectly references. The widened
  * [env:native] src_filter pulls the real TU into the test binary so the

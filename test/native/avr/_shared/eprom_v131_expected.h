@@ -4,46 +4,9 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Phase 144 Plan 03 (TEST-06 / D-05 / D-06 / D-08) — the single source of
- * truth the test_trace_eprom_v131 suite asserts its MERGED strobe+timing
- * stream against, RE-CAPTURED at this phase's tip.
- *
- * RE-CAPTURED AGAIN, and the totals below rewritten with it, by debug
- * session w27c512-program-fail-byte0 (Phase 145 Gate 2). That session found
- * that Phase 141 dropped the program-voltage route assert when it deleted
- * the old block-mismatch reporter, so from Phase 141 until that fix every
- * 27C program pulse was strobed with the high-voltage rail generated but
- * never switched onto the socket, and the first non-0xFF byte of any write
- * exhausted max_pulses. THE ARRAYS THIS FILE HELD BETWEEN PHASE 144 AND
- * THAT FIX RECORDED THE BUG: their control-register streams contain neither
- * CTRL_VPE_ENABLE (0x04) nor CTRL_VPP_P1_ENABLE (0x08) at any point, on any
- * of the three protocols, while the pre-change arrays preserved in
- * eprom_v131_expected_prechange.h contain 0x85/0x95 on 0x07 and 0x88/0x89/
- * 0xc8 on 0x08 and 0x0B. That is the whole regression, visible as a diff
- * between two files already in this directory — which is worth stating
- * plainly, because Phase 144 read the 198->91 shrink as expected cadence
- * simplification and had no leg that asserted the program-voltage bit is
- * ever high. The arrays below now show the route asserted around each
- * pulse and released again before each verify read (0x07: ctrl 0x95;
- * 0x08 and 0x0B: ctrl 0x88/0xc8 via eprom_internal_set_control_register's
- * P1 substitution), which is why every total grew.
- *
  * RE-CAPTURED A THIRD TIME, and the totals below rewritten with it, by debug
  * session w27c512-write-slow-3x (2026-08-22). WHAT THESE ARRAYS NOW ENCODE:
  * **one program-voltage route assert and one settle PER PASS**, not per byte.
- *
- * The arrays this file held between Phase 145's fix and this re-capture
- * encoded the PER-BYTE cadence, and that cadence was itself the defect --
- * so, exactly as the Phase 145 paragraph above describes for a different
- * bug, this fixture was asserting a regression. v1.31's LOOP-01 rewrite made
- * eprom_write_execute per-byte and Phase 145 then put the route assert inside
- * that per-byte step, so every programmed byte paid EPROM_VPP_SETUP_US
- * (1000 us) + EPROM_VPP_HOLD_US (100 us) of pure settle. Measured on a
- * leonardo against a W27C512: 1.568 s per 1024-byte block, 105.89 s for a
- * 64 KiB device, against 29.71 s on the v2.x firmware (gh#36's reporter's own
- * A/B; gh#42 recorded 139.2 s). Restoring v2.0.6's per-PASS granularity
- * brought the same write to 33.51 s, verified byte-exact against an
- * independent read-back on four cycles.
  *
  * HOW TO READ A FUTURE DIFF OF THIS FILE. The totals grew (121 -> 131,
  * 148 -> 149, 92 -> 101) because a pass-batched loop reads the block again
@@ -64,39 +27,10 @@
  * test/native/avr/test_val_eprom/test_val_eprom.cpp, which IS in both
  * pinned envs' test_filter.
  *
- * Every literal array below (EPROM_V131_TRACE_PROTO_07/_08/_0B) is authored
- * EMPIRICALLY from a cold dump of the REAL, UNMODIFIED post-v1.31
- * eprom_write_execute — the per-byte pulse-to-verify loop landed by Phase
- * 141, the shared eprom_hv_route_mask() HV-routing resolver landed by Phase
- * 142, and the eprom_params_t table landed by Phase 140 all bear on this
- * capture — never hand-derived. Exact capture command sequence:
- *
  *   cd /workspaces/firestarter && PLATFORMIO_BUILD_FLAGS="-D EPROM_V131_TRACE_DUMP" \
  *     pio test -e native_trace_v131 --without-testing
  *   cd /workspaces/firestarter && .pio/build/native_trace_v131/firestarter_native \
  *     > /tmp/gsd-144/trace_dump.txt
- *
- * (`pio test` swallows printf — the dump must come from invoking the built
- * binary directly, per this suite's own #ifdef EPROM_V131_TRACE_DUMP block
- * at test_trace_eprom_v131.cpp:350-361.) Measured totals, read verbatim from
- * the dump's own banners: EPROM_V131_TRACE_PROTO_07 total=131,
- * EPROM_V131_TRACE_PROTO_08 total=149, EPROM_V131_TRACE_PROTO_0B total=101
- * (Phase 144's own capture read 91 / 115 / 59 and Phase 145's read
- * 121 / 148 / 92 — see the route-assert paragraph and the pass-cadence
- * paragraph above for why each total grew) — all three with
- * strobe_overflow=0 timing_overflow=0 (recorder caps are 512 each; 148 is
- * 29 percent of cap, ample headroom). This capture is confirmed
- * distinct from `.planning/phases/141-per-byte-program-loop/141-NEW-TRACE.md`
- * section 5's stale pasteable arrays (91/119/59 there — the 0x08 total is
- * wrong by +4 — never used as a source for a single line below).
- *
- * The PRE-CHANGE cadence this fixture used to hold (198/221/201 merged
- * entries, one array per protocol) is preserved byte-for-byte, untouched, at
- * test/native/avr/_shared/eprom_v131_expected_prechange.h — git blob
- * ca3e09f164e6e1c541ecb63d15bbebf5bce41d70 (a git blob SHA is content-only
- * and path-independent, so this single fact is the whole of the rename's
- * proof). That file is #included by nothing; it is a historical artifact
- * plan 144-04 diffs the arrays below against, not a second live fixture.
  *
  * The trace records EVERY timing entry UNFILTERED — including the 1 µs
  * latch delay that rurp_internal_write_to_register emits after each
@@ -125,12 +59,6 @@
 #include <unity.h>
 #include "firestarter.h"  /* pulls in rurp_shield.h -> LEAST_SIGNIFICANT_BYTE / MOST_SIGNIFICANT_BYTE / OUTPUT_ENABLE / CHIP_ENABLE, used only in provenance comments here, not by this header's own code */
 
-/* Recorder accessors — symbols compiled because host_stubs.cpp defines
- * HOST_STUBS_REAL_REGISTER_UTILS (the six strobe accessors) AND
- * HOST_STUBS_RECORD_TIMING (the six timing accessors), both from Phase 138
- * Plan 03 Task 1. Declared once here so this suite gets all twelve from a
- * single place, mirroring sdp_expected.h's convention for the six strobe
- * accessors it alone needs. */
 extern "C" void    clear_strobes();
 extern "C" int     strobe_count();
 extern "C" int     strobe_overflowed();
@@ -246,13 +174,6 @@ static int v131_first_divergence(const v131_trace_entry_t* expected, int expecte
     return -1;
 }
 
-/* Asserts strobe_overflowed() == 0 AND timing_overflowed() == 0 FIRST (a
- * silently overflowed recorder can produce a truncated-but-matching prefix —
- * T-138-14), then asserts the merged length, then element-by-element — and
- * on mismatch, fails with a message naming the diverging index and BOTH the
- * expected and recorded {kind,pin,value,us} quadruple at that index. This is
- * the ordered full-stream equality D-04/D-06's precedent requires; a
- * sub-sequence scan or a count cannot be substituted. */
 static void v131_assert_stream_equals(const v131_trace_entry_t* expected, int expected_len, const char* ctx) {
     TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), ctx);
     TEST_ASSERT_EQUAL_MESSAGE(0, timing_overflowed(), ctx);
@@ -293,45 +214,7 @@ static int v131_snapshot(v131_trace_entry_t* out, int max_len) {
     return n;
 }
 
-/* ─── Frozen per-protocol arrays ─────────────────────────────────────────────
- * The three merged strobe+timing streams below are the POST-v1.31 cadence,
- * one per EPROM protocol, captured by Phase 144 Plan 03 from a cold dump of
- * the real, unmodified eprom_write_execute at this phase's tip (see the file
- * header above for the exact capture command sequence; see each array's own
- * banner below for its chip identity, bus_config and measured total).
- */
-
 /* ─── EPROM_V131_TRACE_PROTO_07 -- AM27C512, protocol 0x07, DIP28_27512 ─────
- * Captured EMPIRICALLY by Phase 144 Plan 03: the built native_trace_v131
- * binary (.pio/build/native_trace_v131/firestarter_native) run DIRECTLY with
- * EPROM_V131_TRACE_DUMP defined (`pio test` swallows printf) against the
- * REAL, UNMODIFIED post-v1.31 eprom_write_execute -- never hand-derived.
- * Same chip, bus_config and synthetic 4-byte block as the frozen pre-change
- * capture (test/native/avr/_shared/eprom_v131_expected_prechange.h, blob
- * ca3e09f164e6e1c541ecb63d15bbebf5bce41d70): pins=28, mem_size=65536,
- * bus_config { address_mask=0x0000FFFF, matching_lines=16, rw_line=0xFF
- * (none), vpp_line=0xFF (none), static_high_mask=0x00000000 }; idx0
- * target=0x3C converge_after=0, idx1 target=0xFF converge_after=0, idx2
- * target=0x55 converge_after=2 (3 passes), idx3 target=0xAA converge_after=1
- * (2 passes).
- *
- * total=121 (was 91 at Phase 144's capture, 198 pre-change),
- * strobe_overflow=0, timing_overflow=0
- * (recorder caps are 512 each). RESPONSE_CODE_OK, zero recorder overflow,
- * proven deterministic across two drives before this array was pasted.
- * Every entry below is pasted verbatim from the recorder's own dump output
- * -- each retains only its own trailing positional-index comment, exactly
- * as the recorder emits it; no hand-authored per-segment comment is added
- * here the way the pre-change array had them, because a segment label the
- * recorder itself never emitted would be documentation dressed as data.
- * Plan 144-04 performs the structural, per-entry attribution this array's
- * shrink from 198 to 91 entries called for; that attribution was
- * written against the 91-entry array and is superseded for the 30 entries
- * the route assert adds back (5 program pulses x 6 entries: the ctrl latch
- * that raises 0x04, its 1 us latch delay, the EPROM_VPP_SETUP_US settle,
- * the EPROM_VPP_HOLD_US settle, and the ctrl latch that lowers it again
- * with its own latch delay).
- *
  * This is the POST-v1.31, post-route-assert-fix cadence, now frozen for
  * v1.32 drift detection
  * (tests/golden/eprom_v131_trace_inventory.json's meta.frozen_for) -- a
@@ -474,29 +357,6 @@ static const v131_trace_entry_t EPROM_V131_TRACE_PROTO_07[] = {
 #define EPROM_V131_TRACE_PROTO_07_LEN (int)(sizeof(EPROM_V131_TRACE_PROTO_07) / sizeof(EPROM_V131_TRACE_PROTO_07[0]))
 
 /* ─── EPROM_V131_TRACE_PROTO_08 -- AM27C020, protocol 0x08, DIP32_27C020 ────
- * Captured EMPIRICALLY by Phase 144 Plan 03: the built native_trace_v131
- * binary run DIRECTLY with EPROM_V131_TRACE_DUMP defined (`pio test`
- * swallows printf) against the REAL, UNMODIFIED post-v1.31
- * eprom_write_execute -- never hand-derived. Same chip, bus_config and
- * synthetic 4-byte block as the frozen pre-change capture
- * (eprom_v131_expected_prechange.h, blob
- * ca3e09f164e6e1c541ecb63d15bbebf5bce41d70): pins=32, mem_size=262144,
- * bus_config { address_mask=0x0011FFFF, matching_lines=17, rw_line=0x16
- * (22), vpp_line=0x15 (21), static_high_mask=0x00000000 }; same synthetic
- * block as _07: idx0=0x3C conv=0, idx1=0xFF conv=0, idx2=0x55 conv=2 (3
- * passes), idx3=0xAA conv=1 (2 passes). vpp_line=0x15 exactly equals
- * VPP_P1_32_DIP, so using_p1_as_vpp(handle) is TRUE for this chip.
- *
- * total=148 (was 115 at Phase 144's capture, 221 pre-change),
- * strobe_overflow=0, timing_overflow=0 (recorder caps are 512 each; 148 is
- * 29 percent of cap). RESPONSE_CODE_OK,
- * zero recorder overflow, proven deterministic across two drives before
- * this array was pasted. Every entry below is pasted verbatim from the
- * recorder's own dump output -- each retains only its own trailing
- * positional-index comment; no hand-authored per-segment comment is added.
- * Plan 144-04 performs the structural, per-entry attribution this array's
- * shrink from 221 to 115 entries calls for.
- *
  * This is the POST-v1.31, post-route-assert-fix cadence, now frozen for
  * v1.32 drift detection
  * (tests/golden/eprom_v131_trace_inventory.json's meta.frozen_for) -- a
@@ -657,30 +517,6 @@ static const v131_trace_entry_t EPROM_V131_TRACE_PROTO_08[] = {
 #define EPROM_V131_TRACE_PROTO_08_LEN (int)(sizeof(EPROM_V131_TRACE_PROTO_08) / sizeof(EPROM_V131_TRACE_PROTO_08[0]))
 
 /* ─── EPROM_V131_TRACE_PROTO_0B -- AM2716, protocol 0x0B, DIP24_2716 ────────
- * Captured EMPIRICALLY by Phase 144 Plan 03: the built native_trace_v131
- * binary run DIRECTLY with EPROM_V131_TRACE_DUMP defined (`pio test`
- * swallows printf) against the REAL, UNMODIFIED post-v1.31
- * eprom_write_execute -- never hand-derived. Same chip, bus_config and
- * synthetic 4-byte block as the frozen pre-change capture
- * (eprom_v131_expected_prechange.h, blob
- * ca3e09f164e6e1c541ecb63d15bbebf5bce41d70): pins=24, mem_size=2048,
- * bus_config { address_mask=0x000007FF, matching_lines=11, rw_line=0xFF
- * (none), vpp_line=0x0B (11), static_high_mask=0x00002000 (bit 13) }; same
- * synthetic block as _07/_08: idx0=0x3C conv=0, idx1=0xFF conv=0, idx2=0x55
- * conv=2 (3 passes), idx3=0xAA conv=1 (2 passes). vpp_line=0x0B exactly
- * equals VPP_P21_24_DIP, so using_p1_as_vpp(handle) is also TRUE for this
- * chip.
- *
- * total=92 (was 59 at Phase 144's capture, 201 pre-change),
- * strobe_overflow=0, timing_overflow=0
- * (recorder caps are 512 each). RESPONSE_CODE_OK, zero recorder overflow,
- * proven deterministic across two drives before this array was pasted.
- * Every entry below is pasted verbatim from the recorder's own dump output
- * -- each retains only its own trailing positional-index comment; no
- * hand-authored per-segment comment is added. Plan 144-04 performs the
- * structural, per-entry attribution this array's shrink from 201 to 59
- * entries calls for.
- *
  * This is the POST-v1.31, post-route-assert-fix cadence, now frozen for
  * v1.32 drift detection
  * (tests/golden/eprom_v131_trace_inventory.json's meta.frozen_for) -- a

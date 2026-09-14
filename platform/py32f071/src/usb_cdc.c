@@ -39,12 +39,9 @@
  * registered vendor identity on a product they did not make.
  *
  * The decision this pair implements lives in
- * platform/py32f071/FLASH-PATH-AND-PCB.md section 5 (and its meta twin
- * .planning/v1.23-FLASH-PATH-DECISION.md section 5). Section 5(c)'s ship
- * gate stands unchanged: no board ships and no release advertises a USB
- * identity until a PID allocated under VID 0x1209 exists. Phase 130 D-11
- * reverses Phase 129 D-06, which declined this edit only because that
- * phase was docs-only with no cut planned.
+ * platform/py32f071/FLASH-PATH-AND-PCB.md section 5. Its ship gate stands
+ * unchanged: no board ships and no release advertises a USB identity until
+ * a PID allocated under VID 0x1209 exists.
  */
 
 #define FIRESTARTER_USB_CONFIG_SIZE (9U + CDC_ACM_DESCRIPTOR_LEN)

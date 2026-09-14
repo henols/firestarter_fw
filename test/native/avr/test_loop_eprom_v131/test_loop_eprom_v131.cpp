@@ -4,18 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * (LOOP-01..LOOP-08, D-10) -- the suite skeleton for the
- * per-byte program loop oracle: setUp hooks wiring all three host_stubs.cpp
- * recorder layers, a fixed make_loop_handle/drive_loop_write contract for
- * plans 141-07/141-08 to drive against, the three bus_config_t literals
- * those plans need, and six LOOP-INDEPENDENT harness cases that prove the
- * harness itself is non-vacuous.
- *
- * This plan completes NO requirement (frontmatter requirements: []) --
- * every case below is harness self-verification, true both before and after
- * plan 141-04's loop rewrite. Dimension-1 requirement coverage (LOOP-01..08)
- * is plan 141-09's, after every piece of evidence exists.
- *
  * EXTEND this same file (see their own
  * files_modified) rather than creating a new one -- so every symbol,
  * constant and helper below is authored as a fixed, reusable contract, not
@@ -27,12 +15,6 @@
 #include <unity.h>
 #include <string.h>
 #include <stdio.h>
-
-/* A TEST TU may pair <Arduino.h> with <ArduinoFake.h> -- the 14-macro-
- * redefinition trap against the native warning watermark (1166, zero
- * headroom) bites PRODUCTION TUs that pair <Arduino.h> with the
- * avr/pgmspace.h host shim, not test TUs like this one (140-RESEARCH.md
- * Pitfall 1, restated in eprom_params.h's own header comment). */
 
 extern "C" {
 #include "memory.h"
@@ -63,14 +45,6 @@ using namespace fakeit;
 #define LOOP_STROBE_CAP 512
 #define LOOP_TIMING_CAP 512
 
-/* Shared strobe/timing recorder accessors (../_shared/host_stubs_common.inc,
- * compiled into host_stubs.cpp's translation unit under the
- * HOST_STUBS_REAL_REGISTER_UTILS + HOST_STUBS_RECORD_TIMING arms). This
- * suite has no shared "_expected.h" header of its own (unlike
- * test_trace_eprom_v131, which gets these from ../_shared/eprom_v131_expected.h)
- * -- declared directly here instead, once, so plans 141-07/141-08 (which
- * extend THIS file) get the full six-strobe/six-timing set from a single
- * place without needing a new shared header. */
 extern "C" void    clear_strobes();
 extern "C" int     strobe_count();
 extern "C" int     strobe_overflowed();
@@ -110,14 +84,6 @@ extern "C" int      logged_ids_overflowed(void);
  * setUp / tearDown
  * ───────────────────────────────────────────────────────────────────────── */
 
-/* (HOST-02, D-02/D-03) -- advancing millis() clock, file-
- * static so the AlwaysDo lambda in setUp (a capture-less closure, matching
- * this file's existing delay()/delayMicroseconds() lambdas) can mutate it.
- * Reset to 0 in setUp below. Precedent: test_cobs_data_frame.cpp's own
- * millis_counter (that file uses ArduinoFake(Function) rather than this
- * file's established bare ArduinoFake() form for delay/delayMicroseconds/
- * micros -- matched to THIS file's own convention below rather than
- * switched, since both forms link and this file is already consistent). */
 static unsigned long millis_counter;
 
 void setUp(void) {
@@ -126,53 +92,12 @@ void setUp(void) {
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
 
-    /* THE hook (mirrors test_trace_eprom_v131.cpp's setUp): delay()/
-     * delayMicroseconds() are free functions DEFINED by ArduinoFake's
-     * FunctionFake.cpp, not stubbed anywhere in the shared .inc -- every
-     * suite that reaches them mocks them in its own setUp(). Capture-less
-     * lambdas: timing_push is a free extern "C" symbol, nothing needs
-     * capturing. Do not remove these as "unused" -- case 2 below is the
-     * load-bearing, non-vacuous proof that they fire, and every later
-     * drive_loop_write-based case (plans 141-07/141-08) depends on them. */
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysDo([](unsigned int us) {
         timing_push(TIMING_KIND_DELAY_US, (uint32_t)us);
     });
     When(Method(ArduinoFake(), delay)).AlwaysDo([](unsigned long ms) {
         timing_push(TIMING_KIND_DELAY_MS, (uint32_t)ms);
     });
-    /* (HOST-02, D-02/D-03) -- replaces the old
-     * `AlwaysReturn(0)` frozen mock. eprom.cpp's new intra-block progress
-     * emission (src/proms/eprom.cpp, guarded #ifndef SERIAL_ON_IO --
-     * compiled IN on this native env, exactly as on leonardo) is TIME-gated
-     * via millis(): frozen at 0, it would NEVER fire, so a cadence case
-     * would pass VACUOUSLY with zero frames. Advances by a fixed 200 ms
-     * step per call (same fixed-increment shape as test_cobs_data_frame.cpp's
-     * millis_counter precedent, which prevents an infinite spin in any
-     * timeout loop that polls millis()).
-     *
-     * 200 ms, not a rounder 500 ms, is a deliberate, measured choice
-     * (D-25 finding, this plan's own execution): the emission fires at the
-     * TOP of the outer per-byte loop, BEFORE the LOOP-06 skips (by design,
-     * so the cadence is skip-count-independent) -- so it also fires on
-     * every iteration of every PRE-EXISTING case's drive, not just this
-     * plan's own two cases. The longest pre-existing block in this suite is
-     * 4 bytes (grep-confirmed), and
-     * test_loop06_a_block_of_only_skipped_bytes_emits_no_pulse_at_all
-     * asserts logged_id_count() == 0 on exactly such a 4-byte, all-0xFF
-     * drive -- a step of 500 ms (tried first) accumulates past
-     * EPROM_PROGRESS_EMIT_INTERVAL_MS (1000) within that case's own 4
-     * iterations and turns it RED (observed: "Expected 0 Was 2"), which is
-     * this plan's own no-change-to-pre-existing-cases constraint, violated.
-     * 200 ms keeps 4 iterations' worst-case accumulated delta at 800 ms
-     * (4 * 200), safely under the 1000 ms interval, while this plan's own
-     * two cases below use a 16-byte block (still capped at 8 DISTINCT
-     * read-back-model seeds -- LOOP_READBACK_MAX_ENTRIES) to reach enough
-     * iterations for the cadence to repeat. test_progress_emits_nothing_
-     * when_the_clock_does_not_advance below locally re-mocks this method
-     * with AlwaysReturn(0) for the span of its own case only -- the NEXT
-     * case's ArduinoFakeReset() above wipes that override and this line
-     * reinstalls the advancing lambda fresh every case, so no case can ever
-     * inherit another's clock behaviour. */
     millis_counter = 0;
     When(Method(ArduinoFake(), millis)).AlwaysDo([]() -> unsigned long {
         millis_counter += 200;
@@ -188,26 +113,9 @@ void setUp(void) {
 }
 
 void tearDown(void) {
-    /* (LOOP-08's DIP32 cases): reset any hardware-revision
-     * override back to the file's default (REVISION_0, via
-     * host_stubs_common.inc's zero-initialised s_host_config) so it can
-     * never leak into a case that runs after one of the DIP32 cases below
-     * -- Unity calls tearDown() even when a case fails via TEST_ASSERT's
-     * longjmp, so this reset is unconditional and always runs. */
     rurp_get_config()->hardware_revision = 0;
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * make_loop_handle -- fresh, zero-initialised handle per case. json_parse()
- * never resets pulse_delay, protocol, mem_size, vpp_mv or pins
- * (src/json_parser.c:81-89), so a stale global handle would leak state
- * between cases (the same pitfall test_eprom_params_v131.cpp's make_handle
- * and test_trace_eprom_v131.cpp's make_v131_handle both guard against).
- * Unused by this plan's own six cases (all loop-independent harness
- * self-checks) -- authored now so plans 141-07/141-08 inherit a fixed
- * contract instead of re-deriving their own. Silenced via [[maybe_unused]]
- * rather than deleted.
- * ───────────────────────────────────────────────────────────────────────── */
 [[maybe_unused]] static firestarter_handle_t make_loop_handle(uint32_t protocol, uint8_t pins, uint32_t mem_size,
                                                                 uint32_t pulse_delay_us, const bus_config_t& bus_config) {
     firestarter_handle_t h = {};
@@ -221,26 +129,6 @@ void tearDown(void) {
     h.ctrl_flags = FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE;
     return h;
 }
-
-/* ─────────────────────────────────────────────────────────────────────────
- * bus_config ground truth, copied VERBATIM (renamed LOOP_BUS_CONFIG_0x07 /
- * _0x08 / _0x0B) from test_trace_eprom_v131.cpp's V131_BUS_CONFIG_0x07 /
- * _0x08 / _0x0B -- do NOT invent new ones: a zeroed bus_config is
- * DEGENERATE, not an identity remap (mem_util_remap_address_bus starts from
- * `config.address_mask & address`, and address_mask == 0 collapses every
- * address to 0). Derivation command (run live against firestarter_app,
- * 2026-08-08):
- *   cd /workspaces/firestarter_app && python3 -c "
- *     import sys
- *     sys.path.insert(0, 'tools'); sys.path.insert(0, '.')
- *     from gen_sdp_bus_config import derive_row
- *     from firestarter.database import EpromDatabase
- *     db = EpromDatabase(skip_local_override=True)
- *     for chip in ['AM27C512', 'AM27C020', 'AM2716']:
- *         print(chip, derive_row(db, chip))"
- * Unused by this plan's own six cases -- authored now, alongside
- * make_loop_handle above, for plans 141-07/141-08.
- * ───────────────────────────────────────────────────────────────────────── */
 
 /* AM27C512 (protocol 0x07) -- pinout DIP28_27512, mem_size 65536, pulse
  * 100 us (the modal 0x07 value). derive_row: bus=[0..15], matching_lines=16,
@@ -293,31 +181,12 @@ void tearDown(void) {
 };
 
 /* ─────────────────────────────────────────────────────────────────────────
- * drive_loop_write -- the fixed drive-helper contract for plans 141-07/
- * 141-08. Modelled on test_trace_eprom_v131.cpp's drive_v131_write:
- *
  *   configure_memory (writes address 0 itself, memory.cpp:93)
  *   -> reset_register_cache
  *   -> clear_strobes / clear_timings / clear_logged_ids
  *   -> seed address / data_size / data_buffer
  *   -> h->firestarter_operation_main(h)  -- NEVER _init, NEVER the whole
  *      command.
- *
- * Never _init: eprom_write_execute enables the VPP regulator itself on
- * entry if it is not already enabled, so skipping _init keeps the capture
- * scoped to exactly the per-byte loop this suite exists to prove. Never the
- * whole command: command_done() writes CONTROL_REGISTER = 0x00 on every
- * exit regardless of what the write-execute path did, which would make a
- * high-voltage assertion vacuous. Never re-assign h->firestarter_get_data /
- * h->firestarter_set_data: keeping the real memory_get_data / memory_set_data
- * in the path captures the verify read's own bus activity too (D-05
- * expressed as a test constraint).
- *
- * Authored now and left UNUSED by this plan's own six cases (all
- * loop-independent harness self-checks) so plans 141-07/141-08 inherit this
- * exact, fixed contract rather than re-deriving their own. Silenced via
- * [[maybe_unused]] rather than deleted -- same treatment as
- * make_loop_handle and the three bus_config literals above.
  * ───────────────────────────────────────────────────────────────────────── */
 [[maybe_unused]] static void drive_loop_write(firestarter_handle_t* h, uint32_t base,
                                                const uint8_t* block, uint8_t n) {
@@ -334,14 +203,6 @@ void tearDown(void) {
     h->firestarter_operation_main(h);
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Six loop-independent harness cases. Each proves the harness itself is
- * non-vacuous (including two explicit negative controls); none drives
- * eprom_write_execute or any protocol handler, so every case stays true
- * both before and after plan 141-04's loop rewrite (D-10). This plan
- * completes NO requirement -- see the file banner above.
- * ───────────────────────────────────────────────────────────────────────── */
-
 /* The baseline every later case's assertions build on: setUp() alone must
  * leave all THREE recorders (strobe, timing, logged-id) empty and
  * un-overflowed. */
@@ -354,12 +215,6 @@ void test_setup_leaves_all_three_recorders_clean(void) {
     TEST_ASSERT_EQUAL_MESSAGE(0, logged_ids_overflowed(), "logged_ids_overflowed after setUp");
 }
 
-/* Drives delay()/delayMicroseconds() DIRECTLY -- no production code
- * involved yet -- and proves the setUp() hook actually fires, in this
- * order, with the right kind and argument each time. This is the
- * load-bearing, non-vacuous proof LOOP-07's oracle (mem_util_delay_us's
- * ms/us split) depends on: a native stub records no elapsed time at all,
- * only the arguments passed to the mocked calls. */
 void test_timing_hook_records_both_delay_kinds_with_their_arguments(void) {
     delay(7);
     delayMicroseconds(11);
@@ -402,10 +257,6 @@ void test_readback_model_returns_ff_and_stays_unseeded_for_an_unknown_address(vo
     TEST_ASSERT_EQUAL_MESSAGE(1, loop_readback_seeded_count(), "seeded_count must stay 1 -- the read must not have created an entry");
 }
 
-/* The exact property plan 141-08's D-09 A16-crossing case depends on: two
- * addresses on opposite sides of the 0x00FFFF/0x010000 boundary, latched
- * ALTERNATELY (interleaved reads, so a shared/aliased counter would show up
- * immediately), must keep fully independent read counters. */
 void test_readback_model_distinguishes_two_addresses_across_an_a16_crossing(void) {
     loop_readback_seed(0xFFFE, 0x11, 1);
     loop_readback_seed(0x0000, 0x22, 2);
@@ -444,23 +295,6 @@ void test_logged_id_capture_records_the_id_and_its_packed_params(void) {
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x45, logged_id_param(0, 2), "param byte 2 (LSB)");
 }
 
-/* ═════════════════════════════════════════════════════════════════════════
- * (LOOP-01, LOOP-06, LOOP-04) -- behaviour cases proving the
- * per-byte program loop's cadence, its skip rules and its energy cap,
- * driven through drive_loop_write / make_loop_handle / LOOP_BUS_CONFIG_*
- * (plan 141-03's fixed contract) against the REAL eprom_write_execute
- * (plan 141-04, src/proms/eprom.cpp). This plan supplies the WHOLE proof
- * for LOOP-01, LOOP-04 and LOOP-06 and flips NO requirement checkbox --
- * that is plan 141-09's, after every piece of evidence exists (frontmatter
- * requirements: [] is deliberate, per this plan's own <objective>).
- *
- * extends this SAME file with LOOP-03, LOOP-05, LOOP-07 and
- * LOOP-08 cases -- nothing below pre-empts those.
- * ═════════════════════════════════════════════════════════════════════════ */
-
-/* Small local helpers, shared by every case below -- neither plan 141-03's
- * harness nor host_stubs.cpp provides them; they belong to THIS plan's own
- * cases, not to the fixed drive-helper contract. */
 static int count_strobe_kind(uint8_t kind) {
     int n = strobe_count();
     int c = 0;
@@ -509,36 +343,10 @@ static uint16_t k0b(uint32_t real_addr) {
     return (uint16_t)(real_addr + 0x2000UL);
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * LOOP-01 (task 1) -- fixed-width pulses, verify after each pulse, an
- * exact per-byte pulse count, and success at the max_pulses boundary.
- * Every case here drives protocol 0x07 (28-pin, mem_size 65536,
- * max_pulses 25, energy_cap_us 0 == uncapped -- eprom_params.cpp:50),
- * LOOP_BUS_CONFIG_0x07 (static_high_mask 0, so no key-remap adjustment is
- * needed for this protocol).
- * ───────────────────────────────────────────────────────────────────────── */
-
 /* Case 1: each byte gets exactly the seeded number of fixed-width pulses.
  *
- * Read-count-to-pulse-count mapping (stated explicitly, per plan): the
- * loop reads FIRST (LOOP-06's skip check) and only then pulses, so seeding
- * converge_after = N means the byte matches on read N+1, i.e. after
  * exactly N pulses -- loop_readback_reads(addr) == 1 + pulses. */
 /* FINDING (this plan's own, made during execution -- documented here and
- * in the SUMMARY, not silently absorbed): rurp_internal_write_to_register
- * (include/rurp_register_utils.h:63-89, production code, real via
- * HOST_STUBS_REAL_REGISTER_UTILS) shifts EVERY non-elided register write
- * (LSB, MSB, or CONTROL) through rurp_write_data_buffer() -- the EXACT same
- * function memory_set_data calls for the actual chip-data pulse. Both
- * therefore push an indistinguishable-BY-KIND STROBE_KIND_DATA entry (same
- * kind, same pin (0)). A bare "count of STROBE_KIND_DATA == total pulse
- * count" claim is consequently unsound: register-write noise varies by
- * pin count and even by call direction (0x08's bus_config.rw_line makes
- * every read<->write transition force a non-elided CONTROL rewrite, so its
- * noise SCALES with pulse count, not just a fixed per-drive floor --
- * measured directly: a 0-pulse baseline for 0x08 undercounts a genuine
- * 2-pulse run by 6, not 2).
- *
  * The robust oracle is the entry's VALUE, not a raw count: a genuine
  * chip-data pulse's rurp_write_data_buffer(data) call always carries
  * data == the byte actually being programmed (memory_set_data's own
@@ -571,14 +379,6 @@ void test_loop01_each_byte_gets_exactly_the_seeded_number_of_fixed_width_pulses(
 
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code, "response_code");
 
-    /* Read-count-to-pulse-count mapping: the loop reads FIRST (LOOP-06's
-     * skip check), pulses, and then -- because 0x07 ships
-     * VERIFY_PER_PULSE_PLUS_FINAL -- reads EVERY byte ONE MORE time in the
-     * unconditional final full-block pass that runs after the per-byte
-     * loop (src/proms/eprom.cpp:296-314), regardless of whether that byte
-     * converged, was skipped, or already matched. So
-     * loop_readback_reads(addr) == 1 (skip-check) + pulses (one verify per
-     * pulse) + 1 (the final pass's own read) == 2 + pulses. */
     const int expected_reads[4] = {3, 4, 5, 6}; /* 2 + converge_after[i] */
     for (int i = 0; i < 4; i++) {
         char msg[80];
@@ -602,14 +402,6 @@ void test_loop01_each_byte_gets_exactly_the_seeded_number_of_fixed_width_pulses(
 }
 
 /* Case 2: pulse width never grows between attempts. With
- * read_settling_us == 0 and read_strobe_us == 0 (handle defaults), the
- * TIMING_KIND_DELAY_US values genuinely tied to the pulse/verify cadence
- * are {3, 100}: 3 us is memory_set_data's pre-pulse settle (memory.cpp
- * ~:300) PLUS memory_get_data's default verify-read strobe (:278-280) --
- * neither is counted toward the per-byte accumulated program time (D-02).
- * 100 us is the pulse itself (org_delay, never grown). Any FOURTH distinct
- * value would be exactly the adaptive-growth formula LOOP-02 removed.
- *
  * A third value, 1 us, IS expected and is NOT growth: it is
  * rurp_internal_write_to_register's own fixed post-latch delay
  * (include/rurp_register_utils.h:86, `delayMicroseconds(1);` -- literally
@@ -632,14 +424,6 @@ void test_loop01_pulse_width_never_grows_between_attempts(void) {
     TEST_ASSERT_EQUAL_MESSAGE(0, timing_overflowed(), "timing_overflowed -- small block, must be sound");
 
     /* Debug session w27c512-program-fail-byte0 -- this leg used to identify
-     * a pulse-width entry BY VALUE ("any delayMicroseconds that is not 1, 3
-     * or 100 is LOOP-02's growth"). That test could not survive its own
-     * subject: the fix that restored the program-voltage route assert added
-     * an EPROM_VPP_SETUP_US settle whose value (100) is the same number as
-     * this chip's pulse width, so a value-keyed count would have read 20
-     * pulses where there are 10, and a value-keyed allowlist would have had
-     * to be widened by exactly the constant it is meant to police.
-     *
      * Identify the pulse width STRUCTURALLY instead, which is what the
      * property was always about: the pulse width is the delay emitted while
      * /CE is asserted AND the part's outputs are disabled.
@@ -694,13 +478,6 @@ void test_loop01_pulse_width_never_grows_between_attempts(void) {
     TEST_ASSERT_EQUAL_MESSAGE(10, pulses_seen, "exactly one CE-gated pulse-width entry per pulse -- 10 total across the block (1+2+3+4)");
 }
 
-/* Case 3: a verify read follows every pulse. Deliberately does NOT assert
- * "exactly one CONTROL strobe per byte" or "no CONTROL strobe during a
- * verify read": mem_util_set_address writes CONTROL_REGISTER
- * unconditionally on every byte, for both the pulse and the verify
- * (memory.cpp:230-231), and a chip whose bus_config.rw_line is set
- * re-strobes CONTROL on the pulse-to-verify direction flip too. Both are
- * expected and neither is a LOOP-08 violation. */
 void test_loop01_verify_read_follows_every_pulse(void) {
     firestarter_handle_t h = make_loop_handle(0x07, 28, 65536, 100, LOOP_BUS_CONFIG_0x07);
     const uint8_t block[4] = {0x3C, 0x55, 0xAA, 0x0F};
@@ -757,28 +534,6 @@ void test_loop01_a_byte_that_converges_on_its_last_permitted_pulse_succeeds(void
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
- * LOOP-06 (task 2) -- skip rules for 0xFF and already-matching bytes, with
- * negative controls.
- *
- * DEVIATION FROM THE PLAN'S <action> PROSE, recorded here and in this
- * plan's own SUMMARY: cases 1-3 below drive protocol 0x0B, not 0x07 as the
- * plan's prose said, so their literal loop_readback_reads() values (the
- * plan's own <acceptance_criteria> numbers: 0, and 1/3) are actually true.
- * 0x07 ships VERIFY_PER_PULSE_PLUS_FINAL (eprom_params.cpp:50):
- * eprom_write_execute's final full-block pass (:296-314) reads EVERY byte
- * once more, unconditionally, after the per-byte loop -- including
- * 0xFF-skipped and already-matching bytes. Driving cases 1-3 on 0x07 would
- * add +1 to every loop_readback_reads() value from that pass (0 -> 1 for
- * the 0xFF byte, 1 -> 2 for the already-matching byte), CONTRADICTING the
- * plan's own stated acceptance numbers. 0x0B ships plain VERIFY_PER_PULSE
- * (no final pass), so it is the only protocol on which the per-byte loop's
- * OWN skip behaviour is directly observable, uncontaminated by a later
- * pass. Case 4 below is deliberately still 0x07 -- it is the case that
- * specifically proves the final pass DOES still run on a fully-skipped
- * block, which needs the PLUS_FINAL protocol to be meaningful at all; this
- * pairs exactly with LOOP-04 case 6 below (0x0B, the negative
- * counterpart: NO final pass runs).
- *
  * LOOP_BUS_CONFIG_0x0B's nonzero static_high_mask means every seed/read
  * key below goes through k0b() -- see that helper's own comment.
  * ───────────────────────────────────────────────────────────────────────── */
@@ -793,15 +548,6 @@ void test_loop06_an_ff_target_byte_is_never_read_and_never_pulsed(void) {
     drive_loop_write(&h, 0, block, 4);
 
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code, "response_code");
-    /* The discriminating assertion: the 0xFF check runs BEFORE any read of
-     * the byte, so byte 1 gets exactly ZERO reads -- not the single
-     * skip-check read an already-matching byte gets (case 2 below). This
-     * is what distinguishes the two skip rules from each other, and on its
-     * own already proves zero pulses for that byte too: every pulse this
-     * loop ever emits is followed by a verify read (LOOP-01), so zero
-     * reads implies zero pulses without needing a separate strobe count
-     * (which, per the noise-floor finding in LOOP-01 case 1's own comment,
-     * cannot cleanly isolate "pulses" from register-shift writes anyway). */
     TEST_ASSERT_EQUAL_MESSAGE(0, loop_readback_reads(k0b(1)), "0xFF byte must get ZERO reads -- proves the 0xFF check precedes the read");
 }
 
@@ -891,9 +637,6 @@ void test_loop06_the_ff_rule_does_not_suppress_the_final_verify_pass(void) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
- * LOOP-04 (task 3) -- the 0x0B energy cap at all three shipped widths, and
- * no overprogram pulse on any live row.
- *
  * eprom_params_for(0x0B) ships energy_cap_us 50000, max_pulses 255,
  * overprogram_factor 0, verify_mode VERIFY_PER_PULSE, vpp_path
  * VPP_PATH_DIRECT_VPE (src/proms/eprom_params.cpp:52). Cases 1-4 seed
@@ -984,10 +727,6 @@ void test_loop04_the_energy_cap_binds_before_max_pulses_on_every_shipped_width(v
         snprintf(rmsg, sizeof(rmsg), "response_code at width index %d", w);
         TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code, rmsg);
         TEST_ASSERT_EQUAL_MESSAGE(1, count_logged_id(MSG_ERR_ENERGY_CAP), "MSG_ERR_ENERGY_CAP must be logged exactly once");
-        /* max_pulses ships 255 on 0x0B; 250, 100 and 50 are all below it,
-         * so if the energy cap did NOT bind first, this would be
-         * MSG_ERR_MAX_PULSES instead -- the discriminating check D-04's
-         * two distinct message ids exist to make possible. */
         TEST_ASSERT_EQUAL_MESSAGE(0, count_logged_id(MSG_ERR_MAX_PULSES), "MSG_ERR_MAX_PULSES must NEVER be logged on this row at this width");
 
         int idx = find_logged_id(MSG_ERR_ENERGY_CAP);
@@ -999,29 +738,6 @@ void test_loop04_the_energy_cap_binds_before_max_pulses_on_every_shipped_width(v
 }
 
 void test_loop04_no_live_row_emits_an_overprogram_pulse(void) {
-    /* All three shipped rows have overprogram_factor == 0
-     * (eprom_params.cpp:50-52), so the overprogram path is structurally
-     * unreachable through the table on any of them; the arithmetic itself
-     * (eprom_overprogram_us) is proven separately by plan 141-08's
-     * pure-function cases. This case proves the LOOP never emits a third,
-     * extra pulse on any live row -- exactly the 2 pulses each seeded byte
-     * needs, no more.
-     *
-     * loop_readback_reads() alone CANNOT prove this: an overprogram pulse
-     * is a bare handle->firestarter_set_data() call with no verify read
-     * after it (D-07's org_delay save/restore idiom, eprom.cpp:284-289),
-     * so it would leave the read count completely unchanged whether it
-     * fired or not. A raw STROBE_KIND_DATA COUNT is not a safe substitute
-     * either: register-shift writes share the identical strobe shape as a
-     * genuine chip-data pulse, and (measured directly, during this plan's
-     * own execution) that noise does not even stay constant -- 0x08's
-     * bus_config.rw_line makes every read<->write direction change force
-     * a non-elided CONTROL rewrite, so a naive count SCALES with pulse
-     * count rather than adding a fixed floor. count_data_pulses_with_value
-     * (this file's own helper, see its comment above test 1) sidesteps
-     * this entirely by filtering on the byte VALUE written, which a
-     * register-shift can never coincidentally match for the addresses
-     * used here. */
     {
         firestarter_handle_t h = make_loop_handle(0x07, 28, 65536, 100, LOOP_BUS_CONFIG_0x07);
         const uint8_t byte0[1] = {0x3C};
@@ -1046,11 +762,6 @@ void test_loop04_no_live_row_emits_an_overprogram_pulse(void) {
 }
 
 void test_loop04_0x0B_runs_no_final_full_block_verify_pass(void) {
-    /* 0x0B ships VERIFY_PER_PULSE (not VERIFY_PER_PULSE_PLUS_FINAL) -- no
-     * final full-block pass runs. This is the negative counterpart to
-     * LOOP-06's test_loop06_the_ff_rule_does_not_suppress_the_final_verify_pass
-     * (0x07, WHICH does run one); together they prove verify_mode is read
-     * from the table rather than hardcoded. */
     firestarter_handle_t h = make_loop_handle(0x0B, 24, 2048, 500, LOOP_BUS_CONFIG_0x0B);
     const uint8_t block[2] = {0x3C, 0x55};
     loop_readback_seed(k0b(0), 0x3C, 1);
@@ -1064,23 +775,6 @@ void test_loop04_0x0B_runs_no_final_full_block_verify_pass(void) {
     TEST_ASSERT_EQUAL_MESSAGE(2, loop_readback_reads(k0b(1)), "byte 1: skip-check + 1 verify, no final pass");
 }
 
-/* ═════════════════════════════════════════════════════════════════════════
- * (LOOP-03, LOOP-05, LOOP-07, LOOP-08) -- the phase's remaining
- * four requirements, whose oracles are specialist: the overprogram
- * arithmetic (task 1, below -- a pure function, since no shipped row can
- * reach it), the hard-fail exit and its non-vacuous route disable (task 2),
- * the delay ceiling under a REAL drive plus the pre-flight refusal (task 2),
- * and the DIP32 A16-crossing seam (task 3). This plan flips NO requirement
- * checkbox -- consolidated in plan 141-09, after every piece of evidence
- * exists (frontmatter requirements: [] is deliberate).
- * ═════════════════════════════════════════════════════════════════════════ */
-
-/* ─────────────────────────────────────────────────────────────────────────
- * (LOOP-03, LOOP-07 arithmetic) -- the two pure functions, at their
- * boundaries. No handle, no hardware, no PROGMEM: eprom_overprogram_us and
- * mem_util_split_delay / mem_util_delay_us are called DIRECTLY.
- * ───────────────────────────────────────────────────────────────────────── */
-
 void test_loop03_overprogram_duration_is_three_times_the_pulse_count_times_the_width(void) {
     TEST_ASSERT_EQUAL_MESSAGE(300, eprom_overprogram_us(1, 100, 3, 75000),
         "(1,100,3,75000): 1 pulse x 100us x factor 3 = 300");
@@ -1089,12 +783,6 @@ void test_loop03_overprogram_duration_is_three_times_the_pulse_count_times_the_w
 }
 
 void test_loop03_overprogram_is_zero_when_the_factor_is_zero(void) {
-    /* This is the gate every SHIPPED row takes: overprogram_factor is 0 on
-     * all three live rows (eprom_params.cpp:50-52), so the per-byte loop's
-     * own overprogram call (eprom.cpp:284) is inert on every protocol this
-     * project ships today. D-08's pure function is the only oracle that
-     * can exercise the path at a nonzero factor at all -- see the
-     * remaining cases below. */
     TEST_ASSERT_EQUAL_MESSAGE(0, eprom_overprogram_us(5, 100, 0, 75000),
         "(5,100,0,75000): factor 0 -> 0, regardless of pulse_count/pulse_us/cap");
     TEST_ASSERT_EQUAL_MESSAGE(0, eprom_overprogram_us(25, 1000, 0, 75000),
@@ -1102,10 +790,6 @@ void test_loop03_overprogram_is_zero_when_the_factor_is_zero(void) {
 }
 
 void test_loop03_overprogram_clamps_at_the_cap_rather_than_refusing(void) {
-    /* 25 x 1000 x 3 = 75000, exactly the cap -- the Intel-Intelligent worst
-     * case cited on gh#15. Phase 140 D-08 / this plan's own <action>: the
-     * cap CLAMPS, it does not refuse -- a request one microsecond ABOVE the
-     * cap still clamps, it never becomes an error. */
     TEST_ASSERT_EQUAL_MESSAGE(75000, eprom_overprogram_us(25, 1000, 3, 75000),
         "(25,1000,3,75000): 25*1000*3=75000, exactly the cap -- the clamp is a no-op here");
     TEST_ASSERT_EQUAL_MESSAGE(75000, eprom_overprogram_us(25, 1001, 3, 75000),
@@ -1125,15 +809,6 @@ void test_loop03_overprogram_is_32_bit_safe_at_the_uint16_ceiling(void) {
 }
 
 void test_loop03_a_zero_cap_yields_no_overprogram_pulse(void) {
-    /* Decided semantics (D-08, this plan's own <action>): eprom_params.h:52
-     * defines the column as the clamp in min(3 x overprogram_factor x
-     * pulse, cap), and min(product, 0) is 0 -- "0 means no clamp is
-     * configured" is the fail-safe reading. The alternative reading ("0
-     * means uncapped") would let a factor != 0 row emit a multi-second VPE
-     * pulse the very first time one appeared -- this is the fail-safe
-     * reading as well as the literal one. No shipped row has
-     * overprogram_factor != 0, so this case is unreachable in production
-     * and this pure-function test is its only oracle. */
     TEST_ASSERT_EQUAL_MESSAGE(0, eprom_overprogram_us(5, 100, 3, 0),
         "(5,100,3,0): cap_us=0 -> 0, the fail-safe 'no clamp configured' reading");
 }
@@ -1149,9 +824,6 @@ void test_loop07_split_does_not_fire_at_or_below_the_ceiling(void) {
     TEST_ASSERT_EQUAL_MESSAGE(0, ms, "split(100).ms");
     TEST_ASSERT_EQUAL_MESSAGE(100, us, "split(100).us");
 
-    /* The exact ceiling (16383) must NOT split -- splitting everything
-     * would change the emitted trace for every shipped pulse width and
-     * destroy Phase 144's ability to attribute the trace diff to cadence. */
     mem_util_split_delay(16383, &ms, &us);
     TEST_ASSERT_EQUAL_MESSAGE(0, ms, "split(16383).ms -- the exact ceiling must not split");
     TEST_ASSERT_EQUAL_MESSAGE(16383, us, "split(16383).us -- the exact ceiling must not split");
@@ -1215,20 +887,6 @@ void test_loop07_delay_us_emits_the_split_as_delay_then_delaymicroseconds(void) 
 
 /* ─────────────────────────────────────────────────────────────────────────
  * Shared helpers for tasks 2/3 below -- the CONTROL-register write stream.
- *
- * Every non-elided CONTROL write (rurp_write_to_register(CONTROL_REGISTER,
- * ...), include/rurp_register_utils.h:24-59) shows up in the strobe
- * recorder as THREE consecutive entries via rurp_internal_write_to_register
- * (:63-89), in this FIXED, unconditional order, never interleaved with
- * anything else:
- *   [STROBE_KIND_DATA, pin=0,               value=<the physical byte>]
- *   [STROBE_KIND_PIN,  pin=CONTROL_REGISTER, value=1]  (latch rise)
- *   [STROBE_KIND_PIN,  pin=CONTROL_REGISTER, value=0]  (latch fall)
- * -- plan 141-07's own finding restated: STROBE_KIND_DATA is NOT a safe raw
- * pulse-count oracle, because a register-shift write pushes this exact same
- * DATA-strobe shape as a genuine chip-data pulse. These helpers exploit
- * that fixed 3-entry shape directly (locating the PIN-rise, then reading
- * the DATA entry immediately before it) instead of fighting it.
  * ───────────────────────────────────────────────────────────────────────── */
 static int control_write_count(void) {
     int n = strobe_count();
@@ -1251,18 +909,6 @@ static int control_write_strobe_index(int idx) {
     return -1;
 }
 
-/* The Nth (0-indexed) non-elided CONTROL_REGISTER write's PHYSICAL byte
- * value -- i.e. AFTER rurp_map_ctrl_reg_for_hardware_revision's per-
- * revision remap (rurp_hw_rev_utils.h), not the pre-remap LOGICAL value
- * mem_util_calculate_top_address_register computes. CTRL_VPP_REGULATOR_ENABLE
- * (0x80) is safe to check directly against this return value on EVERY
- * revision branch (both the REVISION_0/1 and REVISION_2_x remaps pass bit
- * 0x80 through unchanged). CTRL_ADDRESS_LINE_16 and CTRL_VPP_VPE_DROP_ENABLE,
- * however, COLLIDE onto the SAME physical bit (0x01) on the default test
- * revision (REVISION_0 -- host_stubs_common.inc's s_host_config is zero-
- * initialised; 141-RESEARCH.md's Axis 2 table) -- task 3's DIP32 cases
- * override the revision to REVISION_2_2, where they map to distinct
- * physical bits (0x20 / 0x01), specifically to avoid that collision. */
 static int control_write_value(int idx) {
     int strobe_idx = control_write_strobe_index(idx);
     if (strobe_idx <= 0 || strobe_kind(strobe_idx - 1) != STROBE_KIND_DATA) return -1;
@@ -1298,11 +944,6 @@ static int count_timing_ms(uint32_t val) {
     return c;
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * (LOOP-05 hard-fail + non-vacuous route disable; LOOP-07's GLOBAL
- * ceiling claim under a real drive, plus D-03's pre-flight refusal).
- * ───────────────────────────────────────────────────────────────────────── */
-
 void test_loop05_a_byte_that_misses_within_max_pulses_aborts_the_block(void) {
     firestarter_handle_t h = make_loop_handle(0x07, 28, 65536, 100, LOOP_BUS_CONFIG_0x07);
     const uint8_t block[4] = {0x3C, 0x55, 0xAA, 0x0F};
@@ -1332,19 +973,6 @@ void test_loop05_a_byte_that_misses_within_max_pulses_aborts_the_block(void) {
     /* The abort proof, RE-EXPRESSED for the pass-batched loop (debug session
      * w27c512-write-slow-3x).
      *
-     * WHAT THIS ASSERTION USED TO SAY, and why it could not survive: it
-     * required bytes 2 and 3 to report ZERO reads, on the reasoning that a
-     * per-BYTE loop reaching byte 1's budget failure RETURNS before byte 2
-     * is ever visited. That is an artefact of per-byte ORDERING, not of
-     * LOOP-05's requirement. The loop is now pass-batched (one route assert
-     * and one settle per pass, amortised over the whole block, restoring
-     * v2.0.6's granularity after a measured 3.7x write-speed regression), so
-     * every byte in the block gets its first pulse in pass 1, before any
-     * byte can exhaust max_pulses. Bytes 2 and 3 are therefore necessarily
-     * touched. Note this is not a regression in what reaches silicon: it is
-     * v2.0.6's own behaviour, and the write still fails loudly with exactly
-     * one MSG_ERR_MAX_PULSES naming byte 1 (asserted above).
-     *
      * WHAT REPLACES IT, and why it is not weaker. The requirement is that a
      * byte missing within max_pulses aborts the BLOCK -- i.e. the loop stops
      * rather than grinding on. The two assertions below pin exactly that,
@@ -1366,17 +994,6 @@ void test_loop05_a_byte_that_misses_within_max_pulses_aborts_the_block(void) {
 }
 
 void test_loop05_the_loops_own_strobes_disable_the_high_voltage_route(void) {
-    /* (K-1): widened to also assert the drop bit clears.
-     * The REVISION_2_2 override is MANDATORY for that widening to be
-     * decidable at all (L-6, copying the DIP32 cases' override idiom
-     * below): on the DEFAULT REVISION_0 this case used to run on,
-     * CTRL_VPP_VPE_DROP_ENABLE_REV1 (0x01) and CTRL_ADDRESS_LINE_16
-     * collide onto the SAME physical bit, so a drop-bit assertion there
-     * would be UNDECIDABLE, not merely weak. On REVISION_2_2 the drop bit
-     * is CTRL_VPP_VPE_DROP_ENABLE_REV2 (0x01), distinct from
-     * CTRL_ADDRESS_LINE_16_REV2 (0x20) -- this 28-pin, 4-byte, base-0 block
-     * never crosses the A16 boundary, so the override changes nothing else
-     * about this case's original claim. */
     rurp_get_config()->hardware_revision = REVISION_2_2;
 
     firestarter_handle_t h = make_loop_handle(0x07, 28, 65536, 100, LOOP_BUS_CONFIG_0x07);
@@ -1424,16 +1041,6 @@ void test_loop05_the_loops_own_strobes_disable_the_high_voltage_route(void) {
 }
 
 void test_loop05_a_successful_block_does_not_disable_the_route(void) {
-    /* Paired negative control: a block that fully converges must leave the
-     * route SET. Without this, the case above would pass on an
-     * implementation that disables the route unconditionally on every
-     * exit. Phase 142 Plan 04 (D-10 as amended, correction C-1, D-09) --
-     * this assertion is WHY eprom_write_execute's single-exit wrapper
-     * clears EPROM_HV_ALL_OFF_MASK only when response_code ==
-     * RESPONSE_CODE_ERROR, never unconditionally: an unconditional clear
-     * would re-arm the once-per-block guard and re-pay delay(500) on the
-     * NEXT block too. This is the case that keeps that disable
-     * conditional. */
     firestarter_handle_t h = make_loop_handle(0x07, 28, 65536, 100, LOOP_BUS_CONFIG_0x07);
     const uint8_t block[4] = {0x3C, 0x55, 0xAA, 0x0F};
     const uint16_t converge_after[4] = {1, 2, 3, 4};
@@ -1453,12 +1060,6 @@ void test_loop05_a_successful_block_does_not_disable_the_route(void) {
 }
 
 void test_loop07_no_recorded_us_delay_exceeds_the_avr_ceiling_under_a_real_drive(void) {
-    /* protocol 0x07 ships energy_cap_us == 0 (uncapped), so D-03's
-     * pre-flight refusal does not fire even at a wildly over-ceiling
-     * pulse_delay -- exactly the scenario LOOP-07's GLOBAL claim ("no call
-     * path can reach delayMicroseconds() above 16383us") must hold under.
-     * 50000 is a value the wire can supply TODAY through json_parser.c's
-     * unclamped extract_long("pulse-delay", ...) (json_parser.c ~:305). */
     firestarter_handle_t h = make_loop_handle(0x07, 28, 65536, 50000, LOOP_BUS_CONFIG_0x07);
     const uint8_t block[1] = {0x3C};
     loop_readback_seed(0, block[0], 2);  /* small: 2 pulses, neither recorder overflows */
@@ -1492,9 +1093,6 @@ void test_loop07_no_recorded_us_delay_exceeds_the_avr_ceiling_under_a_real_drive
 }
 
 void test_loop07_an_over_cap_pulse_is_refused_before_any_high_voltage_on_a_capped_row(void) {
-    /* D-03's pre-flight refusal, at the row where it is actually reachable
-     * (0x0B ships energy_cap_us = 50000; 0x07/0x08 ship 0 == uncapped, so
-     * this refusal is structurally unreachable on either of them). */
     firestarter_handle_t h = make_loop_handle(0x0B, 24, 2048, 60000, LOOP_BUS_CONFIG_0x0B);
     configure_memory(&h);
 
@@ -1531,12 +1129,6 @@ void test_loop07_an_over_cap_pulse_is_refused_before_any_high_voltage_on_a_cappe
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h2.response_code, "response_code -- 500us is well under the 50000us cap");
     TEST_ASSERT_EQUAL_MESSAGE(0, count_logged_id(MSG_ERR_PULSE_TOO_WIDE), "no MSG_ERR_PULSE_TOO_WIDE at a legal pulse width");
 }
-
-/* ─────────────────────────────────────────────────────────────────────────
- * (LOOP-08) -- VPE once per block, surviving every verify read,
- * across an A16 crossing on a 32-pin part. All six cases assert
- * strobe_overflowed() == 0 as a soundness precondition (small blocks only).
- * ───────────────────────────────────────────────────────────────────────── */
 
 void test_loop08_the_route_is_asserted_once_before_the_first_data_strobe(void) {
     firestarter_handle_t h = make_loop_handle(0x07, 28, 65536, 100, LOOP_BUS_CONFIG_0x07);
@@ -1652,19 +1244,6 @@ void test_loop08_route_presence_is_not_vacuous(void) {
 }
 
 void test_loop08_dip32_block_crossing_an_a16_boundary_keeps_the_route_and_toggles_a16(void) {
-    /* The highest-risk case in this plan. Override the hardware-revision
-     * mapping to REVISION_2_2 for the duration of this case (reset
-     * unconditionally in tearDown()) so the recorded PHYSICAL control byte
-     * does not conflate CTRL_ADDRESS_LINE_16 and CTRL_VPP_VPE_DROP_ENABLE
-     * -- on the default REVISION_0/1 mapping both remap onto the SAME
-     * physical bit (0x01; 141-RESEARCH.md's Axis 2 table), which would make
-     * an A16-toggle check indistinguishable from a drop-bit-toggle check.
-     * On REVISION_2_x they map to distinct physical bits:
-     * CTRL_ADDRESS_LINE_16_REV2 (0x20) vs CTRL_VPP_VPE_DROP_ENABLE_REV2
-     * (0x01). This changes nothing about the LOGICAL behaviour under test
-     * (every eprom.cpp/memory.cpp bit check operates on the pre-remap
-     * logical value; only the recorded strobe BYTE differs) -- it only
-     * disambiguates what THIS test can prove from the strobe stream. */
     rurp_get_config()->hardware_revision = REVISION_2_2;
 
     firestarter_handle_t h = make_loop_handle(0x08, 32, 262144, 100, LOOP_BUS_CONFIG_0x08);
@@ -1687,9 +1266,6 @@ void test_loop08_dip32_block_crossing_an_a16_boundary_keeps_the_route_and_toggle
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code, "response_code");
     TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "strobe_overflowed -- small block, must be sound");
 
-    /* 0x08 ships VERIFY_PER_PULSE_PLUS_FINAL (eprom_params.cpp:50): 1
-     * skip-check + 1 verify (converge_after=1) + 1 final-pass read = 3,
-     * matching LOOP-01's established 2+pulses mapping. */
     for (int i = 0; i < 4; i++) {
         char msg[80];
         snprintf(msg, sizeof(msg), "loop_readback_reads(key[%d]=0x%04X) == 3 (skip-check + 1 verify + 1 final pass)", i, keys[i]);
@@ -1740,10 +1316,6 @@ void test_vpp01_dip32_drop_bit_survives_the_block_on_rev2_class(void) {
     TEST_ASSERT_TRUE_MESSAGE(v0 >= 0 && (v0 & CTRL_VPP_VPE_DROP_ENABLE_REV2) != 0,
         "control write 0 (the top-of-block assert) must have the drop bit SET -- the 0x08 row's ELSE branch asserts regulator|drop together");
 
-    /* INVERTED (Phase 142 Plan 04, K-3): the positive claim replacing the
-     * old "write 1 clears it" assertion -- every control value across the
-     * WHOLE block, including across the A16 crossing this block
-     * deliberately drives through, must carry the drop bit. */
     for (int i = 0; i < n; i++) {
         int v = control_write_value(i);
         char msg[128];
@@ -1753,17 +1325,6 @@ void test_vpp01_dip32_drop_bit_survives_the_block_on_rev2_class(void) {
 }
 
 void test_loop08_the_28_pin_row_keeps_its_drop_bit(void) {
-    /* Paired control for the case above: on a 28-pin row (pins < 32), the
-     * drop bit IS in the preserve mask (memory.cpp:172), so it must
-     * survive every set_address() of the block. Stays on the DEFAULT
-     * hardware revision (REVISION_0) -- this block is 4 bytes at base 0,
-     * so address never reaches 0x010000 and A16 never becomes 1, meaning
-     * physical bit 0x01 (CTRL_VPP_VPE_DROP_ENABLE_REV1, which collides with
-     * CTRL_ADDRESS_LINE_16 on REVISION_0/1 per 141-RESEARCH.md's Axis 2
-     * table) can ONLY ever mean the drop bit here -- no REV2 override
-     * needed for this case's own claim. Without this case, the case above
-     * would pass on an implementation that never sets the drop bit for ANY
-     * protocol, DIP32 or not. */
     firestarter_handle_t h = make_loop_handle(0x07, 28, 65536, 100, LOOP_BUS_CONFIG_0x07);
     const uint8_t block[4] = {0x3C, 0x55, 0xAA, 0x0F};
     const uint16_t converge_after[4] = {1, 2, 3, 4};
@@ -1783,19 +1344,6 @@ void test_loop08_the_28_pin_row_keeps_its_drop_bit(void) {
         TEST_ASSERT_TRUE_MESSAGE(v >= 0 && (v & CTRL_VPP_VPE_DROP_ENABLE_REV1) != 0, msg);
     }
 }
-
-/* ═════════════════════════════════════════════════════════════════════════
- * HOST-01 (firmware half) / BF-3 -- six pure-arithmetic
- * cases proving the corrected per-block worst-case write-time budget
- * (include/eprom_budget.h, src/proms/eprom_budget.cpp). Every case below
- * calls eprom_worst_pulses / eprom_per_byte_budget_us / eprom_block_budget_s
- * directly -- none drives eprom_write_execute, make_loop_handle or
- * drive_loop_write, so none of this plan's own cases touches the per-byte
- * loop itself. This plan flips NO requirement checkbox (frontmatter
- * requirements: [] is deliberate); it contributes the firmware half of
- * HOST-01 only -- plan 143-10 flips the HOST-* checkboxes after every piece
- * of evidence exists.
- * ═════════════════════════════════════════════════════════════════════════ */
 
 /* Case 1: energy_cap_us == 0 means UNCAPPED, not "cap at zero". Both 0x07
  * and 0x08 ship energy_cap_us == 0 (eprom_params.cpp:50-51) -- an unguarded
@@ -1829,11 +1377,6 @@ void test_budget_pulse_count_ceils_because_the_loop_tests_after_it_increments(vo
         "ceiling still binds when the energy cap alone would allow far more pulses");
 }
 
-/* Case 3: the BF-3 headline number. firestarter/CLAUDE.md's "Algorithm
- * Handlers" 0x0B row independently derives the same 99998 us figure
- * (F-141-10) -- the naive 50000 us reading would time out a WORKING write
- * at ~51 s (D-09: a budget that is too tight is strictly worse than a
- * generous one, because it fails real silicon that was never broken). */
 void test_budget_0x0b_at_49999us_is_99998us_per_byte_not_50000(void) {
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(99998, eprom_per_byte_budget_us(255, 49999, 50000, 0, 75000),
         "0x0B @ --pulse-us 49999 is 99998 us/byte (two pulses), not the naive 50000 -- "
@@ -1841,14 +1384,6 @@ void test_budget_0x0b_at_49999us_is_99998us_per_byte_not_50000(void) {
         "a 50000 us budget would time out a WORKING write at ~51 s (D-09)");
 }
 
-/* Case 4: the overprogram term. All three shipped rows carry
- * overprogram_factor == 0, so the factor-0 assertion alone can never
- * distinguish "calls eprom_overprogram_us" from "always returns 0" --
- * the factor-3 assertions are the ONLY reachable proof the term is wired
- * at all. A literal `3 * overprogram_factor * pulse_us` restatement (the
- * reading D-11 and eprom_params.h's own column comment both suggest) would
- * yield 3*3*1000=9000 for the middle case below, not the shipped function's
- * 75000 -- an 8.3x under-estimate. */
 void test_budget_overprogram_term_is_zero_for_factor_zero_and_clamped_for_factor_three(void) {
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(25000, eprom_per_byte_budget_us(25, 1000, 0, 0, 75000),
         "factor 0 (every shipped row): overprogram term is 0, total is pulse-only 25*1000");
@@ -1908,37 +1443,7 @@ void test_budget_block_seconds_matches_the_shipped_rows_and_is_padded(void) {
         "nothing\" contract as the 0x05 case above");
 }
 
-/* ═════════════════════════════════════════════════════════════════════════
- * HOST-02 (firmware half) / D-02, D-03 -- two cadence
- * cases proving the new time-gated MSG_DATA_PROGRESS emission
- * (src/proms/eprom.cpp, guarded #ifndef SERIAL_ON_IO -- compiled IN on this
- * native env, exactly as on leonardo) fires when the mocked clock advances
- * past EPROM_PROGRESS_EMIT_INTERVAL_MS, and fires NOT AT ALL when it does
- * not -- the non-vacuity control every cadence oracle needs (D-25,
- * T-143-VACUOUSCLOCK). This plan flips NO requirement checkbox (frontmatter
- * requirements: [] is deliberate); it contributes the firmware half of
- * HOST-02 only -- plan 143-10 flips the HOST-* checkboxes after every piece
- * of evidence exists.
- * ═════════════════════════════════════════════════════════════════════════ */
-
 void test_progress_emits_when_the_clock_advances_past_the_interval(void) {
-    /* 16 bytes: the first 8 are non-0xFF and individually seeded to
-     * converge after exactly 1 pulse each (readback defaults an UNSEEDED
-     * address to 0xFF forever, so a non-0xFF expected value with
-     * converge_after=1 guarantees the pulse loop genuinely runs for each of
-     * these) -- proving the per-byte loop actually programs real data, not
-     * merely iterates. The remaining 8 are 0xFF (LOOP-06's own first skip
-     * rule: `if (expected == 0xFF) continue;` short-circuits BEFORE any
-     * read, so these need no read-back seed at all -- LOOP_READBACK_MAX_
-     * ENTRIES caps simultaneously seeded addresses at 8, and this suite's
-     * pre-existing cases never seed more). Both halves still pass through
-     * this plan's progress-emit check, which sits BEFORE either LOOP-06
-     * skip (D-02's own placement reason: cadence independent of how many
-     * bytes are skipped) -- the extra 8 iterations exist ONLY to give the
-     * mocked clock (200 ms/call, see setUp's comment for why not 500)
-     * enough iterations to cross EPROM_PROGRESS_EMIT_INTERVAL_MS (1000)
-     * more than once; measured, this drive produces 3 frames (at i=4, 9,
-     * 14), comfortably clearing the ">= 2" bar below. */
     firestarter_handle_t h = make_loop_handle(0x07, 28, 65536, 100, LOOP_BUS_CONFIG_0x07);
     const uint8_t block[16] = {
         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
@@ -1991,18 +1496,6 @@ void test_progress_emits_when_the_clock_advances_past_the_interval(void) {
 }
 
 void test_progress_emits_nothing_when_the_clock_does_not_advance(void) {
-    /* Non-vacuity control (D-25, T-143-VACUOUSCLOCK): without this case, the
-     * positive case above could pass for the WRONG reason -- e.g. an
-     * emission that fires unconditionally, every iteration, rather than one
-     * genuinely gated on elapsed mocked time. Freezing millis() here
-     * locally overrides setUp's advancing lambda for the rest of THIS case
-     * only: the next case's own setUp() call (ArduinoFakeReset() then
-     * re-When(...millis...)) wipes this override and reinstalls the
-     * advancing lambda fresh, so this freeze cannot leak forward. A frozen
-     * clock is exactly the state native_trace_v131 is pinned in (its own
-     * setUp also pins millis() to AlwaysReturn(0), Phase 138) -- which is
-     * why D-02's emission adds ZERO new frames to that frozen trace (D-24);
-     * TEST-06 will find zero D-02-attributable strobes there. */
     When(Method(ArduinoFake(), millis)).AlwaysReturn(0);
 
     firestarter_handle_t h = make_loop_handle(0x07, 28, 65536, 100, LOOP_BUS_CONFIG_0x07);
@@ -2032,19 +1525,16 @@ int main(int argc, char** argv) {
     RUN_TEST(test_readback_model_distinguishes_two_addresses_across_an_a16_crossing);
     RUN_TEST(test_logged_id_capture_records_the_id_and_its_packed_params);
 
-    /* LOOP-01 (plan 141-07, task 1) */
     RUN_TEST(test_loop01_each_byte_gets_exactly_the_seeded_number_of_fixed_width_pulses);
     RUN_TEST(test_loop01_pulse_width_never_grows_between_attempts);
     RUN_TEST(test_loop01_verify_read_follows_every_pulse);
     RUN_TEST(test_loop01_a_byte_that_converges_on_its_last_permitted_pulse_succeeds);
 
-    /* LOOP-06 (plan 141-07, task 2) */
     RUN_TEST(test_loop06_an_ff_target_byte_is_never_read_and_never_pulsed);
     RUN_TEST(test_loop06_an_already_matching_byte_is_read_once_and_never_pulsed);
     RUN_TEST(test_loop06_a_block_of_only_skipped_bytes_emits_no_pulse_at_all);
     RUN_TEST(test_loop06_the_ff_rule_does_not_suppress_the_final_verify_pass);
 
-    /* LOOP-04 (plan 141-07, task 3) */
     RUN_TEST(test_loop04_energy_cap_stops_at_exactly_100_pulses_at_500us);
     RUN_TEST(test_loop04_energy_cap_stops_at_exactly_50_pulses_at_1000us);
     RUN_TEST(test_loop04_energy_cap_stops_at_exactly_250_pulses_at_200us);
@@ -2052,7 +1542,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_loop04_no_live_row_emits_an_overprogram_pulse);
     RUN_TEST(test_loop04_0x0B_runs_no_final_full_block_verify_pass);
 
-    /* LOOP-03 / LOOP-07 arithmetic (plan 141-08, task 1) */
     RUN_TEST(test_loop03_overprogram_duration_is_three_times_the_pulse_count_times_the_width);
     RUN_TEST(test_loop03_overprogram_is_zero_when_the_factor_is_zero);
     RUN_TEST(test_loop03_overprogram_clamps_at_the_cap_rather_than_refusing);
@@ -2062,24 +1551,20 @@ int main(int argc, char** argv) {
     RUN_TEST(test_loop07_split_fires_above_the_ceiling_and_stays_32_bit_safe);
     RUN_TEST(test_loop07_delay_us_emits_the_split_as_delay_then_delaymicroseconds);
 
-    /* LOOP-05 / LOOP-07 drive cases (plan 141-08, task 2) */
     RUN_TEST(test_loop05_a_byte_that_misses_within_max_pulses_aborts_the_block);
     RUN_TEST(test_loop05_the_loops_own_strobes_disable_the_high_voltage_route);
     RUN_TEST(test_loop05_a_successful_block_does_not_disable_the_route);
     RUN_TEST(test_loop07_no_recorded_us_delay_exceeds_the_avr_ceiling_under_a_real_drive);
     RUN_TEST(test_loop07_an_over_cap_pulse_is_refused_before_any_high_voltage_on_a_capped_row);
 
-    /* LOOP-08 (plan 141-08, task 3) */
     RUN_TEST(test_loop08_the_route_is_asserted_once_before_the_first_data_strobe);
     RUN_TEST(test_loop08_the_route_bit_is_present_in_every_control_value_across_the_block);
     RUN_TEST(test_loop08_route_presence_is_not_vacuous);
     RUN_TEST(test_loop08_dip32_block_crossing_an_a16_boundary_keeps_the_route_and_toggles_a16);
 
-    /* VPP-01 (Phase 142, plan 142-04) */
     RUN_TEST(test_vpp01_dip32_drop_bit_survives_the_block_on_rev2_class);
     RUN_TEST(test_loop08_the_28_pin_row_keeps_its_drop_bit);
 
-    /* HOST-01 (firmware half) / BF-3 */
     RUN_TEST(test_budget_uncapped_energy_cap_is_not_a_cap_at_zero);
     RUN_TEST(test_budget_pulse_count_ceils_because_the_loop_tests_after_it_increments);
     RUN_TEST(test_budget_0x0b_at_49999us_is_99998us_per_byte_not_50000);
@@ -2087,7 +1572,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_budget_zero_pulse_width_never_divides_by_zero);
     RUN_TEST(test_budget_block_seconds_matches_the_shipped_rows_and_is_padded);
 
-    /* HOST-02 (firmware half) / D-02, D-03 */
     RUN_TEST(test_progress_emits_when_the_clock_advances_past_the_interval);
     RUN_TEST(test_progress_emits_nothing_when_the_clock_does_not_advance);
 

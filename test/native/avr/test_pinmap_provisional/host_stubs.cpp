@@ -4,10 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * host stub TU for the test_pinmap_provisional suite
- * (MERGE-04).
- * WR-06 — shared stub body lives in ../_shared/host_stubs_common.inc.
- *
  * Compiling firmware sources (src/proms/*.cpp) on platform = native leaves
  * the linker hungry for hardware-side symbols defined in the AVR-only TUs
  * (src/boards/*.cpp, src/logging.c). The shared include provides no-op host

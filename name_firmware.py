@@ -5,13 +5,9 @@
 # [env:native]). Every env MUST declare `-D RURP_BOARD_NAME=\"X\"` in its
 # build_flags; the script extracts X and sets PROGNAME = "firestarter_X".
 #
-# Plan 21-02 reworked this script per CONTEXT D-06: PROGNAME now decouples from
-# PIO's `board` setting and instead derives from the RURP_BOARD_NAME build_flag.
-# This locks the board-id triple (build_flag value = artifact filename = handshake
-# `<board>` slot) with a single source of truth. See:
-#   .planning/phases/21-firmware-target-uno328pb/21-CONTEXT.md  (D-05 / D-06 / D-09)
-#   .planning/phases/21-firmware-target-uno328pb/21-RESEARCH.md (Pattern 2; Pitfall 2)
-#   .planning/phases/21-firmware-target-uno328pb/21-02-PLAN.md
+# PROGNAME decouples from PIO's `board` setting and derives from the
+# RURP_BOARD_NAME build_flag instead, so the board-id triple (build_flag value =
+# artifact filename = handshake `<board>` slot) has a single source of truth.
 
 import re
 

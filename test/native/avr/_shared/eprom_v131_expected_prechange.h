@@ -4,23 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * (PREP-03 / D-01 / D-02 / D-04) — the single source of
- * truth the test_trace_eprom_v131 suite asserts its MERGED strobe+timing
- * stream against.
- *
- * Every literal array below (EPROM_V131_TRACE_PROTO_07/_08/_0B, pasted by
- * Phase 138 Plan 05 Task 1 from the dumps Plan 03 Task 3 produced) is
- * authored EMPIRICALLY from a recorded dump of real, UNMODIFIED production
- * code (eprom_write_execute driving the current, pre-v1.31 27C program
- * loop) — never hand-derived. This fixture freezes the pre-change v1.31
- * cadence so Phase 144's TEST-06 ("every changed strobe attributable to a
- * named decision") has something concrete to diff the new cadence against.
- * also switched the three protocol cases in test_trace_eprom_v131.cpp
- * from soundness-only assertions to full ordered positional equality
- * (v131_assert_stream_equals against the arrays below) as their primary
- * assertion, keeping the pre-existing overflow/determinism/response-code
- * checks alongside it.
- *
  * The trace records EVERY timing entry UNFILTERED — including the 1 µs
  * latch delay that rurp_internal_write_to_register emits after each
  * non-elided register latch. That entry looks like noise, but filtering it
@@ -42,12 +25,6 @@
 #include <unity.h>
 #include "firestarter.h"  /* pulls in rurp_shield.h -> LEAST_SIGNIFICANT_BYTE / MOST_SIGNIFICANT_BYTE / OUTPUT_ENABLE / CHIP_ENABLE, used only in provenance comments here, not by this header's own code */
 
-/* Recorder accessors — symbols compiled because host_stubs.cpp defines
- * HOST_STUBS_REAL_REGISTER_UTILS (the six strobe accessors) AND
- * HOST_STUBS_RECORD_TIMING (the six timing accessors), both from Phase 138
- * Plan 03 Task 1. Declared once here so this suite gets all twelve from a
- * single place, mirroring sdp_expected.h's convention for the six strobe
- * accessors it alone needs. */
 extern "C" void    clear_strobes();
 extern "C" int     strobe_count();
 extern "C" int     strobe_overflowed();
@@ -163,13 +140,6 @@ static int v131_first_divergence(const v131_trace_entry_t* expected, int expecte
     return -1;
 }
 
-/* Asserts strobe_overflowed() == 0 AND timing_overflowed() == 0 FIRST (a
- * silently overflowed recorder can produce a truncated-but-matching prefix —
- * T-138-14), then asserts the merged length, then element-by-element — and
- * on mismatch, fails with a message naming the diverging index and BOTH the
- * expected and recorded {kind,pin,value,us} quadruple at that index. This is
- * the ordered full-stream equality D-04/D-06's precedent requires; a
- * sub-sequence scan or a count cannot be substituted. */
 static void v131_assert_stream_equals(const v131_trace_entry_t* expected, int expected_len, const char* ctx) {
     TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), ctx);
     TEST_ASSERT_EQUAL_MESSAGE(0, timing_overflowed(), ctx);
@@ -210,14 +180,6 @@ static int v131_snapshot(v131_trace_entry_t* out, int max_len) {
     return n;
 }
 
-/* ─── Frozen per-protocol arrays ─────────────────────────────────────────────
- * The three merged strobe+timing streams below are the pre-change v1.31
- * cadence, one per EPROM protocol, each frozen by Phase 138 Plan 05 Task 1
- * from the empirical dumps Plan 03 Task 3 produced (see each array's own
- * banner for chip/bus_config/seed detail and the non-obvious behaviour it
- * encodes).
- */
-
 /* ─── EPROM_V131_TRACE_PROTO_07 -- AM27C512, protocol 0x07, DIP28_27512 ─────
  * Captured EMPIRICALLY: the built native_trace_v131 binary
  * (.pio/build/native_trace_v131/firestarter_native) run DIRECTLY with
@@ -236,40 +198,6 @@ static int v131_snapshot(v131_trace_entry_t* out, int max_len) {
  * 198 merged entries (142 strobes + 56 timings, 138-03-TRACE-CAPTURE.md §2),
  * exactly 3 passes, RESPONSE_CODE_OK, zero recorder overflow, proven
  * deterministic across two drives before this array was pasted.
- *
- * Non-obvious behaviour this array encodes (at least three, per D-04/D-06):
- *  1. The FIRST pass programs ALL FOUR bytes, including idx0 (already
- *     matching its target) and idx1 (the erased-state 0xFF byte) -- because
- *     eprom_write_execute's mismatch_bitmask starts memset to 0xFF
- *     (eprom.cpp:157), not derived from an actual first verify. Phase 141's
- *     LOOP-06 changes this "program everything unconditionally" behaviour;
- *     this array freezes it as it stands today.
- *  2. The program PULSE WIDTH GROWS across passes: 100us (pass 1) / 105us
- *     (pass 2) / 110us (pass 3) for the SAME byte (idx2) in THIS SINGLE
- *     capture -- eprom.cpp:177's adaptive
- *     `org_delay + org_delay * retries / NUMBER_OF_RETRIES` formula
- *     (org_delay=100, retries=1,2 on passes 2,3). A strobe-only recorder
- *     could never distinguish these three pulses from each other.
- *  3. The LSB/MSB/CONTROL_REGISTER register cache elides a latch whenever
- *     the newly-computed value equals the cached one (rurp_register_utils.h,
- *     D-06's own precedent) -- e.g. byte idx0's LSB/MSB latches are
- *     both elided on pass 1 because the cache already holds (0,0) from
- *     reset_register_cache. A raw call-log golden would assert phantom
- *     entries the shield never sees.
- *  4. Every NON-elided latch contributes its own 1us TIMING_KIND_DELAY_US
- *     entry (rurp_internal_write_to_register's post-strobe
- *     delayMicroseconds(1)) -- visible throughout this array as the `us=1`
- *     entries immediately following a register-latch pin pair.
- *  5. mem_util_calculate_top_address_register unconditionally ORs in
- *     CTRL_ADDRESS_LINE_17 (0x10) for `pins==28` chips ONLY (memory.cpp:169)
- *     -- visible here as the CONTROL_REGISTER correction (ctrl 0x85->0x95)
- *     on the very first byte of pass 1, then elided for every later byte in
- *     the same pass because the corrected value stays cache-stable.
- *
- * This is the PRE-CHANGE cadence, frozen for Phase 144's TEST-06 to diff the
- * new (post-v1.31) cadence against. A future divergence from this array is
- * expected work, not a regression -- PROJECT.md's own "not behavior-
- * preserving" caveat for this milestone.
  */
 static const v131_trace_entry_t EPROM_V131_TRACE_PROTO_07[] = {
     /* one-time VPP-regulator enable (ctrl -> 0x81) + ms=500 */
@@ -378,35 +306,6 @@ static const v131_trace_entry_t EPROM_V131_TRACE_PROTO_07[] = {
  * strobes + 64 timings, 138-03-TRACE-CAPTURE.md §2), exactly 3 passes,
  * RESPONSE_CODE_OK, zero recorder overflow, proven deterministic across two
  * drives before this array was pasted.
- *
- * Non-obvious behaviour this array encodes (at least three, per D-04/D-06):
- *  1. The FIRST pass programs ALL FOUR bytes unconditionally -- same
- *     memset(mismatch_bitmask, 0xFF, ...) start-state as _07 (eprom.cpp:157).
- *  2. The program PULSE WIDTH GROWS across passes on the same byte (idx2):
- *     100us / 105us / 110us -- eprom.cpp:177's adaptive
- *     `org_delay + org_delay * retries / NUMBER_OF_RETRIES` formula.
- *  3. vpp_line=0x15 exactly equals VPP_P1_32_DIP, so using_p1_as_vpp(handle)
- *     is TRUE for this chip (memory_utils.h) -- eprom_internal_set_control_
- *     register (eprom.cpp:319-325) remaps every CTRL_VPE_ENABLE assert/
- *     release to CTRL_VPP_P1_ENABLE instead. Visible here as ctrl 0x81->0x89
- *     (assert, +0x08 not +0x04) and 0x89->0x80 (release, -0x08) -- `_07`
- *     above shows +0x04/-0x04 for the identical call, because using_p1_as_
- *     vpp is FALSE there (vpp_line=0xFF sentinel).
- *  4. Every CONTROL_REGISTER write that clears CTRL_VPP_P1_ENABLE (a
- *     set->clear transition on that bit) carries an EXTRA 4us
- *     TIMING_KIND_DELAY_US settle entry immediately after it
- *     (rurp_internal_write_to_register's own P1-specific settle) -- `_07`
- *     never shows this entry at all, because `_07` never touches that bit.
- *  5. The LSB/MSB/CONTROL_REGISTER cache elides a latch whenever the
- *     newly-computed value equals the cached one; e.g. byte idx0's LSB/MSB
- *     latches are elided on pass 1 (cache already holds (0,0)), while its
- *     CONTROL correction (0x89->0x88, mem_util_calculate_top_address_register)
- *     still fires because that value has not yet been latched. Every
- *     non-elided latch contributes its own 1us TIMING_KIND_DELAY_US entry.
- *
- * This is the PRE-CHANGE cadence, frozen for Phase 144's TEST-06 to diff the
- * new (post-v1.31) cadence against. A future divergence from this array is
- * expected work, not a regression.
  */
 static const v131_trace_entry_t EPROM_V131_TRACE_PROTO_08[] = {
     /* one-time VPP-regulator enable (ctrl -> 0x81) + ms=500 */
@@ -520,37 +419,6 @@ static const v131_trace_entry_t EPROM_V131_TRACE_PROTO_08[] = {
  * entries (142 strobes + 59 timings, 138-03-TRACE-CAPTURE.md §2), exactly 3
  * passes, RESPONSE_CODE_OK, zero recorder overflow, proven deterministic
  * across two drives before this array was pasted.
- *
- * Non-obvious behaviour this array encodes (at least three, per D-04/D-06):
- *  1. The FIRST pass programs ALL FOUR bytes unconditionally -- same
- *     memset(mismatch_bitmask, 0xFF, ...) start-state as _07/_08
- *     (eprom.cpp:157).
- *  2. The program PULSE WIDTH GROWS across passes on the same byte (idx2):
- *     500us / 525us / 550us -- the SAME eprom.cpp:177 adaptive formula as
- *     _07/_08, scaled from this chip's larger 500us base (C1's adjudication,
- *     infoic-field-dictionary.md:210-217 -- NOT the 50000us BUG-2 artifact
- *     gh#15 quoted).
- *  3. protocol==0x0B takes eprom_write_execute's OTHER one-time VPP-enable
- *     branch (eprom.cpp:145-147): ctrl -> 0x80 alone (CTRL_VPP_REGULATOR_
- *     ENABLE only), NOT 0x81 like _07/_08's CTRL_VPP_VPE_DROP_ENABLE path --
- *     visible as this array's very first entry.
- *  4. vpp_line=0x0B exactly equals VPP_P21_24_DIP, so using_p1_as_vpp(handle)
- *     is ALSO TRUE for this chip (a 24-pin, not 32-pin, P1-routing constant
- *     -- a different wiring reason than _08's), so every CTRL_VPE_ENABLE
- *     assert/release is likewise remapped to CTRL_VPP_P1_ENABLE, and every
- *     P1 set->clear transition carries the same extra 4us settle _08 shows.
- *  5. This chip's static_high_mask (bit 13) is realized as a PERMANENT
- *     MSB=0x20 contribution -- mem_util_remap_address_bus ORs
- *     static_high_mask into the remapped address before it is split into
- *     LSB/MSB, so byte idx0's very first access latches MSB 0x00->0x20 (a
- *     latch _07/_08 never show at all, since their remapped MSB stays 0
- *     throughout), then stays cache-elided for every later byte in this
- *     4-byte block. A raw call-log golden that assumed MSB==0x00 for a
- *     low-address block would be wrong for this one chip.
- *
- * This is the PRE-CHANGE cadence, frozen for Phase 144's TEST-06 to diff the
- * new (post-v1.31) cadence against. A future divergence from this array is
- * expected work, not a regression.
  */
 static const v131_trace_entry_t EPROM_V131_TRACE_PROTO_0B[] = {
     /* one-time VPP-regulator enable (ctrl -> 0x80) + ms=500 */

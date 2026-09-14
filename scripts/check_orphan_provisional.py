@@ -162,13 +162,6 @@ from pathlib import Path
 # check_cmake_manifest.py:110).
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Single-target env seam WITH a default (mirrors check_cmake_manifest.py's
-# FIRESTARTER_MANIFEST_ROOT idiom exactly): lets the paired pytest point
-# this checker at a fixture tree without editing the real repo. Read ONCE at
-# module import time into a module-level constant -- an in-process
-# monkeypatch.setenv would be silently ineffective here (123-RESEARCH.md
-# Correction C-15), so the paired pytest invokes this script as a real
-# subprocess with the seam set in the CHILD environment.
 FIRESTARTER_PROVISIONAL_ROOT = os.environ.get(
     "FIRESTARTER_PROVISIONAL_ROOT", str(REPO_ROOT)
 )
@@ -176,10 +169,6 @@ FIRESTARTER_PROVISIONAL_ROOT = os.environ.get(
 _ROOT = Path(FIRESTARTER_PROVISIONAL_ROOT)
 _PLATFORM_DIR = _ROOT / "platform" / "py32f071"
 
-# Coarse-key arming (D-07): keyed on the DIRECTORY, never a manual boolean a
-# human would flip. No override, no constant to set by hand. See the
-# "Rejected alternative reading" section of the module docstring for why an
-# always-armed reading was considered and rejected.
 ARMED = _PLATFORM_DIR.is_dir()
 
 # Repo-wide scan scope. The RURP_ prefix is what bounds the pattern, not the

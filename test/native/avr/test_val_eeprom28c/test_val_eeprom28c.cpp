@@ -4,9 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Tier-1 validation suite for the EEPROM 28C family.
- * HARN-01 / D-07 / T-71-WIRED-WRONG.
- *
  * Proves configure_eeprom28c is a 5V-only handler (no VPP regulator use).
  * BY SIDE-EFFECT via the recording bus stub:
  *
@@ -47,21 +44,11 @@ extern "C" int  bus_recording_count();
 extern "C" uint8_t recorded_reg(int i);
 extern "C" uint8_t recorded_data(int i);
 
-/* FIX-06 (plan 117-03) planted-mock state — address-keyed, per
- * test_eeprom28c_sdp.cpp:129-148's own rule: "dispatch on ADDRESS, not call
- * order". Reset in setUp() below; each case that needs a different base
- * address or a planted mismatch overwrites these before driving. */
 #define EEPROM28C_PLANTED_SENTINEL 0xFFFFFFFFUL
 static uint32_t s_planted_base_address;
 static uint32_t s_planted_stale_address;
 static uint8_t  s_planted_stale_value;
 
-/* (D-09) -- the flush-count oracle. Counts every entry to the
- * mocked firestarter_get_data below -- the ONLY correct seam for observing
- * flush cadence: every flush-path read in production goes through
- * handle->firestarter_get_data, while the bus recorder captures register
- * WRITES only (never reads) and caps at 256 entries, which a 512-byte
- * geometry could overflow. Reset in setUp() beside the other sentinels. */
 static uint32_t s_get_data_calls;
 
 void setUp(void) {
@@ -69,21 +56,9 @@ void setUp(void) {
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t))).AlwaysReturn(1);
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
-    /* REQUIRED for FIX-06's write-path cases (plan 117-03): the real
-     * memory_set_data / mem_util_set_address call chain and the new page
-     * poll both reach delayMicroseconds(); ArduinoFake ABORTS (SIGABRT) on
-     * any unmocked virtual (test_sdp_harness.cpp:64-70's documented
-     * hazard). Do not remove these as "unused" — they are load-bearing. */
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
     When(Method(ArduinoFake(), delay)).AlwaysReturn();
     When(Method(ArduinoFake(), millis)).AlwaysReturn(0);
-    /* (D-16): eeprom28c_write_execute now calls micros() twice
-     * per byte for the worst-per-byte-interval tracker, and every case in
-     * this suite drives write_execute via h.firestarter_operation_main(&h)
-     * for CMD_WRITE. Without this mock ArduinoFake aborts (SIGABRT) on the
-     * newly-reached unmocked virtual -- this suite never asserts on timing,
-     * so a fixed 0 is sufficient (every interval reads as 0, which no case
-     * here inspects). */
     When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
     clear_bus_recording();
 
@@ -94,8 +69,6 @@ void setUp(void) {
 }
 
 void tearDown(void) {}
-
-/* ─── FIX-06 write-path test support (plan 117-03) ─────────────────────── */
 
 /* Address-keyed planted get_data mock. Returns the planted stale value when
  * the queried address equals s_planted_stale_address (unless that field
@@ -134,12 +107,6 @@ static firestarter_handle_t make_write_handle(uint32_t address, uint32_t data_si
     return h;
 }
 
-/* Deliberate, test-local replica of the whole-byte equality poll plan
- * 117-03 deleted from eeprom_28c.cpp (the old conflated completion+verify
- * check). Retained ONLY so D-09's old-versus-new contrast executes in CI
- * forever, rather than living as a claim in a markdown file. MUST NEVER be
- * called by production code — its presence here is not a licence to
- * reintroduce the idiom in src/. */
 static bool legacy_last_byte_equality_poll(firestarter_handle_t* h, uint32_t address, uint8_t expected) {
     for (uint16_t j = 0; j < 2000; j++) {
         delayMicroseconds(10);
@@ -208,20 +175,6 @@ void test_eeprom28c_blank_check_configure_no_vpp(void) {
         "configure_eeprom28c CMD_BLANK_CHECK must NOT set any VPP-enable CTL bit");
 }
 
-/* configure-only: CMD_ERASE must record zero VPP-enable bits (Phase 153 /
- * ERASE-04, D-153-03).
- *
- * SCOPE, STATED HONESTLY (D-153-03): this case covers the CONFIGURE phase
- * only. `configure_memory` never executes `eeprom28c_erase_execute` -- it
- * only assigns the `case CMD_ERASE:` arm's `firestarter_operation_main`
- * pointer -- so this case proves nothing about the erase operation BODY.
- * `tools/check_dispatch.py` cannot see a handler-body register write at all
- * (it is database-and-dispatch-table scoped); the real GATE-03 control for
- * the erase body is plan 05's brace-matched negative source scan of
- * `eeprom28c_erase_execute` itself, with its own planted-violation leg
- * observed to fail before being trusted. Naming that limitation here is
- * what stops a future reader treating this green configure-phase case as
- * the VPP proof for the whole operation. */
 void test_eeprom28c_erase_configure_no_vpp(void) {
     firestarter_handle_t h = make_handle(CMD_ERASE);
     configure_memory(&h);
@@ -230,8 +183,6 @@ void test_eeprom28c_erase_configure_no_vpp(void) {
     assert_no_vpp_in_recording(
         "configure_eeprom28c CMD_ERASE must NOT set any VPP-enable CTL bit");
 }
-
-/* ─── FIX-06: planted partial write, old-versus-new contrast (D-09) ────── */
 
 /* The side-by-side contrast, both halves in one test function. Geometry:
  * base address 0, data_size 8 (AT28C_PAGE_SIZE_FALLBACK 64, so this is one flush on
@@ -265,12 +216,6 @@ void test_fix06_planted_partial_write_fails_fixed_path_and_passes_legacy_poll(vo
         "(FIX-06's conflation, gh#11's shape)");
 }
 
-/* Isolation control (mirrors the v1.21 SAFE-03 discipline): identical
- * geometry and drive to the case above, but with NOTHING planted (the
- * sentinel stale address). This exists to prove the ERROR above came from
- * the planted mismatch and not from the mock seam, the setUp() mocks added
- * for this plan, or the new read-back loop itself. Deleting this case
- * makes the pair hollow. */
 void test_fix06_clean_page_write_succeeds_isolation_control(void) {
     s_planted_base_address = 0;
     s_planted_stale_address = EEPROM28C_PLANTED_SENTINEL;
@@ -334,8 +279,7 @@ void test_fix06_page_boundary_window_readback(void) {
     }
 }
 
-/* ─── Phase 149 (D-09): the flush-count oracle ──────────────────────────
- *
+/*
  * Geometry, every case below: make_write_handle(0, 128) -- base 0,
  * data_size 128, planted base address 0 and the stale-address sentinel
  * cleared, so the write is CLEAN. The arithmetic, derived from the two
@@ -353,7 +297,6 @@ void test_fix06_page_boundary_window_readback(void) {
 
 void test_pgsz_absent_field_reproduces_the_64_byte_cadence(void) {
     firestarter_handle_t h = make_write_handle(0, 128);
-    /* h.page_size left at its zero-initialised value -- PGSZ-02's fallback leg. */
     configure_memory(&h);
     h.firestarter_get_data = mock_get_data_planted;
     h.firestarter_operation_main(&h);
@@ -422,12 +365,10 @@ int main(int argc, char** argv) {
     RUN_TEST(test_eeprom28c_blank_check_configure_no_vpp);
     RUN_TEST(test_eeprom28c_erase_configure_no_vpp);
 
-    /* FIX-06: partial writes cannot report success (D-07/D-08/D-09) */
     RUN_TEST(test_fix06_planted_partial_write_fails_fixed_path_and_passes_legacy_poll);
     RUN_TEST(test_fix06_clean_page_write_succeeds_isolation_control);
     RUN_TEST(test_fix06_page_boundary_window_readback);
 
-    /* (D-09): the flush-count oracle */
     RUN_TEST(test_pgsz_absent_field_reproduces_the_64_byte_cadence);
     RUN_TEST(test_pgsz_delivered_128_halves_the_flush_count);
     RUN_TEST(test_pgsz_explicit_64_matches_the_absent_cadence);

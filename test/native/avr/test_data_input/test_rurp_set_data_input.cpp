@@ -4,24 +4,8 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * RED unity scaffold for rurp_set_data_input pullup
- * clearing (FIX-02).
- *
  * Two Unity RUN_TEST cases under the include-as-source pattern (RESEARCH.md
  * Q2 Option D + PATTERNS.md Excerpt 2):
- *
- *   1. test_rurp_set_data_input_clears_data_pullups_leonardo
- *      Pre-condition: PORTD/PORTC/PORTE = 0xFF (residual pullup state from
- *                     prior register strobes); DDRD/DDRC/DDRE = data masks
- *                     (currently configured for output).
- *      Action: rurp_set_data_input()
- *      Post-condition: PORTx data bits cleared; DDRx data bits cleared
- *                      (input); CONTROL bits (PORTD bit 6 = D12, PORTC bit 7
- *                      = D13) preserved.
- *      Status: FAILS on pre-fix code at src/boards/leonardo_rurp_shield.cpp
- *              lines 137-141 (current impl only clears DDRx, leaves PORTx
- *              data bits at whatever value prior register strobes left them).
- *              This is the RED-bar witness for FIX-02 first half.
  *
  *   2. test_rurp_read_data_buffer_reassembles_data_bus
  *      Regression guard around rurp_read_data_buffer()'s shift-and-mask
@@ -37,8 +21,6 @@
  * test TU only, without polluting sibling suites' build_src_filter. The
  * shared host stubs file is NOT included; see host_stubs.cpp for the
  * rationale.
- *
- * RCA: .planning/v1.6-EVIDENCE.md §"Phase 27 — RCA Findings" (2026-05-21).
  */
 
 #include <Arduino.h>

@@ -4,9 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * host stub TU for the test_eprom_params_v131 suite.
- * WR-06 — shared stub body lives in ../_shared/host_stubs_common.inc.
- *
  * Compiling firmware sources (the src/proms/ translation units) on
  * platform = native leaves the linker hungry for hardware-side symbols
  * defined in the AVR-only TUs (src/boards/*.cpp, src/logging.c). The shared

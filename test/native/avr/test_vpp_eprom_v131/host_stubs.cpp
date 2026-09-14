@@ -4,35 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * (VPP-01..VPP-04, D-14) -- host stubs for the EPROM VPP-routing
- * and VPP-validation suite.
- *
- * This is the SECOND suite compiled into the native_loop_v131 env (no
- * seventh env is created -- see platformio.ini's Phase 142 addendum on that
- * env). It composes FOUR independent, pre-existing opt-in recorder layers
- * from the shared stub base, plus two suite-local additions (an extended
- * read-back model and a logged-id capture) that do not exist anywhere else
- * in the tree in this combination:
- *
- *   - HOST_STUBS_REAL_REGISTER_UTILS (Phase 116): the ordered strobe
- *     recorder, driving production's REAL rurp_register_utils.h so the
- *     cache-compare elision and latch-strobe sequencing this suite's
- *     assertions depend on is the genuine article, never a hand-maintained
- *     replica that could silently drift.
- *   - HOST_STUBS_RECORD_TIMING (Phase 138): the timing recorder. Its
- *     sequence key is s_strobe_count, so it can only ever compose WITH
- *     HOST_STUBS_REAL_REGISTER_UTILS above (the shared stub base fails
- *     closed with a #error if this is requested alone).
- *   - HOST_STUBS_CUSTOM_READ_DATA_BUFFER: opts this suite out of the shared
- *     base's default (always-0) rurp_read_data_buffer, so this file can
- *     supply its OWN stateful, 16-bit-address-keyed model instead (below),
- *     extended with a mismatch window (point 5 in the plan).
- *   - HOST_STUBS_CUSTOM_VOLTAGE_MV (new to this suite): opts out of the
- *     shared base's default (always-0) rurp_read_voltage_mv, so this file
- *     can inject an arbitrary VPP millivolt reading per case -- required to
- *     drive eprom_check_vpp's over-voltage and under-voltage compares at
- *     all (VPP-04).
- *
  * PITFALL 1, restated: the register-cache globals (lsb_address, msb_address,
  * control_register, declared in include/rurp_register_utils.h) are
  * non-static and 0xff-initialised. They persist across Unity test cases in
@@ -137,18 +108,6 @@ extern "C" void reset_register_cache(uint8_t lsb, uint8_t msb, rurp_register_t c
  * after exactly N pulses -- vpp_readback_reads(addr) == 1 + pulses. A byte
  * that is skipped entirely under the 0xFF rule is never read at all, so its
  * read count stays 0.
- *
- * Mismatch-window mapping (NEW -- this is what the sibling suite's
- * unbounded model cannot express, and is exactly the shape VPP-02's X4 leg
- * (MSG_ERR_VERIFY, eprom.cpp) needs): once a byte's read_count reaches
- * mismatch_from, it stops matching again -- the sequence by read_count is
- *   [0, converge_after)        -> 0xFF          (not yet converged)
- *   [converge_after, mismatch_from) -> target    (converged, matches)
- *   [mismatch_from, infinity)  -> bitwise-NOT of target (diverges again)
- * Seed mismatch_from = 0xFFFF (the NEVER-MISMATCH sentinel) to recover the
- * sibling suite's original unbounded-convergence behaviour -- no case in
- * this suite drives anywhere near 65535 reads of one address, so that
- * sentinel is safe in practice.
  * ───────────────────────────────────────────────────────────────────────── */
 
 struct vpp_readback_entry_t {

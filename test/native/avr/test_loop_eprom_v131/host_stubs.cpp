@@ -4,40 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * (LOOP-01..LOOP-08, D-10) -- host stubs for the per-byte
- * program loop suite.
- *
- * This is the SIXTH native env's suite (native_loop_v131), authored because
- * the frozen native_trace_v131 fixture goes RED by design in this phase
- * (D-10) and therefore cannot verify the loop rewrite that plans
- * 141-04/141-07/141-08 land. This file composes THREE independent,
- * pre-existing opt-in recorder layers from ../_shared/host_stubs_common.inc,
- * plus two suite-local additions (a read-back model and a logged-id
- * capture) that do not exist anywhere else in the tree:
- *
- *   - HOST_STUBS_REAL_REGISTER_UTILS (Phase 116): the ordered strobe
- *     recorder, driving production's REAL rurp_register_utils.h so the
- *     cache-compare elision and latch-strobe sequencing this suite's later
- *     assertions (plans 141-07/141-08) depend on is the genuine article,
- *     never a hand-maintained replica that could silently drift.
- *   - HOST_STUBS_RECORD_TIMING (Phase 138): the timing recorder. Its
- *     sequence key is s_strobe_count, so it can only ever compose WITH
- *     HOST_STUBS_REAL_REGISTER_UTILS above (the shared .inc fails closed
- *     with a #error if this is requested alone).
- *   - HOST_STUBS_CUSTOM_READ_DATA_BUFFER: opts this suite out of the shared
- *     .inc's default (always-0) rurp_read_data_buffer, so this file can
- *     supply its OWN stateful, 16-bit-address-keyed model instead (below) --
- *     a deliberate departure from test_trace_eprom_v131's 4-entry,
- *     LSB-masked-to-two-bits indexed model: this suite needs an UNCAPPED
- *     per-byte pulse count and a block that crosses the A16 boundary (D-09),
- *     neither of which a 4-byte, base-address-0-only index can represent.
- *
- * PITFALL, restated from host_stubs_common.inc's own doc comment and from
- * test_trace_eprom_v131/host_stubs.cpp:33-37 (138-PATTERNS.md item 3): every
- * one of the three guards above MUST be defined BEFORE the #include of
- * host_stubs_common.inc -- each is read at include time, and a #define
- * written after the include silently does nothing.
- *
  * Do NOT also define the narrower hardware-revision override guard that
  * test_val_eprom/host_stubs.cpp uses (see that file's own header comment):
  * HOST_STUBS_REAL_REGISTER_UTILS already defines the wider
@@ -70,24 +36,8 @@ extern "C" {
 
 #include "../_shared/host_stubs_common.inc"
 
-/* D-02/D-05 precedent (test_trace_eprom_v131): production's real
- * cache-compare + latch-strobe sequencing + timing (delayMicroseconds(1)
- * after every non-elided latch, delayMicroseconds(4) on a VPP P1-enable
- * set->clear transition), instead of a hand-maintained replica that could
- * silently drift from rurp_write_to_register / rurp_internal_write_to_register.
- * MUST come AFTER the shared .inc -- the .inc suppresses the real
- * declarations only inside its HOST_STUBS_REAL_REGISTER_UTILS arm. */
 #include "rurp_register_utils.h"
 
-/* Pitfall (116-RESEARCH.md, restated by every suite that opts into
- * HOST_STUBS_REAL_REGISTER_UTILS -- test_trace_eprom_v131/host_stubs.cpp
- * carries the same seam under the same name): lsb_address, msb_address and
- * control_register are non-static globals (rurp_register_utils.h:12-14)
- * initialised to 0xff. They persist across Unity test cases in this single
- * binary, and the 0xff CONTROL value ORs a VPP-regulator bit
- * (CTRL_VPP_REGULATOR_ENABLE, 0x80) into the FIRST address write of any case
- * that does not reset them. Every case must reset the cache deliberately
- * before driving anything. */
 extern "C" void reset_register_cache(uint8_t lsb, uint8_t msb, rurp_register_t ctrl) {
     lsb_address = lsb;
     msb_address = msb;
@@ -96,37 +46,6 @@ extern "C" void reset_register_cache(uint8_t lsb, uint8_t msb, rurp_register_t c
 
 /* ─────────────────────────────────────────────────────────────────────────
  * 16-bit-latched-address-keyed read-back model.
- *
- * Derivation of the key (source-verified against src/proms/memory.cpp, not
- * assumed): for LOOP_BUS_CONFIG_0x08 (test_loop_eprom_v131.cpp) -- copied
- * from test_trace_eprom_v131's V131_BUS_CONFIG_0x08, the tree's only 32-pin
- * config -- matching_lines is 17 and static_high_mask is 0.
- * mem_util_remap_address_bus starts from `config.address_mask & address`
- * and only perturbs bits at index >= matching_lines (here, bit 17 and up);
- * bits 0-16 are therefore left IDENTITY-mapped for every address this suite
- * or its plan-141-07/141-08 successors drive. Bit 16 (A16) is carried by
- * mem_util_calculate_top_address_register's CTRL_ADDRESS_LINE_16 bit in the
- * CONTROL top-address register, NOT by the LSB/MSB latches -- so the
- * LSB/MSB pair alone carries exactly the low 16 bits, and
- *     rurp_read_from_register(LEAST_SIGNIFICANT_BYTE)
- *     | (rurp_read_from_register(MOST_SIGNIFICANT_BYTE) << 8)
- * equals `address & 0xFFFF` for every byte of a block, including a block
- * based anywhere other than address 0 -- unlike the trace suite's
- * LSB-masked-to-two-bits index, which is valid only for a 4-byte block
- * based at 0 and would silently collapse the D-09 A16-crossing case, which
- * spans 0x00FFFE to 0x010001: as this 16-bit key, that range is 0xFFFE,
- * 0xFFFF, 0x0000, 0x0001 -- four DISTINCT keys, because the block driven
- * against them is only a handful of bytes wide, never wide enough to wrap
- * the 16-bit key space onto itself.
- *
- * Read-count-to-pulse-count mapping (the single easiest place this model
- * could be silently off by one): the loop reads FIRST (LOOP-06's skip
- * check) and only then pulses, so seeding `converge_after = N` means the
- * byte matches on read N+1, i.e. after exactly N pulses --
- * loop_readback_reads(addr) == 1 + pulses. A byte the loop skips entirely
- * under the 0xFF rule is never read at all, so its read count stays 0; an
- * already-matching byte seeded with converge_after = 0 gets exactly 1 read
- * and 0 pulses (it matches on the very first, skip-check read).
  * ───────────────────────────────────────────────────────────────────────── */
 
 struct loop_readback_entry_t {

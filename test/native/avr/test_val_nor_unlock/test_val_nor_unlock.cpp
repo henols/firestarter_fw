@@ -4,9 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Tier-1 validation suite for the Flash NOR-Unlock family.
- * HARN-01 / D-07 / T-71-WIRED-WRONG.
- *
  * Proves configure_flash_nor_unlock is a 5V-only handler (no VPP regulator use).
  * BY SIDE-EFFECT via the recording bus stub:
  *
@@ -49,22 +46,8 @@ extern "C" int  bus_recording_count();
 extern "C" uint8_t recorded_reg(int i);
 extern "C" uint8_t recorded_data(int i);
 
-/* (LOCK-02) — wire-byte capture for the CMD_LOCK_STATUS legs
- * below. [env:native]'s build_src_filter links the REAL
- * src/boards/rurp_serial_utils.cpp into this test binary (see that file's
- * header comment), so LOG_DATA_ID_BYTES -> rurp_log_id -> _firestarter_
- * emit_frame really does write one byte at a time to SERIAL_PORT — exactly
- * the mechanism test_messages/test_rurp_log_id.cpp already captures this
- * same way. */
 static std::vector<uint8_t> s_wire_bytes;
 
-/* (LOCK-02) — a controllable stand-in for handle->firestarter_get_data,
- * installed AFTER configure_memory() has already assigned the real
- * memory_get_data, so it overrides only the specific call the raw-byte-
- * fidelity leg needs to control. Ignores address/handle deliberately: this
- * suite's synthetic handle carries a zero-initialized bus_config, so the
- * real memory_get_data's address remap has no meaningful address to
- * preserve anyway -- this suite never asserts on the remapped address. */
 static uint8_t s_stub_raw_value = 0;
 static uint8_t stub_get_data_return_fixed(firestarter_handle_t* handle, uint32_t address) {
     (void)handle; (void)address;
@@ -81,13 +64,6 @@ void setUp(void) {
         });
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
-    /* (LOCK-02): the new CMD_LOCK_STATUS legs below actually
-     * execute flash_nor_unlock_read_protection_execute, which calls
-     * memory_get_data -> delayMicroseconds(strobe) for the real chip read
-     * (unlike the pre-existing configure-only legs above, which never
-     * reach an operation body). Must be stubbed or ArduinoFake aborts on
-     * the unmocked call -- same requirement test_val_5v_page.cpp already
-     * documents for its own operation-phase tests. */
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
     clear_bus_recording();
 }
@@ -161,8 +137,6 @@ void test_nor_unlock_blank_check_configure_no_vpp(void) {
         "configure_flash_nor_unlock CMD_BLANK_CHECK must NOT set any VPP-enable CTL bit");
 }
 
-/* ─── Phase 151 (LOCK-02): CMD_LOCK_STATUS legs ─────────────────────────── */
-
 /* Leg 1 (Dispatch): CMD_LOCK_STATUS must wire firestarter_operation_main to
  * flash_nor_unlock_read_protection_execute and null firestarter_operation_init
  * -- this file assigns flash_nor_unlock_generic_init before the switch, so
@@ -225,11 +199,6 @@ void test_nor_unlock_lock_status_no_vpp(void) {
         "flash_nor_unlock_read_protection_execute must NOT set any VPP-enable CTL bit -- this is a 5V read");
 }
 
-/* Leg 4 (Raw byte fidelity): stubs the data read to a value matching
- * neither decode constant, and proves the raw byte survives onto the wire
- * UNMODIFIED (byte 0) with the 0xFF indeterminate decode (byte 1) -- the
- * property D-03's probe legs depend on (a wrong decode must never destroy
- * the observation). */
 void test_nor_unlock_lock_status_raw_byte_fidelity(void) {
     firestarter_handle_t h = make_handle(CMD_LOCK_STATUS);
     configure_memory(&h);
@@ -308,7 +277,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_nor_unlock_erase_configure_no_vpp);
     RUN_TEST(test_nor_unlock_blank_check_configure_no_vpp);
 
-    /* (LOCK-02): CMD_LOCK_STATUS legs */
     RUN_TEST(test_nor_unlock_lock_status_dispatch);
     RUN_TEST(test_nor_unlock_lock_status_pinned_sequence);
     RUN_TEST(test_nor_unlock_lock_status_no_vpp);

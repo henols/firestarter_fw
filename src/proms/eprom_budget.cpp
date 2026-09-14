@@ -64,8 +64,8 @@ uint16_t eprom_block_budget_s(uint32_t protocol, uint32_t pulse_us, uint32_t blo
     /* block_bytes clamp: the ceil remainder term further below multiplies
      * a per-byte-time remainder (up to 999999) by block_bytes, and
      * 999999 * 4096 + 999999 = 4 096 995 903 is the largest such product
-     * that still fits uint32_t (max 4 294 967 295). 4096 is also CAP-01's
-     * own plausibility ceiling for an advertised buffer size, and the real
+     * that still fits uint32_t (max 4 294 967 295). 4096 is also the host's
+     * plausibility ceiling for an advertised buffer size, and the real
      * DATA_BUFFER_SIZE is 512 (Uno) or 1024 (Leonardo) -- so this clamp
      * never binds on any value this table could plausibly be asked about. */
     if (block_bytes > 4096UL) {

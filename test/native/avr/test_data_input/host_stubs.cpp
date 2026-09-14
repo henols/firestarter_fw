@@ -72,13 +72,5 @@ extern "C" rurp_configuration_t* rurp_get_config() {
     return &s_host_config;
 }
 
-/* op_reset_timeout: v1.22 Phase 119 D-06/D-07 (119-07 Task 1) widened
- * [env:native]/[env:native_nodevtools]'s build_src_filter to include
- * operation_utils.cpp (so the NULL-main refusal is natively provable),
- * which this suite's proms/ link now pulls in too. operation_utils.cpp
- * calls op_reset_timeout() unconditionally; the real definition lives in
- * firestarter.cpp (loop()'s AVR-only command-timeout watchdog), which no
- * suite links. Same no-op contract as every other stub in this file — the
- * data_input tests never assert on real-time timeout behaviour. */
 extern "C" void op_reset_timeout() {
 }

@@ -128,13 +128,6 @@ _AVR_BACKEND = _SRC / "boards" / "rurp_config_storage_eeprom.cpp"
 # widen this tuple.
 _SEARCH_DIRS = ("src", "include", "platform", "test", "lib")
 
-# The sanctioned includer set (D-09). platform/py32f071/src/config_storage_flash.cpp
-# does not exist in the tree yet -- it lands in Plan 126-08. This tuple is
-# deliberately written to be correct both now (2 hits) and after 126-08 (3
-# hits): every hit must be in this set, every path here that EXISTS must be a
-# hit, and the count must be at least 2. Neither an `== 2` nor an `== 3`
-# assertion would survive both points in time; this three-property
-# formulation does.
 _SANCTIONED_INCLUDERS = (
     "src/rurp_config_utils.cpp",
     "src/boards/rurp_config_storage_eeprom.cpp",

@@ -4,11 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * (PREP-03 / D-01 / D-02 / D-04) — captures the pre-change
- * v1.31 27C write loop's merged strobe+timing stream, for all three EPROM
- * protocols (0x07/0x08/0x0B), on a small synthetic block, from the REAL,
- * UNMODIFIED eprom_write_execute.
- *
  * built the skeleton: two smoke cases proving the timing hook
  * actually fires — via fakeit's .AlwaysDo, NOT a definition in the shared
  * .inc (ArduinoFake DEFINES delay()/delayMicroseconds() itself as free
@@ -46,9 +41,6 @@ extern "C" {
 
 using namespace fakeit;
 
-/* host_stubs.cpp's reset seam (Pitfall 5 / 138-RESEARCH.md) — must run after
- * configure_memory, which itself writes address 0
- * (mem_util_set_address(handle, 0), memory.cpp:93). */
 extern "C" void reset_register_cache(uint8_t lsb, uint8_t msb, rurp_register_t ctrl);
 
 /* timing_push itself is NOT one of eprom_v131_expected.h's twelve read
@@ -75,14 +67,6 @@ void setUp(void) {
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
 
-    /* THE hook (D-02). delay()/delayMicroseconds() are free functions
-     * DEFINED by ArduinoFake's FunctionFake.cpp, not stubbed anywhere in the
-     * shared .inc — every suite that reaches them mocks them in its own
-     * setUp(), and this is the one place in THIS suite that turns a mocked
-     * call into a recorded timing entry, via timing_push() (Task 1, opt-in
-     * guard HOST_STUBS_RECORD_TIMING). Capture-less lambdas: timing_push is
-     * a free extern "C" symbol, nothing needs capturing. Do not remove these
-     * as "unused" — every protocol case's cadence depends on them. */
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysDo([](unsigned int us) {
         timing_push(TIMING_KIND_DELAY_US, (uint32_t)us);
     });
@@ -228,29 +212,8 @@ static firestarter_handle_t make_v131_handle(uint32_t protocol, uint8_t pins, ui
     return h;
 }
 
-/* The synthetic block — 4 bytes at address 0, D-03's three required cases
- * plus a second multi-pulse byte:
- *   index 0: target 0x3C, converge-after 0 -- the ALREADY-MATCHING byte. It
- *     is still programmed on pass 1 because the mismatch mask starts 0xFF
- *     (memset in eprom_write_execute); the trace must show that.
- *   index 1: target 0xFF -- the ERASED-STATE byte.
- *   index 2: target 0x55, converge-after 2 -- needs THREE passes.
- *   index 3: target 0xAA, converge-after 1 -- needs TWO passes.
- * This drives the loop to exactly three passes (the worst-case byte, index
- * 2, needs 3) and exercises the adaptive pulse-width growth. */
 static const uint8_t V131_SYNTHETIC_BLOCK[4] = { 0x3C, 0xFF, 0x55, 0xAA };
 
-/* Load-bearing order (Pitfall 5/6, restated for this suite): configure_memory
- * (which itself writes address 0, memory.cpp:93) -> reset_register_cache ->
- * seed the read-back model -> clear_strobes/clear_timings -> seed
- * address/data_size/data_buffer -> call _main DIRECTLY (deliberately NOT
- * _init — eprom_write_execute itself enables the VPP regulator on entry if
- * it is not already enabled, so skipping _init keeps the capture scoped to
- * exactly the retry loop D-01/D-02 exist to trace, and is what the
- * conditional F-138-08 finding below checks for). Never re-assign
- * firestarter_get_data/firestarter_set_data — R2 deliberately keeps the
- * real memory_get_data/memory_set_data in the trace, so the verify read's
- * own bus activity is captured too. */
 static void drive_v131_write(firestarter_handle_t* h) {
     configure_memory(h);
     reset_register_cache(0x00, 0x00, 0x00);
@@ -275,16 +238,6 @@ static void drive_v131_write(firestarter_handle_t* h) {
 #define V131_STROBE_CAP 512
 #define V131_TIMING_CAP 512
 
-/* One case per protocol: drives the real write loop twice on the SAME
- * synthetic block. The PRIMARY assertion (Phase 138 Plan 05 Task 1) is now
- * v131_assert_stream_equals against the frozen array — full ordered
- * positional equality, not mere soundness — because a frozen fixture now
- * exists to compare against. The soundness checks (overflow, response code,
- * non-vacuous/under-cap length) and the determinism comparison (second
- * drive, positional snapshot diff) are KEPT alongside it: they are cheap and
- * they guard different failure modes than a full-stream compare does
- * (T-138-13 — a capture that is not reproducible must never be trusted,
- * frozen or not). */
 static void assert_v131_protocol_case(uint32_t protocol, uint8_t pins, uint32_t mem_size,
                                        uint32_t pulse_delay_us, const bus_config_t& bus_config,
                                        const v131_trace_entry_t* expected, int expected_len,
@@ -338,15 +291,6 @@ void test_protocol_0x0B_am2716_capture_is_sound_and_deterministic(void) {
                                "0x0B AM2716 DIP24_2716");
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * TEMPORARY empirical-dump machinery (sdp_expected.h:312-336's / D-01's
- * workflow, mirrored from test_eeprom28c_sdp.cpp's SDP_TRACE_DUMP
- * precedent): prints each merged entry as a ready-to-paste initialiser.
- * `pio test` swallows printf -- this is run by invoking the BUILT BINARY
- * directly (.pio/build/native_trace_v131/firestarter_native), never via
- * `pio test`. Kept behind this #ifdef permanently, matching the precedent;
- * never compiled by default (no env passes -D EPROM_V131_TRACE_DUMP).
- * ───────────────────────────────────────────────────────────────────────── */
 #ifdef EPROM_V131_TRACE_DUMP
 static void dump_v131_merged_ready_to_paste(const char* tag) {
     int n = v131_merged_length();

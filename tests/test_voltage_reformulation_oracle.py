@@ -80,20 +80,15 @@ _SCAN_RURP_COMMON = Path(
 )
 _SHIELD_HEADER = _REPO_ROOT / _SHIELD_HEADER_REL
 
-# ---------------------------------------------------------------------------
 # The ONLY place the model's constants live. A later leg (Coverage:
 # test_model_constants_appear_verbatim_in_the_shipped_body) asserts each of
 # these appears verbatim, as a decimal literal, in the comment-stripped
 # shipped body -- this is the anti-drift binding: a change to either side
 # turns this module red.
-# ---------------------------------------------------------------------------
 _SCALE_NUMERATOR = 1100
 _GUARD_SUM_MAX = 3900000
 _GUARD_K_MAX = 4194303
 
-# The mandated coverage-ceiling phrasing (155-VALIDATION.md item 5), stored
-# already whitespace-normalised so it can be compared directly against a
-# normalised docstring.
 _MANDATED_PHRASING = (
     "proven by a committed host-side numerical oracle over a stated input "
     "grid, bound to the shipped C by a source-contract scan; no native and "
@@ -105,13 +100,11 @@ def _normalise_ws(text):
     return re.sub(r"\s+", " ", text or "").strip()
 
 
-# ---------------------------------------------------------------------------
 # _strip_comments / _line_of -- copied verbatim from
 # test_write_path_source_contract_v131.py:223-256. This repo duplicates
 # this helper rather than sharing it (a second, functionally equivalent
 # copy already lives at scripts/check_erase_no_vpp.py:161-197), so
 # duplicating it again here is the established idiom.
-# ---------------------------------------------------------------------------
 def _strip_comments(text):
     """Strip `//` line comments and `/* ... */` block comments, replacing
     each stripped span with whitespace of the SAME SHAPE (a newline stays a
@@ -195,9 +188,7 @@ def _calibration_from_header():
     return int(r1_match.group(1)), int(r2_match.group(1))
 
 
-# ---------------------------------------------------------------------------
 # The two models
-# ---------------------------------------------------------------------------
 def _v64(adc, bg, r1, r2):
     """Models the 64-bit form being replaced -- the product of the ADC
     reading, the scale numerator (1100) and the summed divider (r1+r2),
@@ -239,9 +230,7 @@ def _v32(adc, bg, r1, r2):
     return (adc * k + bg32 // 2) // bg32
 
 
-# ---------------------------------------------------------------------------
 # Numeric legs
-# ---------------------------------------------------------------------------
 def test_scale_factor_is_exact_at_the_shipped_calibration():
     """DEAD-04: at VALUE_R1/VALUE_R2 (read from include/rurp_shield.h,
     never hardcoded here), the folded scale factor k is 7850 exactly --
@@ -430,9 +419,7 @@ def test_zero_sentinels_still_return_zero():
     assert _v32(512, 0, r1, r2) == 0, "expected bandgap==0 to return 0"
 
 
-# ---------------------------------------------------------------------------
 # Source-contract legs -- bind the model to the shipped C
-# ---------------------------------------------------------------------------
 _SUM_ASSIGN_RE = re.compile(r"uint32_t\s+sum\s*=\s*r1\s*\+\s*r2\s*;")
 _GUARD_A_RE = re.compile(r"sum\s*>\s*3900000UL")
 _SCALE_ASSIGN_RE = re.compile(
@@ -513,9 +500,7 @@ def test_model_constants_appear_verbatim_in_the_shipped_body():
         )
 
 
-# ---------------------------------------------------------------------------
 # Structural legs
-# ---------------------------------------------------------------------------
 def test_scan_target_is_non_vacuous():
     """Structural: the scan target exists, is non-empty, resolves under
     the repo root, and is non-empty after comment stripping. A missing

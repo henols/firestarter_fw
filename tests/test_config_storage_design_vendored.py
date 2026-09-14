@@ -73,8 +73,6 @@ _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent
 _DOC_PATH = _REPO_ROOT / "platform" / "py32f071" / "CONFIG-STORAGE.md"
 
-# The seven superseded module identifiers CFG-01 requires the SUPERSEDED
-# section to name explicitly (CONTEXT.md, RESEARCH.md §Code Examples).
 _SUPERSEDED_MODULE_NAMES = (
     "storage.cpp",
     "gpio.cpp",
@@ -85,12 +83,8 @@ _SUPERSEDED_MODULE_NAMES = (
     "py32f071_pins.h",
 )
 
-# The flash-geometry values and citations CFG-02 requires (RESEARCH C-1,
-# §Code Examples "The CFG-02 geometry record").
 _GEOMETRY_NEEDLES = ("256", "8192", "§4.1", "§4.2.1", "Table 4-1", "0ed2f4b4")
 
-# The reserved-flash-map values D-18's amendment must record (RESEARCH C-5,
-# CONTEXT.md D-18).
 _RESERVED_MAP_NEEDLES = ("0x0801E000", "0x0801E100", "120K", "8K", "256")
 
 
@@ -178,7 +172,6 @@ def _find_design_doc_violations(text):
             "missing the this-milestone/NOT-vendored sentence for CONFIG_MAGIC"
         )
 
-    # Coverage 5 -- the D-16 amendment, with its RM citation.
     if "§4.2.3.2" not in text:
         violations.append(
             "missing RM §4.2.3.2 citation for the D-16 commit-step amendment"
@@ -194,7 +187,6 @@ def _find_design_doc_violations(text):
             "missing the explicit 'CRC32 is not a security primitive' statement"
         )
 
-    # Coverage 7 -- reserved flash map addresses (D-18 amendment).
     for needle in _RESERVED_MAP_NEEDLES:
         if needle not in text:
             violations.append(f"missing reserved-flash-map value {needle!r}")

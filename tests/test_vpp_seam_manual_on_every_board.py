@@ -95,10 +95,6 @@ _PY32_BOARD_HEADER = _INCLUDE / "boards" / "py32f071_rurp_shield.h"
 _EXPECTED_MODE_MANUAL = 0
 _EXPECTED_RESULT_MANUAL_REQUIRED = 1
 
-# The four board macro-sets, hardcoded literals (D-04) -- kept honest by the
-# drift leg (Coverage 4, added in this module's second authoring task) that
-# asserts each anchor below is still literally present in the real build
-# config. Values per RESEARCH's measured prototype.
 _BOARD_MACRO_SETS = [
     pytest.param(
         ("__AVR__", "ARDUINO_AVR_UNO", 'RURP_BOARD_NAME="uno"', "SERIAL_ON_IO"),

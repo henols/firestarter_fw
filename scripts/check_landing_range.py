@@ -103,14 +103,8 @@ PORTABILITY_MARKERS = ("include/rurp_platform_compat.h", "include/avr/pgmspace.h
 # commit from being a violation.
 PY32_KEY = "platform/py32f071"
 
-# Two env seams, read ONCE at module import time (an in-process
-# monkeypatch.setenv is silently ineffective -- 123-RESEARCH.md Correction
-# C-15 -- so the paired pytest invokes this script as a real subprocess with
-# both seams set in the CHILD environment).
 FIRESTARTER_RANGE_ROOT = os.environ.get("FIRESTARTER_RANGE_ROOT", str(REPO_ROOT))
 
-# Default fork point: the recorded fork_point_firmware SHA from
-# .planning/phases/123-non-regression-baselines-gate-hardening/123-01-SUMMARY.md:46.
 FIRESTARTER_RANGE_FORK = os.environ.get(
     "FIRESTARTER_RANGE_FORK", "5c9160a34b665878b05403ab014b959926feb6bf"
 )

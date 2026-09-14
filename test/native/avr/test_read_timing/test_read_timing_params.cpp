@@ -36,12 +36,6 @@ using namespace fakeit;
 
 /* Maximum allowed value for read-timing knobs (T-44-01 / RESEARCH §Security
  * Domain). Mirrors the cap defined in memory.cpp / json_parser.c.
- *
- * Unremovable duplicate (C-8, C-21): the production constant is now hoisted
- * above the field table in src/json_parser.c, but it is a file-scope #define
- * inside a .c translation unit, not a header export -- this test cannot
- * reference it. The two copies can therefore drift silently in either
- * direction and nothing gates that drift. The duplicate is kept deliberately
  * rather than removed. */
 #define READ_TIMING_MAX_US 1000UL
 
@@ -66,12 +60,6 @@ static firestarter_handle_t make_handle(uint8_t cmd) {
     return h;
 }
 
-/* Helper: parse a JSON string into a handle, return the json_parse result.
- * Calls jsmn_parse directly with the real token budget (NUMBER_JSNM_TOKENS).
- * The dead helper this used to route around -- which computed its token
- * count as sizeof() on a pointer parameter and could never succeed for a
- * real command -- was deleted in Phase 149 as dead code (zero call sites
- * in src/). */
 static int parse_json(const char* json_str, firestarter_handle_t* handle) {
     jsmntok_t tokens[NUMBER_JSNM_TOKENS];
     jsmn_parser parser;
@@ -131,11 +119,6 @@ void test_read_settling_us_capped_at_max(void) {
         "bound and 0 is this knob's own loaded value (\"no settling delay\")");
 }
 
-/* T4b (DECODE-06, C-8): the missing half of T-44-01's proof -- read_strobe_us
- * had NO cap test at all before this case. Same reasoning as T4 above:
- * equality, not an upper bound, because 0 passes an upper bound and 0 is
- * THIS knob's own loaded value too ("use the firmware default of 3
- * microseconds"). */
 void test_read_strobe_us_capped_at_max(void) {
     const char* json = "{\"cmd\":1,\"read-strobe-us\":9999}";
     firestarter_handle_t h = make_handle(CMD_READ);
@@ -149,8 +132,7 @@ void test_read_strobe_us_capped_at_max(void) {
         "of 3 microseconds\")");
 }
 
-/* page-size parse contract (PGSZ-01/PGSZ-02).
- *
+/*
  * T5: "page-size":128 -> handle.page_size == 128 */
 void test_page_size_parsed_from_json(void) {
     const char* json = "{\"cmd\":2,\"page-size\":128}";
@@ -169,10 +151,6 @@ void test_page_size_defaults_zero_when_absent(void) {
     TEST_ASSERT_EQUAL_UINT16(0, h.page_size);
 }
 
-/* T7 (D-05, the whole point): ONE handle, parsed TWICE. A stale 128 surviving
- * into the second, page-size-absent parse would make "absent means 64" false
- * in practice -- the exact page overrun PGSZ-02 exists to prevent. A case
- * using a fresh handle for the second parse could never detect this. */
 void test_page_size_resets_between_two_parses_on_the_same_handle(void) {
     firestarter_handle_t h = make_handle(CMD_WRITE);
 
@@ -189,9 +167,6 @@ void test_page_size_resets_between_two_parses_on_the_same_handle(void) {
         "overrun PGSZ-02 exists to prevent");
 }
 
-/* T8 (D-11): an unknown key BEFORE a known one must not desync the token
- * walk. Asserting only "parse succeeded" would pass even with a broken
- * token_idx advance -- assert a VALUE landed instead. */
 void test_unknown_key_before_a_known_key_does_not_desync_the_token_walk(void) {
     const char* json = "{\"cmd\":2,\"totally-unknown-key\":7,\"read-strobe-us\":25}";
     firestarter_handle_t h = make_handle(CMD_WRITE);
@@ -202,8 +177,6 @@ void test_unknown_key_before_a_known_key_does_not_desync_the_token_walk(void) {
         "desynced token_idx would silently drop it");
 }
 
-/* T9 (D-11): the same shape, but on the new-host / old-firmware direction
- * pinned on the key this phase adds. */
 void test_unknown_key_before_page_size_does_not_desync_the_token_walk(void) {
     const char* json = "{\"cmd\":2,\"totally-unknown-key\":7,\"page-size\":128}";
     firestarter_handle_t h = make_handle(CMD_WRITE);
@@ -212,11 +185,6 @@ void test_unknown_key_before_page_size_does_not_desync_the_token_walk(void) {
     TEST_ASSERT_EQUAL_UINT16(128, h.page_size);
 }
 
-/* S1 (DECODE-05, T-157-02): an out-of-range wire `algorithm` must SATURATE
- * to the member's own maximum (0xFF on the now-narrowed uint8_t protocol),
- * never TRUNCATE into a value that names a real handler. 261 (0x105)
- * truncates to 0x05, which is PROTO_FLASH_5V_PAGE -- a real, dispatchable
- * handler. Saturating to 0xFF names no arm of configure_memory's chain. */
 void test_out_of_range_algorithm_saturates_not_truncates(void) {
     const char* json = "{\"cmd\":1,\"algorithm\":261}";
     firestarter_handle_t h = make_handle(CMD_READ);
@@ -228,15 +196,6 @@ void test_out_of_range_algorithm_saturates_not_truncates(void) {
         "dispatch into");
 }
 
-/* S2 (DECODE-05, T-157-02) -- the load-bearing case. A correct stored byte
- * (S1) is a DIFFERENT claim from a correct dispatch decision. This case is
- * the only thing in the repository that pins the second: that a saturated
- * 0xFF reaches configure_memory's generic fail-closed tail (no named arm
- * matches 0xFF) and refuses with RESPONSE_CODE_ERROR and all three
- * operation pointers NULL -- zero hardware side effects. Do not compare
- * against a named handler's function pointer; the symbol is not exported
- * to tests. This is test_not_implemented.cpp's local idiom, and it is
- * strictly stronger. */
 void test_out_of_range_algorithm_dispatch_fail_closes(void) {
     const char* json = "{\"cmd\":1,\"algorithm\":261}";
     firestarter_handle_t h = make_handle(CMD_READ);
@@ -256,13 +215,6 @@ void test_out_of_range_algorithm_dispatch_fail_closes(void) {
         "fail-closed refusal must leave firestarter_operation_end NULL");
 }
 
-/* S3 (DECODE-05) -- the non-regression guard. S1 and S2 must not be
- * satisfiable by breaking every algorithm; a valid, in-range algorithm must
- * still dispatch to a real handler. No operation-pointer assertion here:
- * test_configure_memory.cpp documents that configure_sram() is a stub
- * leaving firestarter_operation_init NULL on a genuine success path, so a
- * pointer-set assertion would spuriously fail. response_code is the robust
- * dispatch-success signal. */
 void test_in_range_algorithm_still_dispatches(void) {
     const char* json = "{\"cmd\":1,\"algorithm\":5}";
     firestarter_handle_t h = make_handle(CMD_READ);
@@ -277,14 +229,6 @@ void test_in_range_algorithm_still_dispatches(void) {
         "real handler, not fail-close");
 }
 
-/* S4 (DECODE-05, T-157-01): an out-of-range wire `flags` must MASK, never
- * SATURATE. Saturating a bitmask to its type maximum (0xFFFF on the
- * now-narrowed uint16_t ctrl_flags) would turn on all nine flags at once --
- * a fail-open that would make is_flag_set() read true at every one of the
- * 40 call sites. Asserted per-bit, not merely as an equality, so the case
- * reads as what it prevents. is_flag_set() itself is not used here: the
- * macro captures `handle` from the enclosing scope and no call site names
- * a type. */
 void test_out_of_range_flags_masks_never_sets_every_flag(void) {
     const char* json = "{\"cmd\":2,\"flags\":65536}";
     firestarter_handle_t h = make_handle(CMD_WRITE);
@@ -303,17 +247,6 @@ void test_out_of_range_flags_masks_never_sets_every_flag(void) {
         "value");
 }
 
-/* S5 (DECODE-05, T-157-05): an out-of-range wire `page-size` must saturate
- * to 0xFFFF, not truncate to a plausible VALID power of two. 65600
- * (0x10040) truncates to 0x0040 = 64 -- a perfectly valid page size, which
- * is what makes the hole silent. 0xFFFF is rejected by the consumer.
- *
- * Consumer-side evidence (C-20, source-level only -- eeprom28c_page_mask
- * is `static` in src/proms/eeprom_28c.cpp and unreachable from any test):
- * 0xFFFF exceeds AT28C_PAGE_SIZE_MAX (512) AND fails the power-of-two test
- * (0xFFFF & 0xFFFE != 0), so BOTH of eeprom28c_page_mask's guards reject
- * it and the function returns AT28C_PAGE_SIZE_FALLBACK - 1 -- a MASK
- * (63), not a size (64). */
 void test_out_of_range_page_size_saturates_not_truncates_to_a_valid_size(void) {
     const char* json = "{\"cmd\":2,\"page-size\":65600}";
     firestarter_handle_t h = make_handle(CMD_WRITE);
@@ -323,24 +256,6 @@ void test_out_of_range_page_size_saturates_not_truncates_to_a_valid_size(void) {
         "65600 must saturate to 0xFFFF, not truncate to 64 -- 64 is a "
         "perfectly valid page size, which is what makes the hole silent");
 }
-
-/*
- * Round-trip cases (OD-5, ceiling 7): a wrong `offsetof` in a key_parsers[]
- * row is this refactor's most plausible silent defect, and the compile-time
- * _Static_assert guards CANNOT see it -- they prove an offset fits the
- * uint8_t column and a width fits the 32-bit store, never that the row
- * names the RIGHT member. Only an executing test can catch a row that
- * writes into a neighbouring field.
- *
- * Each case below asserts BOTH halves of the offset oracle: the target
- * member equals the parsed value, AND every other one of the eleven
- * table-written members is still 0 (make_handle zero-initialises the whole
- * handle, so a wrong offset that writes into a neighbour is caught there,
- * not merely by the target member being wrong). Six cases here close the
- * last six of the eleven rows; `protocol` and `ctrl_flags` are covered by
- * the DECODE-05 safety cases above, and `read_settling_us`, `read_strobe_us`
- * and `page_size` are covered by T1/T2/T5 above.
- */
 
 /* memory-size -> handle->mem_size (uint32_t) */
 void test_memory_size_round_trips_through_the_field_table(void) {

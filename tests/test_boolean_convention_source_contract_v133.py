@@ -143,11 +143,9 @@ _SCAN_WRAPPERS = Path(
 # docstring section for why.
 _SCAN_ENGINE = _REPO_ROOT / _ENGINE_REL
 
-# ---------------------------------------------------------------------------
 # Concatenation-built needles. Coverage 7 asserts none of these appear
 # verbatim anywhere in this module's own source -- a gate that quotes its
 # own forbidden token verbatim matches itself and can never pass.
-# ---------------------------------------------------------------------------
 _NEEDLE_INVERTED_CALL = "return" + " !" + "op_execute_"
 _FORWARD_STATEFUL = "return " + "op_execute_stateful_operation"
 _FORWARD_SIMPLE = "return " + "op_execute_simple_operation"
@@ -260,9 +258,7 @@ def _extract_function_body(stripped, func_name):
     raise AssertionError(f"unbalanced braces while extracting {func_name}()")
 
 
-# ---------------------------------------------------------------------------
 # Tests
-# ---------------------------------------------------------------------------
 
 
 def test_wrapper_negated_return_is_absent():
