@@ -50,6 +50,12 @@ void setUp(void) {
     /* delay() is called by flash_intel_write_init (500 ms regulator settle).
      * ArduinoFake requires mock setup before a virtual is called or it aborts. */
     When(Method(ArduinoFake(), delay)).AlwaysReturn();
+    /* Every VPP verdict other than in-band emits a log frame through Serial.
+     * Without these three, the first warning or error test aborts the whole
+     * suite on fakeit::UnexpectedMethodCallException. */
+    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t))).AlwaysReturn(1);
+    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
+    When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
     set_mock_vpp_mv(0);
     set_mock_hw_rev(1);  /* non-REV0 default */
     s_last_ctrl_reg = 0;
