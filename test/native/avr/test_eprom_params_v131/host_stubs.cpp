@@ -18,7 +18,7 @@
  * activates none of the opt-in stub-behavior guards the shared include
  * documents.
  *
- * Scope: only compiled into [env:native_params_v131] via PIO's automatic
+ * Scope: only compiled into the native test envs via PIO's automatic
  * discovery of files under test/. Production builds (env:uno, env:leonardo)
  * never see this file because their src_filter excludes test/.
  */

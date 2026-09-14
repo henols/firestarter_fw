@@ -54,9 +54,8 @@ extern "C" uint8_t rurp_get_hardware_revision() { return s_mock_hw_rev; }
  * WHY IT LIVES IN THIS SUITE AND NOT IN test_loop_eprom_v131 / test_trace_
  * eprom_v131, which already have richer harnesses: CI (.github/workflows/
  * build.yml:142,155 and beta-build.yml:122,128) runs ONLY `pio test -e
- * native` and `-e native_nodevtools`. Neither runs native_loop_v131,
- * native_trace_v131, native_params_v131 or native_pinmap_provisional, and
- * neither runs check_size_baseline.py. An assertion placed in any of those
+ * native` and `-e native_nodevtools`, which are now the only native envs.
+ * Neither runs check_size_baseline.py. An assertion placed outside those
  * envs is decorative -- a branch carrying the per-byte regression would
  * merge green. test_val_eprom is in BOTH pinned envs' test_filter, so the
  * cadence invariant is enforced here or nowhere.

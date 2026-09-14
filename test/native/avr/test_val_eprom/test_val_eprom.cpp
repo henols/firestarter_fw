@@ -214,10 +214,8 @@ void test_eprom_0x0B_read_configure_only_does_not_enable_vpp(void) {
  * with the programmed-byte count.
  *
  * WHY IT IS PINNED HERE, of all places: CI runs only `pio test -e native`
- * and `-e native_nodevtools` (.github/workflows/build.yml:142,155,
- * beta-build.yml:122,128). It does not run native_trace_v131 (which owns the
- * frozen cadence golden), native_loop_v131, native_params_v131 or
- * native_pinmap_provisional, and it does not run check_size_baseline.py at
+ * and `-e native_nodevtools`, which are now the only native envs. It does
+ * not run check_size_baseline.py at
  * all. test_val_eprom is in BOTH pinned envs' test_filter, so this is the
  * only place an automated gate can see the cadence.
  *
