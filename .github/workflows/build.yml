@@ -115,7 +115,12 @@ jobs:
       # wire-frame byte sequence — a silent refactor that breaks the locked
       # frame contract from CONTEXT D-01..D-04 must fail CI, not slip
       # through because CI only built and never executed the tests.
-      - name: Run native unit tests
+      # main ships WITHOUT dev tools, so the unconditional leg is the
+      # no-DEV_TOOLS one below. A pull request targets beta, which ships WITH
+      # them, so the DEV_TOOLS configuration is checked on PRs too -- otherwise
+      # the beta push would be the first place it is ever compiled.
+      - name: Run native unit tests (DEV_TOOLS, pull requests only)
+        if: github.event_name == 'pull_request'
         run: pio test -e native
 
       # v1.22 Phase 119 D-04: proves the is_memory_cmd() admission predicate

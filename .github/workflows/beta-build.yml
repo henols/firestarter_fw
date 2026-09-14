@@ -98,13 +98,10 @@ jobs:
       - name: Install PlatformIO Core
         run: pip install --upgrade platformio
 
-      - name: Run native unit tests
+      # beta ships WITH dev tools, so beta tests that configuration and only
+      # that one. env:native is the DEV_TOOLS=1 env.
+      - name: Run native unit tests (DEV_TOOLS)
         run: pio test -e native
-
-      # -D DEV_TOOLS lives in the shared [env] block, so without this leg the
-      # no-DEV_TOOLS build is never compiled on the branch that ships.
-      - name: Run native unit tests (no DEV_TOOLS)
-        run: pio test -e native_nodevtools
 
       - name: Install pytest for script tests
         run: pip install pytest
@@ -121,6 +118,8 @@ jobs:
       - uses: stefanzweifel/git-auto-commit-action@v5
 
       - name: Build PlatformIO Project
+        env:
+          PLATFORMIO_BUILD_FLAGS: -D DEV_TOOLS=1
         run: pio run
 
       # REL-01/D-06: everything ARM must sit strictly below the
