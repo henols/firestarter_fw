@@ -18,4 +18,4 @@ The Firestarter Firmware is intended to be used with the [Firestarter applicatio
 For more information, see the [Firestarter README](https://github.com/henols/firestarter_app/blob/main/README.md).
 
 ## License
-[MIT](https://raw.githubusercontent.com/henols/firestarter/main/LICENSE)
+[MIT](LICENSE)
