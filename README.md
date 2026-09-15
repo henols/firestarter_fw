@@ -4,7 +4,7 @@
 
 The AVR firmware that runs on the Arduino and drives the chip in the socket.
 
-**New here?** Start at [firestarter_prom](https://github.com/henols/firestarter_prom) — what
+**New here?** Start at [firestarter](https://github.com/henols/firestarter) — what
 Firestarter is, how to install it, and how to read your first chip. You do not need to build
 this firmware by hand; the `firestarter` CLI installs the matching build for you.
 
@@ -72,13 +72,13 @@ implemented** — that is a hardware-damage hazard on a 5 V part.
 
 ## Reporting a problem
 
-See the [Contributing](https://github.com/henols/firestarter_prom/wiki/Contributing) wiki page for where to report a problem and where to open a pull request.
+See the [Contributing](https://github.com/henols/firestarter/wiki/Contributing) wiki page for where to report a problem and where to open a pull request.
 
 ## Documentation
 
 Everything else — supported chips, shield revisions, protocols, how to test a chip — is on the
-**[Firestarter wiki](https://github.com/henols/firestarter_prom/wiki)**.
-Version history is in [Breaking Changes](https://github.com/henols/firestarter_prom/wiki/Breaking-Changes).
+**[Firestarter wiki](https://github.com/henols/firestarter/wiki)**.
+Version history is in [Breaking Changes](https://github.com/henols/firestarter/wiki/Breaking-Changes).
 
 ## License
 
