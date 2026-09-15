@@ -6,7 +6,7 @@ control-register assignments.
 
 The user-facing page — which chips need an adapter, how to wire one, and the
 safety guarantees — lives on the wiki:
-https://github.com/henols/firestarter_prom/wiki/Pin-Maps
+https://github.com/henols/firestarter/wiki/Pin-Maps
 
 The per-family tables below are generated from
 `firestarter_app/firestarter/data/pinouts.json`, which is what the firmware is
