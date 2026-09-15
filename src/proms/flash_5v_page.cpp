@@ -16,18 +16,17 @@
 #include "operation_utils.h"
 #include "rurp_pinout.h"
 
-/* Data-driven page size derived from chip capacity (handle->mem_size).
- * W29C040 (512K = 524288) → 256; SST29EE010 (128K = 131072) → 128;
- * AT29C256 (32K = 32768) → 64. Flash4 DB chips span 32KB–512KB.
- * A fixed 256 would over-run smaller chips' 64-byte page buffers;
- * the old fixed 64 polled mid-page on W29C040 (original bug).
- * Data-driven sizing fixes W29C040 without changing effective behavior
- * for smaller chips whose native page is ≤ their derived size.
- * (Worked examples: ≤65536→64, ≤262144→128, else→256.) */
-static uint32_t flash_5v_page_page_size(uint32_t mem_size) {
-    if (mem_size <= 65536)  return 64;
-    if (mem_size <= 262144) return 128;
-    return 256;
+#define FLASH_5V_PAGE_SIZE_MAX 512
+
+static bool flash_5v_page_mask(uint16_t requested, uint32_t* out_mask) {
+    if (requested == 0) {
+        return false;
+    }
+    if (requested <= FLASH_5V_PAGE_SIZE_MAX && (requested & (requested - 1)) == 0) {
+        *out_mask = (uint32_t)requested - 1;
+        return true;
+    }
+    return false;
 }
 
 void flash_5v_page_write_init(firestarter_handle_t* handle);
@@ -79,7 +78,12 @@ void flash_5v_page_write_init(firestarter_handle_t* handle) {
 }
 
 void flash_5v_page_write_execute(firestarter_handle_t* handle) {
-    uint32_t page_size = flash_5v_page_page_size(handle->mem_size);
+    uint32_t page_mask;
+    if (!flash_5v_page_mask(handle->page_size, &page_mask)) {
+        LOG_ERROR_ID_U16(MSG_ERR_FL4_PAGE_SIZE, handle->page_size);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return;
+    }
     for (uint32_t i = 0; i < handle->data_size; i++) {
         uint32_t address = handle->address + i;
         uint8_t expected = handle->data_buffer[i];
@@ -89,7 +93,7 @@ void flash_5v_page_write_execute(firestarter_handle_t* handle) {
          * sequence the page-buffer write is silently rejected.
          * Call per-page-START (not per-byte) — calling per-byte would abort
          * the current page load and restart it after each byte. */
-        bool is_page_start = (address % page_size) == 0;
+        bool is_page_start = (address & page_mask) == 0;
         bool is_first_byte = (i == 0);
         if (is_page_start || is_first_byte) {
             flash_execute_command(FLASH_ENABLE_WRITE);
@@ -97,7 +101,7 @@ void flash_5v_page_write_execute(firestarter_handle_t* handle) {
 
         handle->firestarter_set_data(handle, address, expected);
 
-        bool reached_page_end = ((address + 1) % page_size) == 0;
+        bool reached_page_end = ((address + 1) & page_mask) == 0;
         bool is_last_byte = i == handle->data_size - 1;
         if (reached_page_end || is_last_byte) {
             if (!flash_5v_page_wait_for_page_write(handle, address, expected)) {

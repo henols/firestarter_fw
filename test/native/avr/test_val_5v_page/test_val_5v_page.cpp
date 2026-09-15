@@ -41,6 +41,7 @@ extern "C" void clear_bus_recording();
 extern "C" int  bus_recording_count();
 extern "C" uint8_t recorded_reg(int i);
 extern "C" uint8_t recorded_data(int i);
+extern "C" bool bus_recording_saturated();
 
 static std::vector<uint8_t> s_wire_bytes;
 
@@ -189,6 +190,7 @@ static firestarter_handle_t make_write_handle_with_data(void) {
     h.response_code = RESPONSE_CODE_OK;
     h.chip_id    = 0; /* skip chip-id branch in write_init */
     h.mem_size   = 524288; /* 512 KB (W29C040) */
+    h.page_size  = 256; /* W29C040's real page */
     h.address    = 0;
     h.data_size  = 4; /* small: 4 zero bytes at page 0; poll passes immediately */
     /* data_buffer is zero-initialized by {} */
@@ -237,8 +239,12 @@ static firestarter_handle_t make_write_init_handle_can_erase_set(void) {
  * fu_flash_fast_address writes (LSB=addr&0xFF, MSB=(addr>>8)&0xFF).
  * Signature MSB pattern at start: 0x55, 0x2A, 0x55 in consecutive MSB writes.
  * Returns true if found, false if not. */
-static bool recording_contains_sdp_signature(void) {
-    /* Look for the MSB sequence: 0x55, 0x2A, 0x55 (MSBs of 0x5555, 0x2AAA, 0x5555) */
+/* Counts every occurrence of the SDP MSB signature in the recording and
+ * reports the recorded index of each, via an optional out-array. Immune to
+ * register-write elision because the three unlock addresses (0x5555, 0x2AAA,
+ * 0x5555) differ from each other and from every data address. */
+static int count_sdp_signatures(int* out_indices, int max_out) {
+    int count = 0;
     int msb_seq_index = 0;
     const uint8_t msb_pattern[3] = {0x55, 0x2A, 0x55};
     for (int i = 0; i < bus_recording_count(); i++) {
@@ -246,7 +252,11 @@ static bool recording_contains_sdp_signature(void) {
             if (recorded_data(i) == msb_pattern[msb_seq_index]) {
                 msb_seq_index++;
                 if (msb_seq_index == 3) {
-                    return true; /* full SDP MSB signature found */
+                    if (out_indices != NULL && count < max_out) {
+                        out_indices[count] = i;
+                    }
+                    count++;
+                    msb_seq_index = 0;
                 }
             } else {
                 /* Reset if sequence breaks (partial match then mismatch) */
@@ -254,7 +264,11 @@ static bool recording_contains_sdp_signature(void) {
             }
         }
     }
-    return false;
+    return count;
+}
+
+static bool recording_contains_sdp_signature(void) {
+    return count_sdp_signatures(NULL, 0) > 0;
 }
 
 /* Test 1 (FIX-02B SDP): flash_5v_page_write_execute must emit FLASH_ENABLE_WRITE
@@ -289,6 +303,61 @@ void test_5v_page_write_execute_no_vpp(void) {
         "flash_5v_page_write_execute must not error on 4-byte zero write");
     assert_no_vpp_in_recording(
         "flash_5v_page_write_execute (operation phase) must NOT set any VPP-enable CTL bit");
+}
+
+/* W29C512's real geometry is (mem_size 65536, page_size 128). A
+ * capacity-derived page size would have picked 64 here, producing a second
+ * page start at address 64 -- a second SDP signature. Exactly one signature
+ * over 128 bytes proves the firmware used the real 128-byte page. */
+void test_5v_page_write_execute_page_starts_at_real_page_not_derived(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 65536;
+    h.page_size      = 128;
+    h.address        = 0;
+    h.data_size      = 128;
+    /* data_buffer is zero-initialized by {} -- write poll converges on its
+     * first iteration. */
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the boundary assertion below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "non-vacuity control: the write must have actually run");
+    TEST_ASSERT_EQUAL_MESSAGE(1, sig_count,
+        "exactly one SDP signature over 128 bytes -- the old 64-byte derivation would have produced a second page start at address 64");
+}
+
+/* Refusal counterpart: the same geometry with page_size 0 (absent) must
+ * refuse and perform zero register writes. Refusing without performing no
+ * write would still corrupt the device silently. */
+void test_5v_page_write_execute_refuses_with_no_page_size(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 65536;
+    h.page_size      = 0;
+    h.address        = 0;
+    h.data_size      = 128;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "a write with no resolvable page size must refuse");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused write must perform zero register writes");
 }
 
 void test_5v_page_write_init_no_blank_check_erase02(void) {
@@ -493,6 +562,9 @@ int main(int argc, char** argv) {
     /* FIX-02B: operation-phase SDP emission + VPP-safety proofs */
     RUN_TEST(test_5v_page_write_execute_emits_sdp);
     RUN_TEST(test_5v_page_write_execute_no_vpp);
+
+    RUN_TEST(test_5v_page_write_execute_page_starts_at_real_page_not_derived);
+    RUN_TEST(test_5v_page_write_execute_refuses_with_no_page_size);
 
     RUN_TEST(test_5v_page_write_init_no_blank_check_erase02);
     RUN_TEST(test_5v_page_write_init_no_vpp_with_flag_can_erase_set);
