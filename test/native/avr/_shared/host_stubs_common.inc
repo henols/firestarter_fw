@@ -166,7 +166,9 @@ extern "C" void rurp_set_control_pin(uint8_t pin, uint8_t state) {
     strobe_push(STROBE_KIND_PIN, pin, state);
 }
 #elif defined(HOST_STUBS_RECORD_BUS)
-#define HOST_STUBS_MAX_RECORDING 256
+#ifndef HOST_STUBS_MAX_RECORDING
+#define HOST_STUBS_MAX_RECORDING 4096
+#endif
 
 struct bus_record_entry_t {
     uint8_t reg;
@@ -179,6 +181,7 @@ extern "C" void clear_bus_recording() { s_bus_recording_count = 0; }
 extern "C" int  bus_recording_count() { return s_bus_recording_count; }
 extern "C" uint8_t recorded_reg(int i)  { return s_bus_recording[i].reg; }
 extern "C" uint8_t recorded_data(int i) { return s_bus_recording[i].data; }
+extern "C" bool bus_recording_saturated() { return s_bus_recording_count >= HOST_STUBS_MAX_RECORDING; }
 
 extern "C" void rurp_write_to_register(uint8_t reg, rurp_register_t data) {
     if (s_bus_recording_count < HOST_STUBS_MAX_RECORDING) {
