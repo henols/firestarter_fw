@@ -34,9 +34,7 @@ extern "C" {
 // VPP DIP-bus magic constants. Set by the Python host in bus_config.vpp_line;
 // firmware's using_p1_as_vpp() (memory_utils.h) detects 24/28/32-pin chips
 // whose physical VPP pin is socket pin 1 (after bodge wire / Rev 2.2 JP4) and
-// redirects CTRL_VPE_ENABLE → CTRL_VPP_P1_ENABLE in eprom.cpp. See
-// .planning/phases/04-hardware-validation-rurp-shield/04-HW-24PIN-INVESTIGATION.md
-// for the full hardware analysis.
+// redirects CTRL_VPE_ENABLE → CTRL_VPP_P1_ENABLE in eprom.cpp.
 #define VPP_P1_32_DIP               0x15
 #define VPP_P1_28_DIP               0x0F
 #define VPP_P21_24_DIP              0x0B

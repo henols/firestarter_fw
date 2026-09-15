@@ -146,11 +146,9 @@ _SCAN_JSMN = Path(
 # module docstring's "Region scope" section for why the scan stops here.
 _LIVE_STRUCT_END_MARKER = "#ifndef JSMN_HEADER"
 
-# ---------------------------------------------------------------------------
 # Concatenation-built needles. Coverage 5 asserts none of these appear
 # verbatim anywhere in this module's own source -- a gate that quotes its
 # own forbidden token verbatim matches itself and can never pass.
-# ---------------------------------------------------------------------------
 _SKIP_CALL = "pytest" + ".skip"
 _SKIPIF_MARKER = "mark" + ".skipif"
 _DEPENDENCY_SKIP_CALL = "importor" + "skip"
@@ -272,9 +270,7 @@ def _live_header_region(text):
     return text[:idx]
 
 
-# ---------------------------------------------------------------------------
 # Tests
-# ---------------------------------------------------------------------------
 
 
 def test_token_start_and_end_remain_signed_int():

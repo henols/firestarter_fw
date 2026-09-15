@@ -390,9 +390,7 @@ def _load_inventory():
     return json.loads(_INVENTORY_JSON.read_text())
 
 
-# ---------------------------------------------------------------------------
 # Tests
-# ---------------------------------------------------------------------------
 
 
 def test_blob_shas_match_the_recorded_inventory():
@@ -463,32 +461,6 @@ def test_exactly_one_protocol_keyed_site_at_the_pinned_line():
 def test_inventory_is_non_vacuous():
     inventory = _load_inventory()
     sites = inventory["sites"]
-    # FLOOR LOWERED 24 -> 23 (debug session w27c512-write-slow-3x), then
-    # 23 -> 22 (Phase 156 Plan 03, DEDUP-01), then 22 -> 21 (Phase 156 Plan
-    # 04, DEDUP-02). Each lowering is a deliberate change to what the
-    # assertion MEANS, not an anchor update, so it is called out rather than
-    # slipped in: the guard exists to make an empty or truncated inventory
-    # fail, and its constant must therefore track the real site count. The
-    # 23 -> 22 step is because eprom_check_vpp's over-voltage arm's
-    # `if (is_flag_set(FLAG_FORCE))` branch became a
-    # `bool force = is_flag_set(FLAG_FORCE);` assignment feeding two
-    # ternaries passed to the new shared mem_util_report_voltage helper --
-    # a genuine branch removal (the fork survives as a call-site parameter
-    # pair, not as a source-level `if`), not a relocation this extractor
-    # failed to find. The 22 -> 21 step is because
-    # eprom_internal_check_chip_id's `if (chip_id != handle->chip_id)`
-    # mismatch guard was RELOCATED (not removed from the codebase) into the
-    # new shared mem_util_report_chip_id's early return in
-    # src/proms/memory.cpp -- a file this extractor does not scan, so the
-    # site legitimately disappears from this file's inventory even though
-    # the underlying check still runs. Leaving 22 would have asserted a
-    # count the source can no longer produce. The guard is still
-    # non-vacuous at 21: an emptied or truncated inventory still fails
-    # here, and the substantive invariant this module exists for (exactly
-    # ONE tier-protocol site, at line 70) is asserted separately and
-    # independently by test_exactly_one_protocol_keyed_site_at_the_pinned_line.
-    # Re-derive this floor, do not guess it, if the inventory legitimately
-    # shrinks again.
     assert len(sites) >= 21, (
         f"non-vacuous guard: expected >= 21 recorded sites, got "
         f"{len(sites)} -- an empty or truncated inventory must FAIL, not "

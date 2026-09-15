@@ -186,12 +186,10 @@ def _line_of(text, idx):
     return text.count("\n", 0, idx) + 1
 
 
-# ---------------------------------------------------------------------------
 # Concatenation-built needles. Coverage 10 asserts none of these appear
 # verbatim anywhere in this module's own source -- see the module
 # docstring and the plan's own warning: a gate that quotes its forbidden
 # tokens verbatim matches itself and can never pass.
-# ---------------------------------------------------------------------------
 _NEEDLE_RETIRED_U16_EMIT = "LOG_OK_ID_" + "U16"
 _NEEDLE_MAX_PULSES_RESTATEMENT = "max_" + "pulses"
 _NEEDLE_ENERGY_CAP_US_RESTATEMENT = "energy_cap" + "_us"
@@ -219,16 +217,12 @@ _ALL_SELF_CHECK_NEEDLES = (
     ("a pytest dependency-skip call", _NEEDLE_DEPENDENCY_SKIP_CALL),
 )
 
-# ---------------------------------------------------------------------------
 # init_programmer_framed() body extraction.
-# ---------------------------------------------------------------------------
 _INIT_PROGRAMMER_FRAMED_DEF_RE = re.compile(
     r"\bbool\s+init_programmer_framed\s*\(\s*firestarter_handle_t\s*\*\s*handle\s*\)\s*\{"
 )
 
-# ---------------------------------------------------------------------------
 # Ack pack-layout patterns (Coverage 1-7).
-# ---------------------------------------------------------------------------
 _RETIRED_U16_EMIT_RE = re.compile(
     re.escape(_NEEDLE_RETIRED_U16_EMIT) + r"\s*\(\s*MSG_OK_READY\b"
 )
@@ -287,9 +281,7 @@ def _extract_ack_pack_body(stripped):
     return stripped[start : i - 1], m
 
 
-# ---------------------------------------------------------------------------
 # Tests -- ack pack-layout source contract (Coverage 1-7).
-# ---------------------------------------------------------------------------
 
 
 def test_the_retired_two_byte_ready_emit_is_gone():
@@ -469,9 +461,7 @@ def test_the_revision_byte_is_emitted_on_every_build_configuration():
     )
 
 
-# ---------------------------------------------------------------------------
 # Tests -- self-protection (Coverage 8-10).
-# ---------------------------------------------------------------------------
 
 
 def test_scan_targets_are_non_vacuous():

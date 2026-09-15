@@ -71,9 +71,8 @@ void rurp_internal_write_to_register(uint8_t reg, rurp_register_t data) {
     // PORTD value at the LSB-latched address. Pre-clearing PORTD = 0 with a
     // ~250 ns settle (4 NOPs) before the data write keeps the PD6 rising
     // edge in a quiet window before LE rises. Verified at the bench:
-    // restores 32-of-33 byte fidelity for FM1608. See .planning/debug/
-    // fm1608-fresh-chip-baseline.md. Leonardo path is unaffected (PD6 is
-    // not on the chip's data bus there).
+    // restores 32-of-33 byte fidelity for FM1608. Leonardo path is
+    // unaffected (PD6 is not on the chip's data bus there).
     if (reg == MOST_SIGNIFICANT_BYTE) {
         rurp_set_data_output();
         PORTD = 0;

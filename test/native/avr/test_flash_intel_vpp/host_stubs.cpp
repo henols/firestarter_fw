@@ -3,16 +3,6 @@
  * Copyright (c) 2024 Henrik Olsson
  *
  * Permission is hereby granted under MIT license.
- *
- * host stub TU for the test_flash_intel_vpp suite.
- * WR-06 — shared stub body lives in ../_shared/host_stubs_common.inc.
- *
- * Suite-specific extensions (these REPLACE the shared defaults — opt out
- * via HOST_STUBS_CUSTOM_* before including the shared file):
- *   - rurp_read_voltage_mv() is mockable via set_mock_vpp_mv() so the
- *     SAF-04 VPP-validation test can inject 12V vs out-of-spec readings.
- *   - rurp_get_hardware_revision() is mockable via set_mock_hw_rev() so
- *     the test can simulate REV0 vs non-REV0 board behaviour.
  */
 
 #include <stdint.h>

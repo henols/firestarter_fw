@@ -44,7 +44,7 @@ firestarter fw -i --pre        # pre-release
 ```
 
 Or download `firestarter_{board}.hex` from
-[Releases](https://github.com/henols/firestarter/releases) and flash it with `avrdude`.
+[Releases](https://github.com/henols/firestarter_fw/releases) and flash it with `avrdude`.
 
 Pre-release builds are tagged `X.Y.ZbN` or `X.Y.ZrcN` and marked "Pre-release", never "Latest",
 so a stable-installed CLI never pulls beta firmware by accident.

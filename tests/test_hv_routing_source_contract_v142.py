@@ -264,12 +264,10 @@ def _flexible_pattern_from_needle(needle):
     return r"\s*".join(re.escape(p) for p in parts)
 
 
-# ---------------------------------------------------------------------------
 # Concatenation-built needles. Coverage 16 asserts none of these appear
 # verbatim anywhere in this module's own source -- see the module
 # docstring and the plan's own warning: a gate that quotes its forbidden
 # tokens verbatim matches itself and can never pass.
-# ---------------------------------------------------------------------------
 _NEEDLE_PROTOCOL_EQUALITY = "handle->protocol" + " =="
 _NEEDLE_HV_OR_REG_THEN_DROP = "CTRL_VPP_REGULATOR_ENABLE" + " | CTRL_VPP_VPE_DROP_ENABLE"
 _NEEDLE_HV_OR_DROP_THEN_REG = "CTRL_VPP_VPE_DROP_ENABLE" + " | CTRL_VPP_REGULATOR_ENABLE"
@@ -289,9 +287,7 @@ _DEAD_REGULATOR_HELPER_RE = re.compile(
     r"\b" + re.escape(_NEEDLE_DEAD_REGULATOR_HELPER) + r"\b"
 )
 
-# ---------------------------------------------------------------------------
 # command_done() (src/firestarter.cpp) -- source-contract patterns.
-# ---------------------------------------------------------------------------
 _COMMAND_DONE_DEF_RE = re.compile(
     r"\bvoid\s+command_done\s*\(\s*firestarter_handle_t\s*\*\s*handle\s*\)\s*\{"
 )
@@ -316,9 +312,6 @@ _MSB_ZERO_RE = re.compile(
 )
 _CMD_IDLE_ASSIGN_RE = re.compile(r"\bhandle\s*->\s*cmd\s*=(?!=)\s*CMD_IDLE\s*;")
 
-# ---------------------------------------------------------------------------
-# VPP-03 structural patterns (src/proms/eprom.cpp).
-# ---------------------------------------------------------------------------
 _ROUTE_RESOLVER_DEF_RE = re.compile(
     r"\brurp_register_t\s+eprom_hv_route_mask\s*\(\s*firestarter_handle_t\s*\*\s*handle\s*\)\s*\{"
 )
@@ -334,9 +327,7 @@ _RESPONSE_ERROR_COMPARE_RE = re.compile(
 )
 _ALL_OFF_MASK_REF_RE = re.compile(r"\bEPROM_HV_ALL_OFF_MASK\b")
 
-# ---------------------------------------------------------------------------
 # include/ composite-count patterns (globbed, not seamed).
-# ---------------------------------------------------------------------------
 _ROUTE_MASK_DEFINE_RE = re.compile(r"#\s*define\s+EPROM_HV_ROUTE_MASK\b")
 _ALL_OFF_MASK_DEFINE_RE = re.compile(r"#\s*define\s+EPROM_HV_ALL_OFF_MASK\b")
 _CTRL_VPP_P1_ENABLE_RE = re.compile(r"\bCTRL_VPP_P1_ENABLE\b")
@@ -411,9 +402,7 @@ def _assert_pattern_absent(pattern, label, stripped, target_rel, requirement_not
     )
 
 
-# ---------------------------------------------------------------------------
 # Tests -- command_done() source contract (Coverage 1-4).
-# ---------------------------------------------------------------------------
 
 
 def test_command_done_is_defined_exactly_once():
@@ -504,10 +493,6 @@ def test_command_done_sets_the_command_to_idle():
         f"Body (comment-stripped):\n{body}"
     )
 
-
-# ---------------------------------------------------------------------------
-# Tests -- VPP-03 structural legs (Coverage 5-13).
-# ---------------------------------------------------------------------------
 
 
 def test_write_execute_and_write_init_wrappers_disable_conditionally():
@@ -708,9 +693,7 @@ def test_the_deleted_dead_regulator_guard_helper_does_not_return():
     )
 
 
-# ---------------------------------------------------------------------------
 # Tests -- self-protection (Coverage 14-16).
-# ---------------------------------------------------------------------------
 
 
 def test_scan_targets_are_non_vacuous():

@@ -145,9 +145,6 @@ _HERE = Path(__file__).resolve().parent
 _FW_REPO_ROOT = _HERE.parent
 _FW_DOC = _FW_REPO_ROOT / "platform" / "py32f071" / "FLASH-PATH-AND-PCB.md"
 
-# _META_DOC_REL and _SEED_REL are resolved through
-# meta_presence.meta_path(".planning", ...), never by string concatenation,
-# so a missing target under a present meta repo raises instead of skipping.
 _META_DOC_REL = "v1.23-FLASH-PATH-DECISION.md"
 _LINKER = _FW_REPO_ROOT / "platform" / "py32f071" / "linker" / "PY32F071xB_FLASH.ld"
 _SEED_REL = "seeds/py32f071-no-external-tool-fw-install.md"
@@ -318,14 +315,6 @@ def _synthetic_record(bodies):
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Plan 02 additions: the gated literals, needle sets and accessors the
-# parity/content class (TestFlashPathRecordSync, below) is built on. Every
-# leg still goes through the single _extract_shared_section /
-# _shared_sections / _assert_non_vacuous trio above -- no second extractor
-# is introduced here (the single-helper rule, PATTERNS S3a).
-# ---------------------------------------------------------------------------
-
 _README = _FW_REPO_ROOT / "platform" / "py32f071" / "README.md"
 
 # Three exact literals. Every character matters -- these are what plans
@@ -334,29 +323,21 @@ _README = _FW_REPO_ROOT / "platform" / "py32f071" / "README.md"
 # against these constants is a plain substring test, so the records may wrap
 # the sentence in `**` bold markers without breaking it.
 
-# PCB-01: the three-tier flash path does not retire the self-flash seed.
 _L1_NON_RETIREMENT = (
     "Landing the factory USB DFU path in v1.23 does not retire the "
     "self-flash bootloader seed."
 )
 
-# PCB-04: the hard ship gate -- no board ships, no release advertises a USB
-# identity, until a real PID is allocated under VID 0x1209 (pid.codes).
 _L2_SHIP_GATE = (
     "Ship gate: no PY32F071 board ships, and no release advertises a USB "
     "identity, until a PID allocated under VID 0x1209 exists."
 )
 
-# PCB-05: the socket-empty-before-install instruction.
 _L3_SOCKET_EMPTY = (
     "Before any PY32F071 firmware install — DFU, SWD or otherwise — "
     "the PROM socket must be empty."
 )
 
-# Needle tuples, one module constant per shared section. Each comment names
-# its source finding in 129-RESEARCH.md.
-
-# PCB-01, RESEARCH S"Three-Tier Flash Path".
 _S1_NEEDLES = (
     "self-flash bootloader",
     "CDC",
@@ -368,7 +349,6 @@ _S1_NEEDLES = (
     "last resort",
 )
 
-# PCB-02, F-5/F-8/F-9/F-10/F-11.
 _S2_NEEDLES = (
     "PF8",
     "nBOOT1",
@@ -395,7 +375,6 @@ _S2_NEEDLES = (
 # CONTEXT S"Specifics" -- "the record should state its own edges".
 _S2_UNDECIDED_NEEDLES = ("socket", "ZIF", "connector", "power budget")
 
-# PCB-03, F-1/F-3/C-1/C-4.
 _S3_NEEDLES = (
     "0x08000000",
     "0x0801DFFF",
@@ -425,12 +404,8 @@ _S3_NEEDLES = (
 # + whitespace + "sectors". Case-insensitive.
 _S3_FIGURE_RE = re.compile(r"24\s*KiB|3\s+(?:whole\s+)?sectors", re.IGNORECASE)
 
-# D-10: at least one of these must appear within a two-line window either
-# side of every _S3_FIGURE_RE match, so the figure never appears without its
-# migration cost attached.
 _S3_COST_TOKENS = ("ORIGIN", "migration", "re-flash")
 
-# PCB-04, C-2/F-6/F-7/F-12/F-17.
 _S4_NEEDLES = (
     "0x1209",
     "1209:0001",
@@ -446,7 +421,6 @@ _S4_NEEDLES = (
     "0xFE/0x01",
 )
 
-# PCB-05, F-13.
 _S5_NEEDLES = (
     "provisional",
     "RURP_PY32F071_PINMAP_PROVISIONAL",
@@ -455,7 +429,6 @@ _S5_NEEDLES = (
     "three board revisions",
 )
 
-# D-11, C-1.
 _LINKER_NEEDLES = (
     "FLASH-PATH-AND-PCB.md",
     "v1.23-FLASH-PATH-DECISION.md",
@@ -464,12 +437,6 @@ _LINKER_NEEDLES = (
     "BOOTLOADER (rx) : ORIGIN = 0x08000000, LENGTH = 0",
 )
 
-# The two-word clause C-1 requires the linker script's BOOTLOADER comment to
-# no longer carry: this part declares __VTOR_PRESENT 1 and the compiled
-# SystemInit writes SCB->VTOR at every boot (RESEARCH C-1), so "on a part
-# with no VTOR" is factually false. The record -- not this repo's
-# REQUIREMENTS.md or ROADMAP.md -- is where the correction is stated;
-# Phase 130's CLOSE-01 sweep owns that prose.
 _LINKER_FORBIDDEN_RE = re.compile(r"no\s+VTOR", re.IGNORECASE)
 
 

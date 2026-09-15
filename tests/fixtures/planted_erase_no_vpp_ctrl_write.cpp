@@ -1,13 +1,3 @@
-// planted_erase_no_vpp_ctrl_write.cpp -- Phase 153 Plan 05 (ERASE-04,
-// D-153-03).
-//
-// DELIBERATELY-BROKEN fixture, never compiled. tests/fixtures/ sits outside
-// every build_src_filter -- PlatformIO builds from src/ and test/, never
-// tests/ -- so this file is never fed to avr-g++ or the native host
-// compiler. Its single purpose is to prove
-// scripts/check_erase_no_vpp.py can FAIL: real reachability evidence for
-// the primary GATE-03 control, not merely a claim in a summary.
-//
 // This is a copy of the real eeprom28c_erase_execute body
 // (firestarter/src/proms/eeprom_28c.cpp) with one splice added: a VPP/VPE
 // control-register write bracketed by rurp_chip_enable()/rurp_chip_disable()

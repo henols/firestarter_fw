@@ -9,9 +9,6 @@
  * Provides no-op rurp_* symbol implementations so the test binary links
  * against boards/rurp_serial_utils.cpp (pulled in via build_src_filter) on
  * the host platform = native without a real AVR toolchain.
- *
- * Mirrors the pattern from test_cobs_data_frame/host_stubs.cpp (Phase 50).
- * No suite-specific overrides — defaults from the shared include are correct.
  */
 
 #include <stdint.h>

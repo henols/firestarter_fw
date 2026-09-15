@@ -19,7 +19,7 @@ the meta root is `Path(__file__).resolve().parent.parent.parent` -- one
 level further up than `firestarter_app/tests/fw_presence.py`'s sibling
 arithmetic (that module's app repo and the firmware repo are siblings under
 a common parent; this repo's meta root IS that common parent). Under
-`actions/checkout` of `henols/firestarter` in isolation, that parent
+`actions/checkout` of `henols/firestarter_fw` in isolation, that parent
 directory is simply the runner's work directory and `.planning/` does not
 exist there at all (RESEARCH F-14) -- an entirely ordinary absent-repo case,
 not an error.
@@ -62,10 +62,8 @@ from pathlib import Path
 
 import pytest
 
-# ---------------------------------------------------------------------------
 # The one seam: only the ROOT path is overridable, never the marker name.
 # ---------------------------------------------------------------------------
-#
 # Layout: firestarter/tests/meta_presence.py -> two parents up is the
 # firmware repo root; its PARENT is the meta repo root (the firmware repo is
 # a submodule OF the meta repo, not a sibling of it -- one level further up

@@ -4,9 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Tier-1 validation suite for the Flash 5V-Page family.
- * HARN-01 / D-07 / T-71-WIRED-WRONG.
- *
  * Proves the configure_flash_5v_page dispatch/configure phase is VPP-safe.
  * BY SIDE-EFFECT via the recording bus stub:
  *
@@ -18,9 +15,6 @@
  *   configure/dispatch phase. A subset of cases below also drive
  *   flash_5v_page_write_init through the dispatched pointer and assert the
  *   same property over that call.
- *
- * Protocols covered: 0x05 (FLASH_AMD_STD), 0x35 (FLASH_EEPROM), 0x39 (FLASH_EEPROM2).
- * make_handle() phantom-protocol integer literals (0x35, 0x39) unchanged (GATE-01).
  */
 
 #include <Arduino.h>
@@ -33,7 +27,6 @@
 extern "C" {
 #include "memory.h"
 }
-/* (ERASE-02): is_operation_in_progress resolves from here. */
 #include "operation_utils.h"
 #include "firestarter.h"
 #include "flash_utils.h"
@@ -49,22 +42,8 @@ extern "C" int  bus_recording_count();
 extern "C" uint8_t recorded_reg(int i);
 extern "C" uint8_t recorded_data(int i);
 
-/* (LOCK-02) — wire-byte capture for the CMD_LOCK_STATUS legs
- * below. [env:native]'s build_src_filter links the REAL
- * src/boards/rurp_serial_utils.cpp into this test binary (see that file's
- * header comment), so LOG_DATA_ID_BYTES -> rurp_log_id -> _firestarter_
- * emit_frame really does write one byte at a time to SERIAL_PORT — exactly
- * the mechanism test_messages/test_rurp_log_id.cpp already captures this
- * same way. */
 static std::vector<uint8_t> s_wire_bytes;
 
-/* (LOCK-02) — a controllable stand-in for handle->firestarter_get_data,
- * installed AFTER configure_memory() has already assigned the real
- * memory_get_data, so it overrides only the specific call the raw-byte-
- * fidelity leg needs to control. Ignores address/handle deliberately: this
- * suite's synthetic handle carries a zero-initialized bus_config, so the
- * real memory_get_data's address remap has no meaningful address to
- * preserve anyway -- this suite never asserts on the remapped address. */
 static uint8_t s_stub_raw_value = 0;
 static uint8_t stub_get_data_return_fixed(firestarter_handle_t* handle, uint32_t address) {
     (void)handle; (void)address;
@@ -81,10 +60,6 @@ void setUp(void) {
         });
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
-    /* delayMicroseconds is called by flash_5v_page_wait_for_page_write (10µs poll delay)
-     * and by memory_set_data/memory_get_data (3µs write/read settle). Must be stubbed so
-     * the operation-phase tests (test_5v_page_write_execute_*, and Phase 151's
-     * CMD_LOCK_STATUS legs below) don't abort on an unmocked call. */
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
     When(Method(ArduinoFake(), delay)).AlwaysReturn();
     clear_bus_recording();
@@ -179,7 +154,6 @@ void test_5v_page_0x39_write_configure_no_vpp(void) {
         "configure_flash_5v_page 0x39 CMD_WRITE configure-phase must NOT set any VPP-enable CTL bit");
 }
 
-/* ─── FIX-02B (Phase 74 Plan 02): operation-phase SDP emission + VPP-safety ─ */
 /*
  * These two tests exercise flash_5v_page_write_execute (the operation phase, not just
  * configure), using the recording-bus stub to observe side effects.
@@ -317,20 +291,6 @@ void test_5v_page_write_execute_no_vpp(void) {
         "flash_5v_page_write_execute (operation phase) must NOT set any VPP-enable CTL bit");
 }
 
-/* ─── Phase 153 (ERASE-02): write-INIT must perform no pre-write blank
- * check on protocol 0x05, whether or not the blank-check skip flag is set ─ */
-
-/* Case (ERASE-02): with FLAG_SKIP_BLANK_CHECK and FLAG_CAN_ERASE both clear,
- * one call to flash_5v_page_write_init, driven through the dispatch
- * pointer (not by function name, so this exercises what configure_memory
- * actually wired), must leave is_operation_in_progress FALSE.
- * mem_util_blank_check is the ONLY setter of is_operation_in_progress on
- * this path, and it sets that flag and saves the blank-check address as
- * unconditionally adjacent statements in the same then-branch of the same
- * if, with no intervening control flow, early return or condition -- so a
- * FALSE result here strictly implies that branch never executed, which is
- * the single-shot-INIT proof, not an assumption of symmetry with the 0x0D
- * case (test_case30, test_eeprom28c_sdp.cpp). */
 void test_5v_page_write_init_no_blank_check_erase02(void) {
     firestarter_handle_t h = make_write_init_handle_blank_check_enabled();
     configure_memory(&h);
@@ -379,8 +339,6 @@ void test_5v_page_write_init_no_vpp_with_flag_can_erase_set(void) {
         "flash_5v_page_write_init must energise no VPP rail even when "
         "FLAG_CAN_ERASE is set");
 }
-
-/* ─── Phase 151 (LOCK-02): CMD_LOCK_STATUS legs (protocol 0x05) ─────────── */
 
 /* Leg 1 (Dispatch): CMD_LOCK_STATUS must wire firestarter_operation_main to
  * flash_5v_page_read_protection_execute. Unlike flash_nor_unlock.cpp, this
@@ -448,11 +406,6 @@ void test_5v_page_lock_status_no_vpp(void) {
         "flash_5v_page_read_protection_execute must NOT set any VPP-enable CTL bit -- this is a 5V read");
 }
 
-/* Leg 4 (Raw byte fidelity): stubs the data read to a value matching
- * neither decode constant, and proves the raw byte survives onto the wire
- * UNMODIFIED (byte 0) with the 0xFF indeterminate decode (byte 1) -- the
- * property D-03's probe legs depend on (a wrong decode must never destroy
- * the observation). */
 void test_5v_page_lock_status_raw_byte_fidelity(void) {
     firestarter_handle_t h = make_handle(0x05, CMD_LOCK_STATUS);
     configure_memory(&h);
@@ -541,11 +494,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_5v_page_write_execute_emits_sdp);
     RUN_TEST(test_5v_page_write_execute_no_vpp);
 
-    /* (ERASE-02): write-INIT blank-check removal proof */
     RUN_TEST(test_5v_page_write_init_no_blank_check_erase02);
     RUN_TEST(test_5v_page_write_init_no_vpp_with_flag_can_erase_set);
 
-    /* (LOCK-02): CMD_LOCK_STATUS legs (protocol 0x05) */
     RUN_TEST(test_5v_page_lock_status_dispatch);
     RUN_TEST(test_5v_page_lock_status_pinned_sequence);
     RUN_TEST(test_5v_page_lock_status_no_vpp);

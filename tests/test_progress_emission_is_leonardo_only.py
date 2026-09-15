@@ -257,12 +257,10 @@ def _line_of(text, idx):
     return text.count("\n", 0, idx) + 1
 
 
-# ---------------------------------------------------------------------------
 # Concatenation-built needles. Coverage 10 asserts none of these appear
 # verbatim anywhere in this module's own source -- see the module docstring
 # and its Naming note: a gate that quotes its forbidden tokens verbatim
 # matches itself and can never pass.
-# ---------------------------------------------------------------------------
 _NEEDLE_SERIAL_ON_IO_DEFINE = "-D" + " SERIAL_ON_IO"
 _NEEDLE_DATA_SIZE_PAYLOAD = "handle" + "->data_size"
 _NEEDLE_SKIP_CALL = "pytest" + ".skip"
@@ -280,10 +278,8 @@ _ALL_SELF_CHECK_NEEDLES = (
     ("a pytest dependency-skip call", _NEEDLE_DEPENDENCY_SKIP_CALL),
 )
 
-# ---------------------------------------------------------------------------
 # eprom_internal_write_execute_body() extraction (same discipline as both
 # analogs' own brace-matched body extractors).
-# ---------------------------------------------------------------------------
 _WRITE_EXECUTE_BODY_DEF_RE = re.compile(
     r"\bstatic\s+void\s+eprom_internal_write_execute_body\s*\(\s*firestarter_handle_t\s*\*\s*handle\s*\)\s*\{"
 )
@@ -327,9 +323,6 @@ _PP_DIRECTIVE_RE = re.compile(
     re.MULTILINE,
 )
 
-# platformio.ini section splitting -- NOT comment-stripped: this file uses
-# ';' comments, and neither of D-25's two plant directions for Coverage 7
-# involves a comment, so a dedicated ini comment-stripper is not needed.
 _ANY_SECTION_HEADER_RE = re.compile(r"^\[([^\]]*)\][ \t]*$", re.MULTILINE)
 # Regex-escape-based detection (NOT the registered needle -- see the
 # module docstring's Naming note): '-D\s+SERIAL_ON_IO' as a PATTERN never
@@ -438,9 +431,7 @@ def _iter_env_sections(pio_text):
     return sections
 
 
-# ---------------------------------------------------------------------------
 # Tests -- write-execute-body source contract (Coverage 1-7).
-# ---------------------------------------------------------------------------
 
 
 def test_the_progress_emit_exists_inside_the_write_execute_body():
@@ -663,9 +654,7 @@ def test_serial_on_io_is_defined_on_exactly_the_uno_class_envs():
     )
 
 
-# ---------------------------------------------------------------------------
 # Tests -- self-protection (Coverage 8-10).
-# ---------------------------------------------------------------------------
 
 
 def test_the_emit_is_gated_to_the_first_pass():

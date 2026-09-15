@@ -96,8 +96,6 @@ _HEADER_PATH = Path(os.environ.get("FIRESTARTER_PARAMS_HEADER", _REPO_ROOT / _HE
 _SOURCE_PATH = Path(os.environ.get("FIRESTARTER_PARAMS_SOURCE", _REPO_ROOT / _SOURCE_REL))
 _CITATIONS_PATH = Path(os.environ.get("FIRESTARTER_PARAMS_CITATIONS", _CITATIONS_DEFAULT))
 
-# The frozen field-name list (TABLE-01) and row-key list, in their required
-# declaration order. Test 2 and test 4 assert the live parse equals these.
 _FROZEN_FIELD_NAMES = [
     "overprogram_cap_us",
     "energy_cap_us",
@@ -108,11 +106,6 @@ _FROZEN_FIELD_NAMES = [
 ]
 _FROZEN_ROW_KEYS = ["0x07", "0x08", "0x0B"]
 
-# TABLE-02's trap: max_pulses is a legitimate field whose name contains the
-# substring "pulse" -- a naive "no field name contains pulse" assertion is
-# fooled by it. This regex is the negative half; the positive half (the
-# ONLY "pulse"-containing name is exactly max_pulses) is asserted separately
-# in test_no_pulse_width_column_exists.
 _PULSE_WIDTH_RE = re.compile(r"(?i)(pulse_(width|delay|us)|fallback_pulse)")
 
 _BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)

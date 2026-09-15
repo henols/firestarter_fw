@@ -165,10 +165,8 @@ _SCAN_PRECHANGE = Path(
 _REAL_NEW_PATH = _REPO_ROOT / _NEW_REL
 _REAL_PRECHANGE_PATH = _REPO_ROOT / _PRECHANGE_REL
 
-# ---------------------------------------------------------------------------
 # Entry kind/pin vocabulary -- from the fixture's own macros and
 # include/rurp_shield.h:53-57 (verified this session).
-# ---------------------------------------------------------------------------
 _KIND_STROBE_DATA = 1
 _KIND_STROBE_PIN = 2
 _KIND_DELAY_US = 3
@@ -180,17 +178,6 @@ _PIN_OE = 0x04    # OUTPUT_ENABLE -- the program-vs-verify discriminator
 _PIN_CTRL = 0x08  # CONTROL_REGISTER -- HV route / top-address latch
 _PIN_CE = 0x20    # CHIP_ENABLE -- the pulse strobe AND the verify-read strobe
 
-# The recorded control `value` on a STROBE_KIND_PIN/_PIN_CTRL entry is
-# POST-MAPPING and 8-bit: rurp_write_to_register applies
-# rurp_map_ctrl_reg_for_hardware_revision(data) before the strobe, and
-# `native` compiles with -D HARDWARE_REVISION, so the CTRL_VPP_VPE_DROP_
-# ENABLE flag -- one bit wider than the recorded 8-bit `value` field can
-# hold -- never appears at its true (9-bit) numeric position in either
-# fixture; it appears as whatever physical bit the mapper assigns instead.
-# No segmentation rule below tests for that out-of-range 9-bit literal
-# (F-07).
-
-# ---------------------------------------------------------------------------
 # Parse -- re-implemented (never imported) from
 # test_golden_trace_identity_eprom_v131.py's own _ARRAY_DECL_RE/_parse_arrays
 # technique (:131-144), extended to capture all four fields per entry
@@ -200,7 +187,6 @@ _PIN_CE = 0x20    # CHIP_ENABLE -- the pulse strobe AND the verify-read strobe
 # and is also why a comment-KEYED classifier is impossible here: the new
 # stream carries no other comment content at all, so any rule keyed on
 # comment text would classify zero of its 381 entries.
-# ---------------------------------------------------------------------------
 _ARRAY_DECL_RE = re.compile(
     r"static const v131_trace_entry_t\s+(\w+)\[\]\s*=\s*\{(.*?)\};",
     re.DOTALL,
@@ -252,25 +238,8 @@ def _format_entry(entry):
     return f"(kind={kind}, pin=0x{pin:02X}, value=0x{value:02X}, us={us})"
 
 
-# ---------------------------------------------------------------------------
-# D-07's six named segments, in stream order (life-cycle order: the block
-# is initialised once, its HV route is asserted lazily on first use, each
-# byte's address is set, each byte is pulsed and verified in a per-byte
-# loop, and (on an error exit only -- never observed in either successful
-# capture here) the route would be torn down).
-# ---------------------------------------------------------------------------
 _SEGMENTS = ("init", "route_assert", "address_set", "pulse", "verify_read", "teardown")
 
-# _SEGMENT_ATTRIBUTION -- one non-empty tuple of attributing citations per
-# name in _SEGMENTS, ALWAYS present regardless of whether that segment is
-# ever populated with an index in either stream (teardown's own entry is
-# exactly this case: present with a ZERO attributed-index count in every one
-# of the six arrays, because both captures are of a SUCCESSFUL synthetic
-# block, and Phase 143 D-09/D-10 (as amended) deliberately leaves a
-# successful block's HV route energised rather than disabling it -- so this
-# segment's zero-entry contribution is recorded here EXPLICITLY, never
-# omitted).
-#
 # Restated from the module docstring: this map proves attribution is
 # COMPLETE (every present segment is named), not that any one citation is
 # CORRECT -- correctness of "why" is the phase record's own judgement.
@@ -332,19 +301,6 @@ _SEGMENT_ATTRIBUTION = {
     ),
 }
 
-# _PRECHANGE_EXPECTED / _NEW_EXPECTED -- hardcoded per-array entry-count
-# literals, positional (PROTO_07, PROTO_08, PROTO_0B), never derived.
-# _TOTAL_ENTRY_FLOOR = 1001 = 620 (198+221+201, the frozen pre-change stream)
-# + 381 (131+149+101, the new stream) -- D-07's own denominator.
-#
-# RE-ANCHORED by debug session w27c512-program-fail-byte0 from 885 / 265
-# (91+115+59). The new stream grew because that session restored the
-# program-voltage route assert Phase 141 had dropped: each program pulse now
-# carries a CONTROL latch group raising the route, an EPROM_VPP_SETUP_US
-# settle, an EPROM_VPP_HOLD_US settle and a CONTROL latch group lowering it
-# again. The PRE-CHANGE subtotal is untouched at 620 -- that fixture is
-# frozen and this session did not re-capture it.
-#
 # RE-ANCHORED AGAIN by debug session w27c512-write-slow-3x, from 981 / 361
 # (121+148+92) to 1001 / 381 (131+149+101). That session replaced the per-BYTE
 # program loop with a PASS-BATCHED one -- the program-voltage route is now
@@ -363,7 +319,6 @@ _NEW_EXPECTED = (131, 149, 101)
 _TOTAL_ENTRY_FLOOR = 1001  # 620 (pre-change) + 381 (new)
 
 
-# ---------------------------------------------------------------------------
 # The six-segment state machine.
 #
 # Design note (why a "match, don't consume-and-raise" shape): entries are
@@ -384,7 +339,6 @@ _TOTAL_ENTRY_FLOOR = 1001  # 620 (pre-change) + 381 (new)
 # test_every_entry_falls_in_exactly_one_segment (a genuine, non-tautological
 # check on the RETURNED sets) is what catches it, distinctly from Plant A's
 # immediate raise.
-# ---------------------------------------------------------------------------
 
 
 def _validate_known_primitive(entry, index, array_name):
@@ -600,9 +554,7 @@ def _segment_indices(entries, array_name="<array>"):
     return segs
 
 
-# ---------------------------------------------------------------------------
 # Tests -- parse lengths (Coverage 1-2).
-# ---------------------------------------------------------------------------
 
 
 def test_prechange_arrays_parse_to_the_recorded_lengths():
@@ -652,9 +604,7 @@ def test_new_arrays_parse_to_the_captured_lengths():
     )
 
 
-# ---------------------------------------------------------------------------
 # Tests -- the exhaustiveness gate itself (Coverage 3-6).
-# ---------------------------------------------------------------------------
 
 
 def test_every_entry_falls_in_exactly_one_segment():
@@ -820,9 +770,7 @@ def test_total_attributed_entry_count_matches_the_floor():
     assert new_total == 381, f"new attributed subtotal is {new_total}, expected 381"
 
 
-# ---------------------------------------------------------------------------
 # Tests -- self-protection (Coverage 7-9).
-# ---------------------------------------------------------------------------
 
 
 def test_scan_targets_are_non_vacuous():
@@ -938,12 +886,6 @@ def test_own_needles_do_not_appear_verbatim_in_this_module():
         )
 
 
-# ---------------------------------------------------------------------------
-# D-18 planted-violation machinery (Coverage 10-11). Both legs prove this
-# module's own RED is LOCATING, not just present: a pre-authored leg can be
-# UNREACHABLE, and RED alone proves nothing until it has also been seen to
-# fail for the right reason (D-18, 144-CONTEXT.md).
-#
 # A CHILD PROCESS is mandatory for both plants: _SCAN_NEW/_SCAN_PRECHANGE
 # bind at IMPORT time, and monkeypatch.setenv cannot reach an already-
 # imported module-level value (S6). Copied structurally from
@@ -952,7 +894,6 @@ def test_own_needles_do_not_appear_verbatim_in_this_module():
 # guard (itself copied from tests/test_flash_path_record_sync.py's
 # FIRESTARTER_129_GATE_CHILD), extended here to accept more than one node
 # id at once (Plant B scopes to two legs in a single child run).
-# ---------------------------------------------------------------------------
 
 
 def _resolve_git():
@@ -1277,13 +1218,6 @@ def test_planted_delete_and_duplicate_defeats_a_count_only_check(tmp_path):
         "planted-delete-and-duplicate test."
     )
 
-
-# ---------------------------------------------------------------------------
-# __main__ -- prints the per-segment old-versus-new count table for all
-# three protocols. CHECKER_GLOB (tests/test_checker_convention.py) never
-# reaches tests/, so this costs nothing (F-08) -- and the table is the
-# evidence plan 144-07's record pastes.
-# ---------------------------------------------------------------------------
 
 
 def _protocol_suffix(array_name):

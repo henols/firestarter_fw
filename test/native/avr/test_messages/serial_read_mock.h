@@ -85,11 +85,6 @@ static void setup_serial_read_mock(const std::vector<uint8_t>& queue, size_t& po
             return (int)(uint8_t)queue[pos];
         });
 
-    /* Serial.readBytes(char* buf, size_t len) — copies up to `len` bytes
-     * from the queue into `buf`, advances pos, returns count copied.
-     * Needed by the CURRENT len_u16+XOR decoder (rurp_communication_read_bytes
-     * calls SERIAL_PORT.readBytes).  After Plan 02 rewrites the decoder to
-     * use read()/available(), this mock becomes unused but remains harmless. */
     When(Method(ArduinoFake(Serial), readBytes))
         .AlwaysDo([&queue, &pos](char* buf, size_t length) -> size_t {
             size_t count = 0;

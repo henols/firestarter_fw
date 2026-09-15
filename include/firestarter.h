@@ -40,8 +40,7 @@
 
 /* FW identity string: "<version>:<board>" only.
  * Buffer capacity (DATA_BUFFER_SIZE) is no longer carried in the identity
- * string — it is advertised as a u16 bytes param on every MSG_OK_READY ack
- * (CAP-01). */
+ * string — it is advertised as a u16 bytes param on every MSG_OK_READY ack. */
 #define FW_VERSION VERSION ":" RURP_BOARD_NAME
 
 #define TIMEOUT_MS 1000

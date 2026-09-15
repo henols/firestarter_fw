@@ -4,16 +4,10 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * host stub TU for the test_val_sram Tier-1 suite.
- * WR-06 — shared stub body lives in ../_shared/host_stubs_common.inc.
- *
  * Suite-specific extensions:
  *   - HOST_STUBS_RECORD_BUS: activate the recording buffer so the test can
  *     observe all rurp_write_to_register calls and assert the zero-write
  *     no-op baseline for the SRAM handler.
- *
- * PITFALL 1 (from 71-PATTERNS.md): HOST_STUBS_RECORD_BUS MUST be defined
- * BEFORE #include of host_stubs_common.inc.
  */
 
 #include <stdint.h>

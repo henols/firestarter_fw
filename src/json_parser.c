@@ -113,11 +113,11 @@ typedef struct {
  * FIELD_MASK -- MASK policy (bitmask fields). Refuses to saturate a bitmask
  * to its type maximum: on `ctrl_flags` that would set every control flag at
  * once, including FLAG_FORCE, FLAG_SKIP_ERASE and FLAG_SKIP_BLANK_CHECK --
- * a fail-OPEN in the phase whose headline criterion is fail-closed (OD-1).
+ * a fail-OPEN where the required behaviour is fail-closed.
  * This preserves today's width-limited truncation for a bitmask instead,
  * and does nothing else -- it does not attempt to reject an out-of-range
- * bitmask, because `reject` needs a new message id, which needs meta-repo
- * codegen this firmware-only phase declines (OD-1).
+ * bitmask, because `reject` needs a new message id, and message ids are
+ * generated from the catalog rather than written here.
  */
 #define FIELD_MASK(k, member)                                                \
     { (k), (uint16_t)0, (uint8_t)offsetof(firestarter_handle_t, member),     \

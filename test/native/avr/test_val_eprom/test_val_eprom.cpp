@@ -4,9 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Tier-1 validation suite for the EPROM family.
- * HARN-01 / D-07 / D-08 (verify-can-fail posture).
- *
  * Proves configure_eprom behavior BY SIDE-EFFECT via the recording bus stub:
  *
  *   POSITIVE tests (CMD_WRITE): configure_memory() + firestarter_operation_init()
@@ -14,12 +11,6 @@
  *     → rurp_write_to_register(CONTROL_REGISTER, value | CTRL_VPP_REGULATOR_ENABLE)
  *     The recording must contain at least one CONTROL_REGISTER write with
  *     CTRL_VPP_REGULATOR_ENABLE set.
- *
- *   NEGATIVE CONTROL (CMD_READ, configure-only phase): configure_memory() alone
- *     (no firestarter_operation_init call). configure_memory calls
- *     mem_util_set_address(handle, 0) which writes LSB/MSB/CONTROL registers
- *     with only address bits — no VPP-enable bits. Asserts CTRL_VPP_REGULATOR_ENABLE
- *     NEVER appears in the recording (proves in-tier verify-can-fail per D-08).
  *
  * Protocols covered: 0x07 (EPROM_STD), 0x08 (EPROM_QUICK), 0x0B (EPROM_LEGACY).
  *
@@ -164,12 +155,6 @@ void test_eprom_0x0B_write_enables_vpp_regulator(void) {
 
 /* ─── NEGATIVE CONTROL: CMD_READ, configure-only — VPP must NOT fire ─────── */
 
-/* For CMD_READ, only configure_memory() is called (no firestarter_operation_init
- * call). configure_memory routes to configure_eprom which only sets function
- * pointers, then mem_util_set_address writes LSB/MSB/CONTROL with address bits
- * only — no VPP-enable bits. This asserts the configure/dispatch phase alone
- * never enables VPP (D-08 verify-can-fail: this test goes RED if a regression
- * puts VPP enable inside configure_memory or configure_eprom itself). */
 void test_eprom_0x07_read_configure_only_does_not_enable_vpp(void) {
     firestarter_handle_t h = make_handle(0x07, CMD_READ);
     configure_memory(&h);
@@ -229,21 +214,10 @@ void test_eprom_0x0B_read_configure_only_does_not_enable_vpp(void) {
  * with the programmed-byte count.
  *
  * WHY IT IS PINNED HERE, of all places: CI runs only `pio test -e native`
- * and `-e native_nodevtools` (.github/workflows/build.yml:142,155,
- * beta-build.yml:122,128). It does not run native_trace_v131 (which owns the
- * frozen cadence golden), native_loop_v131, native_params_v131 or
- * native_pinmap_provisional, and it does not run check_size_baseline.py at
+ * and `-e native_nodevtools`, which are now the only native envs. It does
+ * not run check_size_baseline.py at
  * all. test_val_eprom is in BOTH pinned envs' test_filter, so this is the
  * only place an automated gate can see the cadence.
- *
- * THE REGRESSION IT CATCHES: v1.31's LOOP-01 rewrite made the loop per-BYTE
- * and put the route assert inside that per-byte step, so every programmed
- * byte paid EPROM_VPP_SETUP_US (1000 us) + EPROM_VPP_HOLD_US (100 us) of
- * settle. Measured on a leonardo with a W27C512: 1.568 s per 1024-byte block,
- * 105.89 s for a 64 KiB device, against 29.71 s on the v2.x firmware
- * (gh#36 / gh#42). Restoring v2.0.6's per-PASS granularity brought the same
- * write to 33.51 s, byte-exact. If either count below climbs toward the block
- * length again, that regression is back.
  *
  * WHY ROUTE ASSERTS AND NOT TIMING: this suite's recorder (HOST_STUBS_RECORD_
  * BUS) sees rurp_write_to_register calls only -- no data strobes, no pins, no

@@ -35,10 +35,6 @@ void setUp(void) {
 
 void tearDown(void) {}
 
-/* Build a zero-initialized handle with only the three named fields set.
- * mem_type is retained as a vestigial (ignored) parameter to avoid
- * touching every call site now that firestarter_handle_t.mem_type is gone
- * (Phase 105 removal). */
 static firestarter_handle_t make_handle(uint32_t protocol, uint8_t mem_type, uint8_t cmd) {
     (void)mem_type;
     firestarter_handle_t h = {};
@@ -47,8 +43,6 @@ static firestarter_handle_t make_handle(uint32_t protocol, uint8_t mem_type, uin
     h.response_code = RESPONSE_CODE_OK;
     return h;
 }
-
-/* --- Named infeasibility arms (DISP-04) --- */
 
 void test_protocol_0x11_fwh_not_implemented(void) {
     firestarter_handle_t h = make_handle(0x11, 0, CMD_READ);
@@ -86,8 +80,6 @@ void test_protocol_0x2C_pld_not_implemented(void) {
     TEST_ASSERT_NULL(h.firestarter_operation_end);
 }
 
-/* --- Generic fail-closed catch-all (DISP-01) --- */
-
 void test_unknown_nonzero_protocol_0x99_not_implemented(void) {
     firestarter_handle_t h = make_handle(0x99, 0, CMD_READ);
     configure_memory(&h);
@@ -97,7 +89,6 @@ void test_unknown_nonzero_protocol_0x99_not_implemented(void) {
     TEST_ASSERT_NULL(h.firestarter_operation_end);
 }
 
-/* SC#1 (Phase 105): protocol == 0 now fail-closes (no mem_type fallback). */
 void test_protocol_zero_fail_closes_not_implemented(void) {
     firestarter_handle_t h = make_handle(0, 0, CMD_READ);
     configure_memory(&h);
@@ -106,13 +97,6 @@ void test_protocol_zero_fail_closes_not_implemented(void) {
     TEST_ASSERT_NULL(h.firestarter_operation_main);
     TEST_ASSERT_NULL(h.firestarter_operation_end);
 }
-
-/* --- TRACE-03d / D-04 item 4 (Phase 116) --- */
-/* Contract: only protocol == 0x0D may reach configure_eeprom28c(); every
- * other value — including these two nearest unassigned neighbours —
- * fail-closes with zero hardware side effects. CMD_WRITE (not CMD_READ) is
- * used because CMD_WRITE is precisely the command that *would* install
- * eeprom28c_write_init if dispatch leaked. */
 
 void test_protocol_0x0C_adjacent_not_implemented(void) {
     firestarter_handle_t h = make_handle(0x0C, 0, CMD_WRITE);
@@ -149,7 +133,6 @@ int main(int argc, char** argv) {
     /* SC#1: protocol == 0 fail-closed (no mem_type fallback) */
     RUN_TEST(test_protocol_zero_fail_closes_not_implemented);
 
-    /* TRACE-03d / D-04 item 4: protocols adjacent to 0x0D fail-closed */
     RUN_TEST(test_protocol_0x0C_adjacent_not_implemented);
     RUN_TEST(test_protocol_0x0F_adjacent_not_implemented);
 

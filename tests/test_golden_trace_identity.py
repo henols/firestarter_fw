@@ -228,13 +228,6 @@ def test_git_is_required_not_optional():
     this_source = Path(__file__).read_text()
     for line in this_source.splitlines():
         stripped = line.strip()
-        # Real usage of either construct is always a statement/decorator
-        # start-of-line -- never embedded mid-string -- so startswith()
-        # correctly identifies actual code while never self-matching this
-        # very check's own prose (docstring text, f-string messages, and
-        # this assertion's own condition text never START a line with
-        # either literal). This mirrors 124-01-SUMMARY.md's Deviation #3
-        # fix for the same self-matching-string-assertion class of bug.
         assert not stripped.startswith("pytest.skip"), (
             f"found a skip-bypass call at: {line!r} -- git absence must "
             "FAIL this suite, never take this bypass (T-124-11)."

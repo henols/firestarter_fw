@@ -20,11 +20,6 @@
  * the cases here establish the behavioral contract that Task-2 surgery must
  * satisfy.
  *
- * Covers:
- *   FRAME-05 (command-channel COBS decode, CRC8-before-parse)
- *   CRC-01   (command-channel integrity — reject corrupted frames)
- *   D-06     (bounded recovery: drain-to-0x00 + negative return, no hang)
- *
  * Mock wiring: uses `serial_read_mock.h` to drive a queued std::vector<uint8_t>
  * into `Serial.read` / `Serial.available` / `Serial.peek` —
  * mirroring the data-frame suite in test_cobs_data_frame.cpp.
@@ -55,19 +50,15 @@ extern "C" {
 
 using namespace fakeit;
 
-/* ------------------------------------------------------------------------ */
 /* Shared test state                                                         */
-/* ------------------------------------------------------------------------ */
 
 static char data_buffer[DATA_BUFFER_SIZE];
 static std::vector<uint8_t> rx_queue;
 static size_t rx_pos;
 
-/* ------------------------------------------------------------------------ */
 /* Reference CRC8 (poly 0x07, seed 0x00, no refl, no XOR) — table-free.    */
 /* Copied from test_rurp_log_id.cpp:76-85 so this suite is fully independent */
 /* of the production CRC8_TABLE in rurp_serial_utils.cpp.                   */
-/* ------------------------------------------------------------------------ */
 static uint8_t ref_crc8(const uint8_t* data, size_t n) {
     uint8_t crc = 0;
     for (size_t i = 0; i < n; i++) {
@@ -81,7 +72,6 @@ static uint8_t ref_crc8(const uint8_t* data, size_t n) {
     return crc;
 }
 
-/* ------------------------------------------------------------------------ */
 /* COBS encode helper — test-side only, used to build expected byte streams. */
 /*                                                                           */
 /* Encodes `src[0..len-1]` into `dst`, returns encoded byte count (without  */
@@ -91,7 +81,6 @@ static uint8_t ref_crc8(const uint8_t* data, size_t n) {
 /* run-code byte (run_len+1), then the non-zero bytes.  A 0x00 payload byte */
 /* emits a run-code of 1 with no data bytes.  A 254-run code byte is 0xFF   */
 /* (no implicit zero follows it per RFC COBS).                               */
-/* ------------------------------------------------------------------------ */
 static size_t test_cobs_encode(const uint8_t* src, size_t len, uint8_t* dst) {
     size_t out = 0;
     size_t code_pos = out++;        /* placeholder for first run-code */
@@ -140,9 +129,7 @@ static void build_cobs_frame_bytes(
     out_vec.push_back(0x00);  /* frame delimiter */
 }
 
-/* ------------------------------------------------------------------------ */
 /* setUp / tearDown                                                          */
-/* ------------------------------------------------------------------------ */
 
 static unsigned long millis_counter;
 
@@ -175,7 +162,6 @@ void setUp(void) {
 void tearDown(void) {
 }
 
-/* ------------------------------------------------------------------------ */
 /* test_cobs_decode_valid_json_command                                       */
 /*                                                                           */
 /* Feed COBS(payload+CRC8) + 0x00 for a small valid JSON payload.           */
@@ -184,7 +170,6 @@ void tearDown(void) {
 /*                                                                           */
 /* This is the GREEN contract: a well-formed command frame decodes into      */
 /* data_buffer and reaches the JSON parser with the exact payload.           */
-/* ------------------------------------------------------------------------ */
 void test_cobs_decode_valid_json_command(void) {
     /* Small known JSON payload: {"state":13} */
     const uint8_t payload[] = {
@@ -202,7 +187,6 @@ void test_cobs_decode_valid_json_command(void) {
     TEST_ASSERT_EQUAL_MEMORY(payload, data_buffer, payload_len);
 }
 
-/* ------------------------------------------------------------------------ */
 /* test_cobs_crc_reject_does_not_reach_parser (V5 / §4.4 headline)          */
 /*                                                                           */
 /* COBS-encode a payload but deliberately flip the CRC byte.                */
@@ -210,7 +194,6 @@ void test_cobs_decode_valid_json_command(void) {
 /*                                                                           */
 /* This is the proof that a CRC-failing frame is REJECTED by the decode     */
 /* primitive before any JSON parse path.  T-51-01 mitigation assurance.     */
-/* ------------------------------------------------------------------------ */
 void test_cobs_crc_reject_does_not_reach_parser(void) {
     const uint8_t payload[] = {
         '{', '"', 'c', 'm', 'd', '"', ':', '1', '}'
@@ -240,7 +223,6 @@ void test_cobs_crc_reject_does_not_reach_parser(void) {
     TEST_ASSERT_LESS_THAN_INT(0, res);
 }
 
-/* ------------------------------------------------------------------------ */
 /* test_cobs_resync_bounded                                                  */
 /*                                                                           */
 /* Feed [garbled frame][0x00][valid frame][0x00].                            */
@@ -248,9 +230,6 @@ void test_cobs_crc_reject_does_not_reach_parser(void) {
 /*   (a) First rurp_communication_read_data call returns res < 0.            */
 /*   (b) A second call returns the correct decoded length with data_buffer   */
 /*       matching the expected payload (bounded recovery, not mere detection).*/
-/*                                                                           */
-/* D-06 / T-51-02 bounded-recovery contract.                                 */
-/* ------------------------------------------------------------------------ */
 void test_cobs_resync_bounded(void) {
     /* Valid payload for the SECOND frame. */
     uint8_t good_payload[] = { 0xAA, 0xBB, 0xCC, 0xDD };
@@ -285,7 +264,6 @@ void test_cobs_resync_bounded(void) {
     TEST_ASSERT_EQUAL_MEMORY(good_payload, data_buffer, good_len);
 }
 
-/* ------------------------------------------------------------------------ */
 /* test_cobs_oversized_frame_bounded_recovery                                */
 /*                                                                           */
 /* Feed a frame whose decoded payload would exceed DATA_BUFFER_SIZE (no      */
@@ -295,7 +273,6 @@ void test_cobs_resync_bounded(void) {
 /*   (b) Second call recovers and decodes the valid frame — no hang.         */
 /*                                                                           */
 /* CMD_FRAME_MAX / DATA_BUFFER_SIZE overflow guard — T-51-02 mitigation.     */
-/* ------------------------------------------------------------------------ */
 void test_cobs_oversized_frame_bounded_recovery(void) {
     /* Build an oversized payload: DATA_BUFFER_SIZE + 4 bytes of non-zero data.
      * All non-zero so the COBS encoding produces a simple long run (no zeros
@@ -322,25 +299,8 @@ void test_cobs_oversized_frame_bounded_recovery(void) {
     TEST_ASSERT_EQUAL_MEMORY(good_payload, data_buffer, sizeof(good_payload));
 }
 
-/* ------------------------------------------------------------------------ */
-/* test_cobs_exact_buffer_size_payload (CR-01 boundary — RED before Task 2) */
-/*                                                                           */
 /* Feed a payload of EXACTLY DATA_BUFFER_SIZE (512) bytes — all 0x42 so     */
 /* the COBS body is a clean non-zero run, no internal zeros.                 */
-/*                                                                           */
-/* With the Task-2 CR-01 fix: the PUSH overflow guard changes from           */
-/*   `if (out >= DATA_BUFFER_SIZE)`   to                                     */
-/*   `if (out >= DATA_BUFFER_SIZE - 1)`                                      */
-/* reserving the NUL-terminator slot.  A 512-byte payload then takes the     */
-/* overflow/drain path and returns < 0.  No OOB write at data_buffer[512].  */
-/*                                                                           */
-/* Before the fix (RED): rurp_communication_read_data returns 512 (positive),*/
-/* so this TEST_ASSERT_LESS_THAN_INT(0, res) FAILS — demonstrating the       */
-/* missing overflow cap (CR-01 is unguarded in the current source).          */
-/*                                                                           */
-/* CR-01 invariant pinned: the decoder returns n <= DATA_BUFFER_SIZE-1 so   */
-/* that the caller's `data_buffer[n] = '\0'` is always in-bounds.           */
-/* ------------------------------------------------------------------------ */
 void test_cobs_exact_buffer_size_payload(void) {
     /* All-0x42 payload of exactly DATA_BUFFER_SIZE bytes — clean COBS run. */
     std::vector<uint8_t> payload(DATA_BUFFER_SIZE, 0x42);
@@ -350,28 +310,12 @@ void test_cobs_exact_buffer_size_payload(void) {
 
     int res = rurp_communication_read_data(data_buffer, DATA_BUFFER_SIZE - 1);
 
-    /* After CR-01 fix: 512-byte payload overflows the cap and returns < 0.
-     * CR-01 invariant: n <= DATA_BUFFER_SIZE-1 always, so
-     * handle.data_buffer[n] = '\0' is in-bounds for every legal payload. */
     TEST_ASSERT_LESS_THAN_INT(0, res);
 }
 
-/* ------------------------------------------------------------------------ */
-/* test_cobs_max_accepted_payload (CR-01 boundary pin — the MAX legal size) */
-/*                                                                           */
-/* Feed a payload of EXACTLY DATA_BUFFER_SIZE-1 (511) bytes — all 0x42.    */
-/* After the CR-01 fix this is the LARGEST payload the decoder accepts.     */
-/* Assert:                                                                   */
-/*   (a) return value == DATA_BUFFER_SIZE-1 (511)                            */
-/*   (b) data_buffer matches the 511-byte payload                            */
-/*                                                                           */
 /* This pins that the largest legitimate command still decodes correctly AND  */
 /* that n never exceeds DATA_BUFFER_SIZE-1 — so the caller's NUL write at    */
 /* data_buffer[n] is provably in-bounds for every legal payload.             */
-/*                                                                           */
-/* CR-01 invariant: n <= DATA_BUFFER_SIZE-1 always, so                      */
-/* handle.data_buffer[n] = '\0' is in-bounds.                                */
-/* ------------------------------------------------------------------------ */
 void test_cobs_max_accepted_payload(void) {
     const size_t max_len = DATA_BUFFER_SIZE - 1;  /* 511 bytes */
     std::vector<uint8_t> payload(max_len, 0x42);
@@ -386,9 +330,6 @@ void test_cobs_max_accepted_payload(void) {
     TEST_ASSERT_EQUAL_MEMORY(payload.data(), data_buffer, max_len);
 }
 
-/* ------------------------------------------------------------------------ */
-/* test_cobs_truncated_frame_no_hang (CR-02 — RED before Task 2)            */
-/*                                                                           */
 /* Feed the COBS body of a small payload but WITHOUT the trailing 0x00       */
 /* delimiter, then leave the queue exhausted (finite-stream mock: available()*/
 /* returns 0, read() returns -1 after exhaustion).                           */
@@ -407,14 +348,7 @@ void test_cobs_max_accepted_payload(void) {
 /* therefore CANNOT be run cleanly before Task 2 applies the bounded-wait   */
 /* fix. The RED defect is demonstrated by the hang itself; the GREEN outcome */
 /* is a clean return with a negative result code.                            */
-/*                                                                           */
-/* CR-02 invariant: a truncated command frame (host silence mid-frame) makes */
-/* rurp_communication_read_data() RETURN bounded instead of spinning.        */
-/* ------------------------------------------------------------------------ */
 void test_cobs_truncated_frame_no_hang(void) {
-    /* Build the COBS body for a small payload, but DO NOT append the 0x00
-     * delimiter.  The decoder will consume all bytes and then spin waiting
-     * for the next byte — but with the CR-02 fix the spin is bounded. */
     const uint8_t partial_payload[] = { 0x01, 0x02, 0x03, 0x04 };
     size_t payload_len = sizeof(partial_payload);
 
@@ -435,17 +369,13 @@ void test_cobs_truncated_frame_no_hang(void) {
      * returns 0 and read() returns -1 from that point forward. */
     setup_serial_read_mock(rx_queue, rx_pos);
 
-    /* After the CR-02 fix: the bounded inter-byte deadline fires and the
-     * call returns negative.  Before the fix: this spins forever (hang). */
     int res = rurp_communication_read_data(data_buffer, DATA_BUFFER_SIZE - 1);
 
     /* Must return (no hang) with a negative error code. */
     TEST_ASSERT_LESS_THAN_INT(0, res);
 }
 
-/* ------------------------------------------------------------------------ */
 /* main                                                                      */
-/* ------------------------------------------------------------------------ */
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;

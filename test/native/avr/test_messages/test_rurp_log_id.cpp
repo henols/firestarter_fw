@@ -6,9 +6,6 @@
  *
  * native Unity tests for rurp_log_id() wire frame.
  *
- * Asserts the exact byte sequence emitted by rurp_log_id() against the
- * locked frame contract from CONTEXT §D-01..D-04:
- *
  *     AA 55 AA 55 | len=1+param_count+1 | id | params | crc8 | 0A
  *
  * The CRC8 algorithm (poly 0x07, seed 0x00, no reflection, no final XOR)
@@ -98,7 +95,6 @@ void test_zero_param_frame(void) {
     TEST_ASSERT_EQUAL_HEX8(0x02, captured[5]);    // len LSB = 1 (id) + 0 (params) + 1 (crc)
     TEST_ASSERT_EQUAL_HEX8(0x01, captured[6]);    // id
 
-    // CRC over [0x01] = 0x07 — pins the polynomial choice (D-03).
     TEST_ASSERT_EQUAL_HEX8(0x07, captured[7]);
 
     // Also verify against the table-free reference (defence-in-depth).

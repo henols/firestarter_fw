@@ -265,15 +265,15 @@ def test_paired_test_module_asserts_nonzero_exit():
 
 def test_scope_is_firmware_only():
     """Test 7 -- the resolved glob directory must end in
-    firestarter/scripts, and no path in the glob's result set may contain
+    firestarter_fw/scripts, and no path in the glob's result set may contain
     'firestarter_app'. This pins the SCOPE decision structurally: a future
     edit widening CHECKER_GLOB to reach the host repo would fail here
     even before it changed FLOOR-related behavior."""
     resolved = _SCRIPTS_DIR.resolve()
     parts = resolved.parts[-2:]
-    assert parts == ("firestarter", "scripts"), (
+    assert parts == ("firestarter_fw", "scripts"), (
         f"expected the resolved scripts directory to end in "
-        f"('firestarter', 'scripts'), got {parts} (full path: {resolved})"
+        f"('firestarter_fw', 'scripts'), got {parts} (full path: {resolved})"
     )
 
     checkers = _discovered_checkers()

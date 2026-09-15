@@ -6,12 +6,11 @@
  */
 
 /*
- * Phase 126, requirement CFG-05, decisions D-02/D-03/D-15/D-16/D-17/D-19.
- * D-16 as amended by C-2, in one sentence: there is one flash-programming
- * primitive and it writes a whole 256-byte page, so the commit is the
- * completion of a single erase-inactive-then-program-whole-page sequence --
- * never a separate trailing header/CRC word. Fire-proof:
- * tests/test_config_storage_dualslot.py (Plan 126-09).
+ * In one sentence: there is one flash-programming primitive and it writes a
+ * whole 256-byte page, so the commit is the completion of a single
+ * erase-inactive-then-program-whole-page sequence -- never a separate
+ * trailing header/CRC word. Fire-proof:
+ * tests/test_config_storage_dualslot.py.
  */
 
 #include "config_storage_dualslot.h"
@@ -63,8 +62,7 @@ bool validate_record(const StoredConfiguration& rec, size_t len)
 
     // 3. crc32 third, over the record from its start up to the crc32 field
     //    itself, computed with offsetof -- never a literal offset, because
-    //    sizeof(StoredConfiguration) differs across all three compilers
-    //    (C-6).
+    //    sizeof(StoredConfiguration) differs across all three compilers.
     const uint32_t computed = rurp_config_crc32(&rec, offsetof(StoredConfiguration, crc32));
     if (rec.crc32 != computed)
     {
@@ -153,7 +151,7 @@ extern "C" bool rurp_dualslot_load(const rurp_flash_primitives_t* primitives, vo
 
     if (!best.found)
     {
-        // D-15: blank (both slots read 0xFF, failing the magic check) and
+        // Blank (both slots read 0xFF, failing the magic check) and
         // both-slots-corrupt (failing length or crc32) return the SAME
         // false, indistinguishably. Policy above this core has exactly one
         // recovery path to apply either way, and the caller's buffer is not
@@ -183,7 +181,7 @@ extern "C" bool rurp_dualslot_save(const rurp_flash_primitives_t* primitives, co
     StoredConfiguration record;
     memset(&record, 0, sizeof(record));
     record.magic = CONFIG_MAGIC;
-    record.version = 1; // written as 1; no reader branches on it yet (D-17)
+    record.version = 1; // written as 1; no reader branches on it yet
     record.length = static_cast<uint16_t>(len);
 
     const size_t config_copy_len = (len < sizeof(record.configuration)) ? len : sizeof(record.configuration);
@@ -197,7 +195,7 @@ extern "C" bool rurp_dualslot_save(const rurp_flash_primitives_t* primitives, co
 
     record.crc32 = rurp_config_crc32(&record, offsetof(StoredConfiguration, crc32));
 
-    // Step 3: erase the inactive slot. C-8 makes this a hard correctness
+    // Step 3: erase the inactive slot. This is a hard correctness
     // requirement, not a preference -- RM §4.2.3.2 step 2 requires reading
     // out a non-blank page's 64 words before programming over it, and
     // FLASH_Program_Page does not do that, so the HAL is only correct on a
@@ -220,8 +218,8 @@ extern "C" bool rurp_dualslot_save(const rurp_flash_primitives_t* primitives, co
     memset(page, 0xFF, sizeof(page));
     memcpy(page, &record, sizeof(record));
 
-    // Step 5: program the whole page. ITS COMPLETION IS THE COMMIT (D-16 as
-    // amended by C-2) -- there is no separate header-write, commit-word or
+    // Step 5: program the whole page. ITS COMPLETION IS THE COMMIT -- there
+    // is no separate header-write, commit-word or
     // final-word step anywhere in this core; no primitive exists for one.
     // The active slot was never touched, so an abort anywhere above leaves
     // it loadable, and an aborted program leaves the inactive slot

@@ -145,7 +145,6 @@ _REPO_ROOT = _HERE.parent
 _LINKER_PATH = _REPO_ROOT / "platform" / "py32f071" / "linker" / "PY32F071xB_FLASH.ld"
 _CONFIG_STORAGE_MD = _REPO_ROOT / "platform" / "py32f071" / "CONFIG-STORAGE.md"
 
-# Plan 126-08 additions (C-3, C-4, D-02, CFG-05, CFG-07).
 _PY32_SRC_DIR = _REPO_ROOT / "platform" / "py32f071" / "src"
 _MANIFEST_PATH = _REPO_ROOT / "platform" / "py32f071" / "CMakeLists.txt"
 _GLUE_PATH = _PY32_SRC_DIR / "config_storage_flash.cpp"
@@ -639,14 +638,6 @@ def test_compiler_is_required_not_optional():
         "this module -- a tool-absence case must FAIL, never SKIP."
     )
 
-
-# --- Plan 126-08 additions: C-3's proven-antecedent flash-driver assertion,
-# --- C-4's HAL-only-entry-points assertion, the HAL-free-core assertion,
-# --- CFG-07's absence check, the linker-symbol assertion, and their shared
-# --- RED demonstration. Every check below is factored into a module-level
-# --- helper, exactly like the linker-script checks above, so the
-# --- planted-copy test exercises the identical code path the positive
-# --- tests call.
 
 
 def _scan_hal_flash_calls(src_dir, repo_root):

@@ -4,32 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * (TABLE-03, TABLE-01) -- exercises, by a running test, the
- * one property no bench run in Phase 145 can ever cover: F-140-04 measured
- * that 0 of the 329 shipped 27C chips yield pulse_delay == 0, so
- * configure_eprom's pulse_delay == 0 fallback switch (src/proms/eprom.cpp:
- * 69-76) is unreachable on real hardware. This suite is therefore the ONLY
- * possible oracle for TABLE-03. It also proves TABLE-01's row resolution
- * (eprom_params_for(), plan 140-01) behaviourally -- case 9 below proves part
- * of TEST-01's content, but TEST-01 itself is assigned to Phase 144 and is
- * NOT marked complete by this plan.
- *
- * Coverage:
- *   1-3. positive fallback cases -- pulse_delay == 0 on 0x07/0x08/0x0B takes
- *        the 1000/100/500 us default respectively (eprom.cpp's switch;
- *        0x07 reaches 1000 via the `default:` arm, not a `case 0x07:`
- *        label).
- *   4-6. negative controls, paired 1:1 with 1-3 -- a NON-zero pulse_delay on
- *        the same three protocols survives configure_memory untouched.
- *        Without these, 1-3 could pass vacuously on a handle the fallback
- *        never actually touched (T-140-13).
- *   7.   each of 0x07/0x08/0x0B resolves to its own distinct table row.
- *   8.   an unrecognised protocol (0x0C, and 0) resolves to NULL, never a
- *        default row (D-05 fail-closed) -- a 0x07 fallback row would route
- *        13V through the drop resistor for an unknown part (T-140-17).
- *   9.   all 18 cell values of the frozen table (plan 140-01) are read back
- *        through pgm_read_byte/pgm_read_dword and match exactly.
- *
  * Every case builds a FRESH, zero-initialised handle: json_parse() does NOT
  * reset pulse_delay, protocol, mem_size, vpp_mv or pins (src/json_parser.c:
  * 81-89), so a stale global handle would leak state between cases (Pitfall
@@ -153,21 +127,10 @@ void test_each_protocol_resolves_to_its_own_distinct_row(void) {
     TEST_ASSERT_TRUE_MESSAGE(row_08 != row_0B, "0x08 and 0x0B must resolve to distinct rows");
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Case 8: fail-closed -- an unrecognised protocol is NEVER the 0x07 row
- * (D-05, must_haves truth #4 second half, T-140-17).
- * ───────────────────────────────────────────────────────────────────────── */
-
 void test_unknown_protocol_returns_null(void) {
     TEST_ASSERT_NULL_MESSAGE(eprom_params_for(0x0C), "0x0C is unrecognised and must return NULL, never a default row");
     TEST_ASSERT_NULL_MESSAGE(eprom_params_for(0), "protocol 0 is unrecognised and must return NULL, never a default row");
 }
-
-/* ─────────────────────────────────────────────────────────────────────────
- * Case 9: the frozen table (plan 140-01), read back through PROGMEM
- * accessors only. Never dereference a PROGMEM member directly -- it compiles
- * and silently reads RAM garbage on AVR (S2).
- * ───────────────────────────────────────────────────────────────────────── */
 
 static void assert_row_matches(uint32_t protocol, uint32_t expected_overprogram_cap_us,
                                 uint32_t expected_energy_cap_us, uint8_t expected_max_pulses,

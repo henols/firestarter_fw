@@ -176,42 +176,7 @@ _PUBLIC_CONFIG_DECLARATIONS = (
 # public functions are declared, never defined, in include/rurp_shield.h.
 _DEF_SEARCH_DIRS = ("src", "platform", "lib")
 
-# C-14's verified consumer census (see Coverage 8's docstring above for the
-# nine-vs-seven correction). Each entry is (repo-relative path, 1-indexed
-# line number, function name called on that line).
 _C14_CONSUMER_SITES = (
-    # Phase 143 Plan 03 (BF-1/CAP-03): added one #include line above every
-    # site below in this file, shifting all three by +1 (40/103/109 -> here).
-    # Phase 151 Plan 03 (LOCK-02/OD-3): widened parse_json's memory-command
-    # admission test to `is_memory_cmd(handle->cmd) || handle->cmd <
-    # CMD_READ_VPP` and documented why the CMD_* enum must not be re-ordered.
-    # That comment block sits inside parse_json, ABOVE the get/save pair but
-    # BELOW rurp_load_config, so it shifts only the last two sites, by +15
-    # (104/110 -> 119/125). Site 41 and the six sites in other files are
-    # unaffected. Re-pinned, not relaxed: the census still asserts an exact
-    # line for each of the nine sites.
-    # The narrative-comment cleanup (2026-08-25) reflowed comment blocks in
-    # src/firestarter.cpp, shifting the get/save pair by -13 (115/121 -> 102/108).
-    # Site 38 sits above every edited block and is unmoved. Re-pinned, not
-    # relaxed; no statement changed and all three AVR targets stay byte-identical.
-    # The provenance-oracle correction (2026-08-24) swept the residue the
-    # Phase-154 detector could not see, because it anchored its token at the
-    # comment opener. In include/rurp_hw_rev_utils.h two comment blocks lost a
-    # line each -- analog_read_avg8's 3-line note reflowed to 2, and the
-    # hard-fail-loud block's 4 lines to 3 -- shifting both sites in that file
-    # by -2 (95/101 -> 93/99). No statement changed; all three AVR targets are
-    # byte-identical. Re-pinned, not relaxed: the census still asserts an exact
-    # line for each of the nine sites.
-    # The provenance comment sweep (SWEEP-01, SWEEP-06) deleted and reflowed
-    # comment blocks only -- no statement changed -- but that moves line
-    # numbers, which this census pins exactly. src/firestarter.cpp: a deleted
-    # 3-line tombstone above setup()'s rurp_load_config() shifts site 41 by -3
-    # (41 -> 38), and a further -1 from a reflow inside parse_json shifts the
-    # get/save pair by -4 (119/125 -> 115/121). src/hardware_operations.cpp: a
-    # 4-line comment reflowed to 3 shifts both sites by -1 (107/119 ->
-    # 106/118). The other four sites sit in files the sweep did not touch and
-    # are unchanged. Re-derived by locating each call, never by relaxing the
-    # pin.
     ("src/firestarter.cpp", 38, "rurp_load_config"),
     ("src/firestarter.cpp", 102, "rurp_get_config"),
     ("src/firestarter.cpp", 108, "rurp_save_config"),

@@ -155,7 +155,6 @@ bool init_programmer_framed(firestarter_handle_t* handle) {
     LOG_INFO_ID_U8(MSG_INFO_CMD, (uint8_t)handle->cmd);
     // Wire layout -- three length-discriminated extensions of one variable blob:
     //   [buffer_size u16 BE][hw_revision u8][ver_len u8][ver bytes][write_budget_s u16 BE]
-    //      CAP-01              CAP-02                                CAP-03
     //
     // MSG_OK_READY's catalog entry is a variable-length byte blob, so extending it
     // needs no messages.toml edit and no codegen run.
@@ -173,7 +172,8 @@ bool init_programmer_framed(firestarter_handle_t* handle) {
     // has the padding rule.
     //
     // Backward compatibility is a LENGTH test and degrades rather than misparses:
-    // a host predating CAP-02 tests `len(params) == 2`, misses, and falls back to
+    // a host predating the identity extension tests `len(params) == 2`, misses, and
+    // falls back to
     // its 512-byte chunk floor.
     //
     // Emitting identity HERE is safe: configure_memory has run, but every
@@ -237,9 +237,9 @@ void loop() {
             int n = rurp_communication_read_data(handle.data_buffer, DATA_BUFFER_SIZE - 1);
             if (n > 0) {
                 handle.data_size = (uint32_t)n;
-                /* CR-01 belt-and-suspenders: the decoder caps n at
+                /* Belt-and-suspenders: the decoder caps n at
                  * DATA_BUFFER_SIZE-1 (PUSH guard), so n < DATA_BUFFER_SIZE
-                 * always holds post-fix and data_buffer[n] is in-bounds.
+                 * always holds and data_buffer[n] is in-bounds.
                  * This guard documents the invariant at the write site and
                  * protects against any future caller that forgets the cap. */
                 if (n < DATA_BUFFER_SIZE) {

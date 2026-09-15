@@ -121,35 +121,17 @@ from pathlib import Path
 # Layout: <repo>/scripts/check_cmake_manifest.py -> repo root is one parent up.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Single-target env seam WITH a default (mirrors check_no_log_in_sdp_window.py's
-# FIRESTARTER_SDP_SRC idiom): lets the paired pytest point this checker at a
-# fixture tree without editing the real repo. Read ONCE at module import
-# time into a module-level constant -- an in-process monkeypatch.setenv
-# would be silently ineffective here (123-RESEARCH.md Correction C-15), so
-# the paired pytest invokes this script as a real subprocess with the seam
-# set in the CHILD environment.
 FIRESTARTER_MANIFEST_ROOT = os.environ.get("FIRESTARTER_MANIFEST_ROOT", str(REPO_ROOT))
 
 _ROOT = Path(FIRESTARTER_MANIFEST_ROOT)
 _PLATFORM_DIR = _ROOT / "platform" / "py32f071"
 _MANIFEST_PATH = _PLATFORM_DIR / "CMakeLists.txt"
 
-# Coarse-key arming (D-07): keyed on the DIRECTORY, never a manual boolean a
-# human would flip. No override, no constant to set by hand.
-# platform/py32f071/ arrives with Phase 124's merge; a rename INSIDE the
-# port cannot disarm this gate, because the arming key is the directory
-# itself, not any file inside it (see the shared "Coarse-key arming"
-# pattern, 123-PATTERNS.md).
 ARMED = _PLATFORM_DIR.is_dir()
 
 # Enforced: the two lists whose named paths must all resolve in this tree.
 ENFORCED_LISTS = {"FIRESTARTER_COMMON_SOURCES", "PY32_PLATFORM_SOURCES"}
 
-# Structurally exempt: PY32_SDK_ROOT resolves to a FetchContent download
-# directory (py32f071_sdk_SOURCE_DIR) that exists only after a networked
-# `cmake` configure -- a property of FetchContent, NOT a PY32_EXCLUDED
-# allow-list entry. Conflating the two would let a real omission hide
-# behind this exemption (123-RESEARCH.md Pitfall 6).
 EXEMPT_LISTS = {"PY32_SDK_SOURCES"}
 
 # Extracts `set(<NAME> <body>)` blocks. The real manifest's source-list

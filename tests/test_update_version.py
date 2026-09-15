@@ -24,8 +24,6 @@ import sys
 import subprocess
 from pathlib import Path
 
-# Self-contained sys.path injection — NOT in conftest.py per 15-PATTERNS.md Critical Note 4.
-# Firmware sub-repo has the script at .github/scripts/update_version.py — same layout as app.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / ".github" / "scripts"))
 import update_version  # noqa: E402
 
@@ -227,7 +225,6 @@ class TestUpdateVersionBeta:
         version_file.write_text('#define VERSION "1.2.3"\n')
         monkeypatch.setattr(update_version, "header_file", str(version_file))
         monkeypatch.setenv("GITHUB_REF", "refs/heads/beta")
-        # BETA_VERSION is intentionally NOT set — triggers D-08 git-tag fallback.
 
         output_file = tmp_path / "github_output"
         output_file.write_text("")
@@ -312,7 +309,6 @@ class TestUpdateVersionDryRun:
         monkeypatch.setattr(update_version, "header_file", str(version_file))
         monkeypatch.setenv("BETA_VERSION", "1.2.3b1")
         monkeypatch.setenv("GITHUB_REF", "refs/heads/beta")
-        # NOTE: GITHUB_OUTPUT is intentionally NOT set for dry-run — D-13 says skip it.
 
         # Wave 1 contract: parse_args(['--dry-run', '--beta']) works.
         args = update_version.parse_args(["--dry-run", "--beta"])
@@ -324,12 +320,10 @@ class TestUpdateVersionDryRun:
         with contextlib.redirect_stdout(stdout_capture):
             update_version.calculate_version(args)
 
-        # D-13: version.h must be unchanged.
         assert version_file.read_text() == original_content, (
             "Dry-run must NOT modify version.h"
         )
 
-        # D-28: stdout must start with DRY_RUN: and contain the proposed version.
         captured_out = stdout_capture.getvalue()
         assert captured_out.strip().startswith("DRY_RUN: "), (
             f"--dry-run stdout must start with 'DRY_RUN: '. Got: {captured_out!r}"
@@ -362,12 +356,10 @@ class TestUpdateVersionDryRun:
         update_version.calculate_version(args)
         captured = capsys.readouterr()
 
-        # D-13: version.h must be unchanged.
         assert version_file.read_text() == original_content, (
             "Dry-run must NOT modify version.h on stable path"
         )
 
-        # D-28: stdout must start with DRY_RUN: and contain '1.2.4'.
         assert captured.out.strip().startswith("DRY_RUN: "), (
             f"--dry-run stdout must start with 'DRY_RUN: '. Got: {captured.out!r}"
         )

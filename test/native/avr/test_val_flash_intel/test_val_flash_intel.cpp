@@ -4,9 +4,6 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Tier-1 validation suite for the Intel Flash family.
- * HARN-01 / D-07 / D-08 (verify-can-fail posture).
- *
  * Proves configure_flash_intel behavior BY SIDE-EFFECT via the recording bus stub:
  *
  *   POSITIVE test (CMD_WRITE + init): configure_memory() + firestarter_operation_init()
@@ -15,12 +12,6 @@
  *     → rurp_write_to_register(CONTROL_REGISTER, value | CTRL_VPP_P1_ENABLE)
  *     The recording must contain at least one CONTROL_REGISTER write with
  *     CTRL_VPP_P1_ENABLE set.
- *
- *   NEGATIVE CONTROL (CMD_READ, configure-only phase): configure_memory() alone.
- *     configure_flash_intel sets firestarter_operation_init = NULL for CMD_READ,
- *     and mem_util_set_address writes only address bits to the CONTROL_REGISTER —
- *     no VPP-enable bits. Asserts CTRL_VPP_P1_ENABLE NEVER appears in the recording
- *     (D-08 verify-can-fail: goes RED if a regression puts VPP inside configure_memory).
  *
  * Protocol covered: 0x10 (FLASH_INTEL).
  *
@@ -122,11 +113,6 @@ void test_flash_intel_write_enables_vpp_regulator(void) {
 
 /* ─── NEGATIVE CONTROL: CMD_READ, configure-only — VPP must NOT fire ─────── */
 
-/* For CMD_READ, configure_flash_intel leaves firestarter_operation_init = NULL
- * (configure_memory sets it to NULL initially; configure_flash_intel does not
- * override it for CMD_READ). Only configure_memory is called. The address setup
- * writes to CONTROL_REGISTER carry only address bits — no VPP-enable bits.
- * This asserts the configure/dispatch phase alone never enables VPP (D-08). */
 void test_flash_intel_read_configure_only_does_not_enable_vpp(void) {
     firestarter_handle_t h = make_handle(CMD_READ);
     configure_memory(&h);

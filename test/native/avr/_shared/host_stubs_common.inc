@@ -6,13 +6,6 @@
  *
  * Shared host-stub implementations for the [env:native] test suites.
  *
- * Phase 6 WR-06: this file consolidates the ~120 lines of `rurp_*` no-op
- * stubs, `LOG_*_MSG` PROGMEM strings, and the `Serial_::operator bool()`
- * link-only definition that previously lived (duplicated) in every per-suite
- * `host_stubs.cpp`. When a new `rurp_*` symbol is added to the firmware,
- * this is now the single edit point — suite-specific `host_stubs.cpp` files
- * only carry their unique mock state.
- *
  * Inclusion model: this file is `.inc`, not `.cpp` — each suite's
  * `host_stubs.cpp` `#include`s it once with a relative path. There is no
  * shared-TU link step, so multiple test binaries compile their own copy
@@ -46,23 +39,9 @@
 /* rurp_shield register I/O — the dispatch path's only direct hardware use
  * is mem_util_set_address(handle, 0) -> rurp_write_to_register(...). Stub it
  * so the call resolves and returns.
- *
- * Recording bus stub — Phase 71 HARN-01 / D-04.
- * Define HOST_STUBS_RECORD_BUS before including this file to activate the
- * recording version. Existing suites (test_dispatch, test_cobs_*,
- * test_read_timing, test_messages, test_data_input, test_not_implemented)
- * MUST NOT define this flag — flag off = today's no-op
- * behavior is preserved byte-exactly. This is an opt-IN guard (inverse of
- * the opt-OUT HOST_STUBS_CUSTOM_VOLTAGE_MV / HOST_STUBS_CUSTOM_HW_REVISION
  * guards above). */
 
-/* Ordered strobe recorder (flag: HOST_STUBS_REAL_REGISTER_UTILS) — Phase 116 TRACE-01 / D-05 / D-07.
- * Define HOST_STUBS_REAL_REGISTER_UTILS before including this file to
- * activate this SECOND, independent opt-in layer (it composes with, does
- * not replace, HOST_STUBS_RECORD_BUS above). This is an opt-IN guard: no
- * existing suite may define it — flag off must stay byte-exact for all 14
- * pre-existing suites.
- *
+/*
  * (a) Opt-IN: the defining suite's host_stubs.cpp must `#define
  *     HOST_STUBS_REAL_REGISTER_UTILS` BEFORE `#include`-ing this file.
  * (b) Why: it exists so a suite can additionally `#include
@@ -83,12 +62,6 @@
  *     hardware-revision behavior.
  * (e) No existing suite may define this flag — flag off is byte-exact. */
 
-/* Timing recorder (flag: HOST_STUBS_RECORD_TIMING) — Phase 138 PREP-03 / D-02.
- * Fail-closed guard: the timing recorder's sequence key is s_strobe_count,
- * which only exists when HOST_STUBS_REAL_REGISTER_UTILS is also defined.
- * Requesting HOST_STUBS_RECORD_TIMING without the strobe recorder would
- * silently produce a stream with no interleave key at all — refuse to
- * compile instead of composing into something unusable. */
 #if defined(HOST_STUBS_RECORD_TIMING) && !defined(HOST_STUBS_REAL_REGISTER_UTILS)
 #error "HOST_STUBS_RECORD_TIMING requires HOST_STUBS_REAL_REGISTER_UTILS (its sequence key is s_strobe_count, which only exists in that block)"
 #endif
@@ -132,17 +105,7 @@ static void strobe_push(uint8_t kind, uint8_t pin, uint8_t value) {
     }
 }
 
-/* Timing recorder (flag: HOST_STUBS_RECORD_TIMING) — Phase 138 PREP-03 / D-02.
- * This is a THIRD, independent opt-in layer, additive to the two recorders
- * above. It exists because neither HOST_STUBS_RECORD_BUS ((reg,data) pairs,
- * above) nor the ordered strobe recorder just above (kind,pin,value) can see
- * time: delay()/delayMicroseconds() are not stubbed anywhere in this file at
- * all — they are free functions DEFINED by ArduinoFake's FunctionFake.cpp and
- * only ever .AlwaysReturn()-mocked by every suite's setUp(). A definition
- * here would be a duplicate-symbol link error against FunctionFake.cpp.o; the
- * hook that calls timing_push() below lives in the DEFINING SUITE's own
- * setUp(), via fakeit's .AlwaysDo(lambda) — see test_trace_eprom_v131.cpp.
- *
+/*
  * (a) Opt-IN: the defining suite's host_stubs.cpp must `#define
  *     HOST_STUBS_RECORD_TIMING` BEFORE `#include`-ing this file, in addition
  *     to HOST_STUBS_REAL_REGISTER_UTILS (enforced above by the #error).
@@ -196,11 +159,6 @@ extern "C" void timing_push(uint8_t kind, uint32_t us) {
 }
 #endif /* HOST_STUBS_RECORD_TIMING */
 
-/* The two hooks (D-07's scope — nothing wider). rurp_set_control_pin carries
- * LSB/MSB/CTRL latch strobes AND chip /CE and /OE in one distinguishable pin
- * namespace (rurp_shield.h: LEAST_SIGNIFICANT_BYTE/MOST_SIGNIFICANT_BYTE/
- * CONTROL_REGISTER/OUTPUT_ENABLE/CHIP_ENABLE), so no third hook and no wider
- * kind taxonomy is needed. */
 extern "C" void rurp_write_data_buffer(uint8_t data) {
     strobe_push(STROBE_KIND_DATA, 0, data);
 }
@@ -320,18 +278,6 @@ extern "C" void rurp_validate_config(rurp_configuration_t* config) {
     (void)config;
 }
 
-/* op_reset_timeout — defined in firestarter.cpp (loop()'s AVR-only command
- * timeout watchdog: `timeout = millis() + TIMEOUT_MS`), which [env:native]
- * and [env:native_nodevtools] deliberately exclude from build_src_filter
- * (firestarter.cpp is the dispatcher/loop() TU, not a proms/ handler). v1.22
- * Phase 119 D-06/D-07 (119-07 Task 1, RESEARCH Open Question 1 option a)
- * widened both envs' build_src_filter to include operation_utils.cpp so the
- * NULL-main refusal is natively provable; operation_utils.cpp calls
- * op_reset_timeout() unconditionally from _execute_operation_house_keeping
- * and _check_response, which is a new link-time requirement this stub
- * resolves. No native suite asserts on real-time timeout behaviour (that is
- * an AVR-only concern outside every suite's scope), so a no-op is
- * behaviourally adequate — same contract as every other stub in this file. */
 extern "C" void op_reset_timeout() {}
 
 /* Communication API — Phase 6 widened the [env:native] src_filter to pull

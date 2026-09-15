@@ -17,17 +17,6 @@
  * this local copy takes precedence over the shared one.  Either way, keeping
  * a local copy is safer and makes the resolution explicit.
  *
- * Finite-stream-then-empty behavior (verified):
- *   - available() returns (int)(queue.size() - pos) when pos < queue.size(),
- *     or 0 when the queue is exhausted.
- *   - read()      returns the next byte when pos < queue.size(), or -1 when
- *     the queue is exhausted.
- * This is exactly the "finite-stream mock mode" required by the CR-02
- * truncated-frame test (test_cobs_truncated_frame_no_hang): once the last
- * byte of a partial frame has been consumed, available() returns 0 and
- * read() returns -1, so the bounded inter-byte deadline fires deterministically
- * and rurp_communication_read_data() returns negative instead of spinning.
- *
  * No setup_serial_read_mock_finite() wrapper is needed — the existing
  * setup_serial_read_mock() already provides finite-stream semantics.
  *
@@ -65,11 +54,6 @@ using namespace fakeit;
 /**
  * Wire ArduinoFake's Serial.read / available / peek to a shared queued-byte
  * vector driven by a front-cursor index.
- *
- * Finite-stream semantics: once pos >= queue.size(), available() returns 0
- * and read() returns -1.  This is the behavior needed for truncated-frame
- * tests (CR-02): a partial frame with no trailing 0x00 exhausts the queue,
- * and the bounded inter-byte deadline in rurp_communication_read_data() fires.
  *
  * @param queue  The byte vector to drain on reads.
  * @param pos    Reference to the current read position (modified by lambdas

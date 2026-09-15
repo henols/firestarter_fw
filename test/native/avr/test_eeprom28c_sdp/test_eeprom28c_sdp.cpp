@@ -4,65 +4,7 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * authored this suite PARKED and RED-by-design
- * (v1.22 Phase 116 Plan 06, TRACE-02/TRACE-04/TRACE-06). As of v1.22 Phase
- * 117 commit 1 (D-03), the suite is ENABLED in platformio.ini's
- * [env:native] test_filter and runs under `pio test -e native`.
- *
- * This suite pins the exact ordered (LSB, MSB, data, CE) stream
- * eeprom28c_write_init emits, for each of the four 0x0D pinouts plus a
- * second DIP32 size band, and asserts it against the FIXED (post-Phase-117)
- * target — TRACE-02. At Phase 117 commit 1 it is RED against the
- * still-unfixed production tree; the verbatim capture is committed at
- * RED-BASELINE.md under "## Post-suite-edit RED baseline (Phase 117 commit
- * 1 — D-03)". It is GREEN from commit 2 onward, once plan 117-02 lands the
- * production fix.
- *
- * D-01 claimed that this suite's one-line test_filter addition
- * would itself BE the whole RED-to-GREEN proof. That did not hold
- * (117-CONTEXT.md D-01/D-02/D-03 supersede it): two structural conflicts
- * would have kept the suite RED post-fix for reasons unrelated to the fix —
- * the suite's own no-op `set_data` mock (the exact pointer FIX-01's emitter
- * is built on) and five assertions that encoded today's INIT-abort as the
- * expected outcome. The real flip required four edits: this test_filter
- * line, un-mocking `set_data` (D-01), flipping five response-code
- * assertions plus adding one new permanent severity-preservation regression
- * case (D-02), and this file's own suite-header rewrite.
- *
- * Cases 6-7 additionally carry TRACE-06's re-runnable evidence: with
- * CORRECTION 2's fix applied (D-12 originally mis-routed one of these two
- * into the always-green harness), both migrated identity-gate cases assert
- * the post-fix expectation — a matching identity must proceed, and a
- * FLAG_FORCE mismatch's WARNING severity must survive the completion path
- * (D-05: the completion poll never writes response_code). Case 8 is new at
- * Phase 117 commit 1: a permanent regression case proving the completion
- * poll can never destroy a prior WARNING, even when it never settles.
- *
- * Cases 9-12 are new at Phase 118 Plan 05 (D-08, OBS-02/OBS-03/OBS-05),
- * driving PRODUCTION eeprom28c_write_init via configure_memory dispatch
- * (never the harness's drive_reference_emitter):
- *  - Case 9: FLAG_SKIP_SDP_UNLOCK set -- the unlock sequence is provably
- *    absent from the recorded BUS stream, asserted on content and position
- *    (exact divergence index 0, plus an explicit walk over recorded
- *    STROBE_KIND_DATA values for EEPROM_SDP_DISABLE's own payload bytes),
- *    never on a bare strobe count.
- *  - Case 10: the flag-absent counterpart, from the SAME handle factory as
- *    Case 9, asserting the full SDP_FIXED_DIP28_28C256 stream -- the pair
- *    ships together so the contrast is one executable comparison.
- *  - Case 11: the t_BLC runtime budget WARN is observed to actually FIRE
- *    (an over-budget synthesised elapsed value via Plan 118-03's
- *    s_micros_ticks seam) and observed to NOT fire under the default
- *    elapsed value -- the anti-hollow pair for a check that would otherwise
- *    be indistinguishable from a dead branch.
- *  - Case 12: the exactly-two-new-serial-frames enumeration (and its
- *    exactly-one-WARN skip-path mirror), via a per-case Serial-frame
- *    capture reusing test_rurp_log_id.cpp's existing AlwaysDo idiom -- NOT
- *    a new general-purpose recorder (D-07 explicitly declined building
- *    one). This strengthens, but never replaces, D-07's PRIMARY assertion:
- *    the recorded BUS stream's byte-identity (Cases 1-3/10 here, and the
- *    _shared/ blob-SHA check in RED-BASELINE.md).
- *
- * Validation ceiling (RED-BASELINE.md carries this in full): every claim
+ * Validation ceiling: every claim
  * this suite embodies is software-layer — code emits a sequence, code
  * asserts on it. No AT28C part was ever on the bench, and nothing here is
  * evidence about silicon state.
@@ -82,27 +24,14 @@ extern "C" {
 }
 #include "firestarter.h"
 #include "flash_utils.h"
-/* v1.22 Phase 119 D-06/D-07 (119-07 Task 3): op_execute_stateful_operation /
- * op_execute_simple_operation are now natively linkable (Task 1 widened
- * build_src_filter with operation_utils.cpp), so cases 24/25 below call
- * them directly -- the same op-layer functions every eprom_* entry point
- * delegates to. */
 #include "operation_utils.h"
 #include "../_shared/sdp_bus_config.h"
 #include "../_shared/sdp_expected.h"
 
 using namespace fakeit;
 
-/* host_stubs.cpp's reset seam (D-05) — must run after configure_memory, which
- * itself writes address 0 (mem_util_set_address(handle, 0), memory.cpp:68). */
 extern "C" void reset_register_cache(uint8_t lsb, uint8_t msb, rurp_register_t ctrl);
 
-/* (D-08 constraint 1): EEPROM_SDP_DISABLE is the PRODUCTION
- * command table (external linkage granted at eeprom_28c.cpp:122, FIX-05
- * precedent -- test_sdp_harness.cpp:48 declares the identical extern).
- * Case 9's payload-byte-absence walk reads this exact array, never a
- * transcribed copy, so it stays byte-locked to whatever
- * eeprom28c_emit_command_sequence actually drives. */
 extern const byte_flip_t EEPROM_SDP_DISABLE[6];
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -122,23 +51,9 @@ static uint8_t  s_mfr_hi_keyed;
 static uint8_t  s_mfr_lo_keyed;
 static int      s_reads_at_mfr_addr;
 static int      s_reads_at_poll_addr;
-/* Case 8 (D-02, Phase 117 commit 1): when set, the 0x5555 poll address
- * toggles bit 0x40 on every read instead of returning a constant, so the
- * completion poll can never conclude. Reset false in setUp(). */
 static bool     s_poll_addr_toggles;
 
 /* the tick source is now a SCRIPTED QUEUE, replacing the
- * two-slot parity alternator (indexed by call count modulo 2) that served
- * through Plan 118-05. RETIREMENT REASON: D-16's per-byte page-load tracker
- * (Plan 119-08) adds micros() calls INSIDE eeprom28c_write_execute, so any
- * case that drives both write_init and write_execute would call micros()
- * more than twice -- under the old modulo-2 model, every interval past the
- * second call would alternate between 0 and a constant, which is
- * meaningless (and silently so: the numbers still "look like" ticks). A
- * monotonic cursor into an explicit script has no such failure mode: it
- * returns exactly what was scripted, in order, for as many calls as the
- * script has entries.
- *
  * s_micros_script holds the scripted tick sequence; s_micros_cursor is the
  * monotonic read position (never wraps, never resets except via
  * sdp_script_micros() or setUp()'s file-static reset block below).
@@ -169,16 +84,6 @@ static void sdp_script_micros(const std::vector<uint32_t>& ticks, uint32_t tail 
     s_micros_tail = tail;
 }
 
-/* (D-07 scope discipline): a PER-CASE Serial-frame
- * capture, reusing test_rurp_log_id.cpp:59-63's existing AlwaysDo idiom
- * verbatim (accumulate every Serial.write(uint8_t) byte into a host
- * std::vector). This is NOT the general-purpose serial-frame baseline
- * recorder D-07 explicitly declined building -- it lives local to THIS
- * suite, is cleared per-case in setUp() below alongside the other
- * file-static resets, and nothing here is added to test/native/avr/_shared/.
- * D-07's PRIMARY assertion stays the recorded BUS stream's byte-identity
- * (sdp_assert_stream_equals / the RED-BASELINE.md blob-SHA record); this
- * capture only strengthens the serial-channel half of OBS-05's claim. */
 static std::vector<uint8_t> captured_frames;
 
 /* Walks captured_frames using rurp_log_id()'s fixed, documented wire layout
@@ -250,12 +155,6 @@ static bool sdp_decode_u32_param_for_id(uint8_t target_id, uint32_t* out_value) 
 
 void setUp(void) {
     ArduinoFakeReset();
-    /* was AlwaysReturn(1) through Plan 118-04. Switched to
-     * AlwaysDo so every byte is ALSO captured into captured_frames -- this is
-     * additive/behaviourally-transparent to every existing case (none of
-     * cases 1-8 ever inspects captured_frames), confirmed by re-running all
-     * ten cases (1-8 plus the two Task-1 cases) at 10/10 before Task 2's new
-     * cases were added (see 118-05-SUMMARY.md). */
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t)))
         .AlwaysDo([](uint8_t b) -> size_t {
             captured_frames.push_back(b);
@@ -263,17 +162,6 @@ void setUp(void) {
         });
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
-    /* REQUIRED (mirrors test_sdp_harness.cpp / D-05): the real
-     * rurp_register_utils.h calls delayMicroseconds, and
-     * eeprom28c_check_chip_id / eeprom28c_wait_for_write call delay() /
-     * delayMicroseconds() too. ArduinoFake ABORTS (SIGABRT) on any unmocked
-     * virtual. Do not remove these as "unused" — they are load-bearing. Plan
-     * 118-04's OBS-04 duration bracket calls micros() twice per write_init
-     * drive (immediately before and after
-     * eeprom28c_emit_command_sequence's call); removing this mock produces
-     * a SIGABRT indistinguishable from the deferred Unity-teardown flake
-     * (D-13), not a compile error, so it is exactly as load-bearing as the
-     * three mocks above it. */
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
     When(Method(ArduinoFake(), delay)).AlwaysReturn();
     When(Method(ArduinoFake(), millis)).AlwaysReturn(0);
@@ -309,15 +197,6 @@ void tearDown(void) {}
  * Handle + drive helpers
  * ───────────────────────────────────────────────────────────────────────── */
 
-/* (D-08): extra_flags defaults to 0, so every one of cases 1-8's
- * existing make_sdp_handle(row) call sites is byte-for-byte unaffected --
- * no signature churn at those eight sites. Cases 9 and 10 pass
- * FLAG_SKIP_SDP_UNLOCK or 0 respectively, from this SAME factory and the
- * SAME row, so the only difference between the two cases is the flag bit
- * (mirrors make_identity_handle's existing ctrl_flags-parameter shape at
- * lines 163-178 below). FLAG_SKIP_BLANK_CHECK stays unconditionally set in
- * both, exactly as every other case here, so the blank-check axis
- * contributes no strobes to either stream. */
 static firestarter_handle_t make_sdp_handle(const sdp_bus_config_row_t& row, uint32_t extra_flags = 0) {
     firestarter_handle_t h = {};
     h.protocol = 0x0D;
@@ -330,15 +209,6 @@ static firestarter_handle_t make_sdp_handle(const sdp_bus_config_row_t& row, uin
     return h;
 }
 
-/* ERASE-01 / 152-CONTEXT.md D-07: the ONLY factory in this suite that leaves
- * the blank-check axis LIVE (ctrl_flags = 0, not FLAG_SKIP_BLANK_CHECK).
- * Every other factory here ORs FLAG_SKIP_BLANK_CHECK in unconditionally, so
- * all 29 existing cases already exercise the no-blank-check path and are
- * unaffected by this factory's existence. This factory's whole purpose is
- * to prove that the blank-check axis no longer changes anything on 0x0D --
- * with the skip flag CLEAR, write-INIT must still be single-shot and must
- * still emit the exact golden stream, because the pre-write blank check is
- * deleted outright, not merely gated. */
 static firestarter_handle_t make_sdp_handle_blank_check_enabled(const sdp_bus_config_row_t& row) {
     firestarter_handle_t h = {};
     h.protocol = 0x0D;
@@ -358,11 +228,6 @@ static firestarter_handle_t make_identity_handle(uint16_t expected_chip_id, uint
     h.mem_size = 32768; /* AT28C256 -- mfr_addr = mem_size - 64 = 0x7FC0 */
     h.response_code = RESPONSE_CODE_OK;
     h.chip_id = expected_chip_id;
-    /* D-01 (Phase 117): dropping the set_data no-op routes cases 6-7 through
-     * the real memory_set_data / mem_util_remap_address_bus for the first
-     * time, so this factory now needs a real bus_config -- row 0 is
-     * AT28C256 / DIP28_28C256, whose mem_size 32768 already matches this
-     * factory's own h.mem_size above (and its derived mfr_addr 0x7FC0). */
     h.bus_config = SDP_BUS_CONFIGS[0].bus_config;
     h.ctrl_flags = ctrl_flags | FLAG_SKIP_BLANK_CHECK;
     return h;
@@ -372,12 +237,6 @@ static firestarter_handle_t make_identity_handle(uint16_t expected_chip_id, uint
  * except the two planted manufacturer/device identity bytes; the SDP
  * completion-poll address (0x5555) is deliberately never satisfied. Migrated
  * from test_sdp_harness.cpp (116-05).
- *
- * D-01 (Phase 117 commit 1): only get_data is mocked here. The suite no
- * longer reassigns firestarter_set_data -- FIX-01 builds the emitter on
- * exactly that pointer, so a no-op there would make the post-fix recorded
- * stream empty. get_data stays mocked because it is what collapses the
- * completion poll's 2000-iteration loop to zero strobes, which is the sole
  * reason full-stream equality is possible at all. */
 static uint8_t mock_get_data_keyed(firestarter_handle_t*, uint32_t addr) {
     if (addr == s_mfr_addr_keyed) {
@@ -390,15 +249,6 @@ static uint8_t mock_get_data_keyed(firestarter_handle_t*, uint32_t addr) {
     }
     if (addr == 0x5555) {
         s_reads_at_poll_addr++;
-        /* D-02 (Phase 117 commit 1, Case 8): post-fix the completion poll is
-         * a bounded DQ6 toggle-bit poll, not an equality compare against a
-         * value that is never written. A constant return means "settled
-         * immediately"; s_poll_addr_toggles flips bit 0x40 on every read at
-         * THIS address so it means "never settles" -- dispatch stays keyed
-         * on ADDRESS, never on call order, per the rule above. The fixed
-         * code draws NO conclusion from either outcome (D-05): the
-         * conclusion is deferred to the page write's own poll, which has a
-         * real written byte to compare against (FIX-06). */
         if (s_poll_addr_toggles) {
             return (s_reads_at_poll_addr % 2 == 0) ? (uint8_t)0x00 : (uint8_t)0x40;
         }
@@ -407,11 +257,6 @@ static uint8_t mock_get_data_keyed(firestarter_handle_t*, uint32_t addr) {
     return 0xFF;
 }
 
-/* The FIX-01 reference emitter: h->firestarter_set_data is memory_set_data
- * (assigned by configure_memory), which routes through
- * mem_util_remap_address_bus -- the remap-aware target stream, with zero
- * hand derivation. Identical shape to test_sdp_harness.cpp's helper of the
- * same name (separate TU, no shared linkage). */
 static void drive_reference_emitter(firestarter_handle_t* h, const byte_flip_t* table, size_t len, rurp_register_t ctrl_seed) {
     configure_memory(h);
     reset_register_cache(0x00, 0x00, ctrl_seed);
@@ -421,14 +266,6 @@ static void drive_reference_emitter(firestarter_handle_t* h, const byte_flip_t* 
     }
 }
 
-/* Drives the REAL eeprom28c_write_init (via configure_memory dispatch) after
- * reassigning firestarter_get_data to the address-keyed mock, so the
- * 2000-iteration completion-poll timeout contributes zero strobes to the
- * recorded stream (Task 1 / Open Question 2 resolution: full-stream equality
- * is possible only because the mock satisfies no bus traffic). D-01 (Phase
- * 117): unlike Phase 116, firestarter_set_data is left as configure_memory's
- * real memory_set_data -- FIX-01 routes the emitter through that exact
- * pointer, so a no-op there would make the recorded stream empty post-fix. */
 static void drive_write_init(firestarter_handle_t* h, rurp_register_t ctrl_seed) {
     configure_memory(h);
     h->firestarter_get_data = mock_get_data_keyed;
@@ -451,9 +288,6 @@ static rurp_register_t drive_write_init_after_real_read(firestarter_handle_t* h,
     h->firestarter_get_data(h, probe_addr); /* REAL preceding read -- production memory_get_data */
     rurp_register_t stale_ctrl = rurp_read_from_register(CONTROL_REGISTER);
     h->firestarter_get_data = mock_get_data_keyed;
-    /* D-01 (Phase 117): firestarter_set_data stays the real memory_set_data
-     * (see drive_write_init's comment above) -- FIX-01's emitter is built on
-     * it. */
     clear_strobes();
     h->firestarter_operation_init(h);
     return stale_ctrl;
@@ -478,10 +312,6 @@ static firestarter_handle_t make_lock_handle(const sdp_bus_config_row_t& row) {
     return h;
 }
 
-/* (ERASE-03/ERASE-04): builds a handle for the erase op --
- * CMD_ERASE, chip_id 0 (no identity gate -- eeprom28c_erase_execute has
- * none, since init/end are NULL for this cmd and configure_eeprom28c only
- * ever sets `main`). Identical to make_lock_handle above except cmd. */
 static firestarter_handle_t make_erase_handle(const sdp_bus_config_row_t& row) {
     firestarter_handle_t h = {};
     h.protocol = 0x0D;
@@ -494,11 +324,6 @@ static firestarter_handle_t make_erase_handle(const sdp_bus_config_row_t& row) {
     return h;
 }
 
-/* Load-bearing order (Task 2's key_link, mirrored from drive_reference_emitter
- * / drive_write_init above): configure_memory (itself writes mem_util_set_address(handle, 0)),
- * THEN reset_register_cache, THEN clear_strobes, THEN the op call --
- * h.firestarter_operation_main(&h), since init/end are NULL by design for
- * CMD_SDP_LOCK (LOCK-02) so calling `main` directly IS the whole operation. */
 static void drive_lock_op(firestarter_handle_t* h, rurp_register_t ctrl_seed) {
     configure_memory(h);
     reset_register_cache(0x00, 0x00, ctrl_seed);
@@ -506,13 +331,7 @@ static void drive_lock_op(firestarter_handle_t* h, rurp_register_t ctrl_seed) {
     h->firestarter_operation_main(h);
 }
 
-/* (ERASE-04): drives the REAL eeprom28c_erase_execute (via
- * configure_memory dispatch on CMD_ERASE), following the same load-bearing
- * order as drive_write_init/drive_lock_op above -- configure_memory, THEN
- * reassign get_data, THEN reset_register_cache, THEN clear_strobes, THEN the
- * op call directly (init/end are NULL for CMD_ERASE, so main IS the whole
- * operation, same reasoning as drive_lock_op).
- *
+/*
  * LOAD-BEARING, unlike drive_lock_op: the erase's SDP-disable prefix
  * (eeprom28c_sdp_unlock_execute, called first inside eeprom28c_erase_execute)
  * ends in eeprom28c_wait_for_sdp_completion, which polls via
@@ -534,13 +353,6 @@ static void drive_erase_op(firestarter_handle_t* h, rurp_register_t ctrl_seed) {
 }
 
 #ifdef SDP_TRACE_DUMP
-/* TEMPORARY (Plan 119-05 Task 2): dumps the production lock op's recorded
- * stream for each SDP_BUS_CONFIGS row, mirroring test_sdp_harness.cpp's
- * dump_strobes helper. `pio test` swallows printf from test bodies, so this
- * is run via the built suite binary directly
- * (.pio/build/native/test_eeprom28c_sdp/program or the equivalent path under
- * .pio/build/native/), never via `pio test`. Kept behind this #ifdef,
- * matching test_sdp_harness.cpp's style -- never compiled by default. */
 static void dump_strobes_ready_to_paste(const char* tag) {
     printf("##### %s total=%d overflow=%d\n", tag, strobe_count(), strobe_overflowed());
     for (int i = 0; i < strobe_count(); i++) {
@@ -576,19 +388,6 @@ void test_dump_lock_goldens(void) {
 }
 #endif
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Cases 1-3 — ordered capture per DIP28/DIP24 pinout (TRACE-02, D-06)
- * ───────────────────────────────────────────────────────────────────────── */
-
-/* RED today, named mechanical reason: eeprom28c_write_init's SDP-disable
- * sequence is emitted by flash_execute_command -> flash_util_byte_flipping ->
- * fu_flash_fast_address, which writes the LITERAL {0x5555, 0x2AAA} magic
- * addresses via raw LSB/MSB register writes and NEVER consults
- * handle->bus_config. On AT28C256/DIP28_28C256, remap(0x5555) == 0x9555 (MSB
- * 0x95, not 0x55) -- the shipped stream's address bytes are simply wrong for
- * this pinout's real bus wiring, so the ordered-stream comparison against the
- * FIX-01 target (SDP_FIXED_DIP28_28C256, built on the remap-aware
- * memory_set_data) diverges from the very first MSB write. */
 void test_case1_at28c256_stream_matches_fixed(void) {
     firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[0]); /* AT28C256 */
     drive_write_init(&h, 0x00);
@@ -628,48 +427,6 @@ void test_case3_at28c16_stream_matches_fixed(void) {
         "for a write-init that emitted the correct sequence");
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Cases 4-5 — DIP32_28C512_EEPROM, deliberate stale-upper-address state
- * (CORRECTION 3, TRACE-02, D-09)
- * ───────────────────────────────────────────────────────────────────────── */
-
-/*
- * CORRECTION 3 (116-RESEARCH.md CORRECTION 3 / 116-05-SUMMARY.md): a PLAIN
- * DIP32 trace against the canonical zero-CONTROL-seed SDP_FIXED_DIP32_*
- * target is decorative here. mem_util_remap_address_bus returns 0x5555
- * unchanged for this pinout (address_mask == 0xFFFF, rw_line-20's bit is
- * WRITE_FLAG == 0 on a write) -- shipped and fixed share byte-identical
- * LSB/MSB/data values under a zero seed, differing only by an INCIDENTAL
- * /OE-edge ordering artifact of which emitter function happens to be used. A
- * future fix that preserved that ordering would leave a plain trace GREEN
- * with nothing about the real bug proven.
- *
- * The REAL bug: DIP32's rw_line (20) folds into CONTROL bit 0x10
- * (CTRL_ADDRESS_LINE_17) -- the WRITE-ENABLE line this 32-pin pinout
- * repurposes an upper address line for. fu_flash_fast_address (the SHIPPED
- * emitter) writes ONLY LSB/MSB and NEVER writes CONTROL_REGISTER at all -- so
- * whatever a PRECEDING operation left in CONTROL's upper-address bits stays
- * stuck for the entire SDP sequence: /WE inhibited, and (for
- * CTRL_ADDRESS_LINE_18) the chip's real upper address wrong. The reference
- * emitter (memory_set_data, the FIX-01 target) recomputes and writes
- * CONTROL_REGISTER on every address change via mem_util_set_address, and
- * WOULD clear those stale bits.
- *
- * Non-decorative comparison target: instead of the canonical zero-seed
- * SDP_FIXED_DIP32_28C512_EEPROM array, both cases below dynamically drive the
- * reference emitter under the SAME stale seed as the shipped path, snapshot
- * it, and assert the shipped stream equals THAT snapshot. This is the
- * "large, unambiguous divergence" CORRECTION 3 calls for: shipped emits no
- * CONTROL_REGISTER entries under any seed (cache-hit branch is a no-op either
- * way), while the stale-seeded reference emitter emits an EXTRA
- * CONTROL_REGISTER write clearing the stale bits -- a difference in KIND, not
- * merely incidental ordering. It is also self-repairing: once Phase 117
- * rebuilds eeprom28c_write_init on the same remap-aware, CONTROL-writing
- * emitter, driving the "shipped" handle will produce byte-identical output to
- * driving the reference handle, and this assertion passes with no further
- * edit.
- */
-
 /* Case 4 (STALE STATE MECHANISM: direct seed). AT28C010 (128 KB). */
 void test_case4_at28c010_stale_direct_seed(void) {
     firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[3]); /* AT28C010 */
@@ -698,9 +455,6 @@ void test_case4_at28c010_stale_direct_seed(void) {
         "sequence");
 }
 
-/* Case 5 (STALE STATE MECHANISM: a real preceding read through
- * memory_get_data, per RESEARCH Open Question 1's second leg). AT28C040
- * (512 KB) -- shares AT28C010's bus_config byte-for-byte (116-02 D-09). */
 void test_case5_at28c040_stale_via_real_read(void) {
     /* Probe address 0x0000, deliberately NOT 0x5555/0x2AAA (the SDP
      * sequence's own magic addresses): CTRL_ADDRESS_LINE_17 is set by
@@ -739,16 +493,7 @@ void test_case5_at28c040_stale_via_real_read(void) {
         "sequence");
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Cases 6-7 — migrated identity-gate assertions, RED half (CORRECTION 2,
- * TRACE-04, TRACE-06)
- * ───────────────────────────────────────────────────────────────────────── */
-
-/* Migrated from the retired test_eeprom28c_chip_id (D-12), landing HERE (not
- * the always-green test_sdp_harness) per CORRECTION 2: this case is
- * SDP-outcome-dependent, so it is RED today and only goes GREEN once Phase
- * 117 fixes eeprom28c_write_init's SDP-disable completion check.
- *
+/*
  * RED today, named mechanical reason: a matching identity never sets an
  * error or warning, so eeprom28c_write_init proceeds into
  * flash_execute_command(EEPROM_SDP_DISABLE); eeprom28c_wait_for_write's
@@ -762,11 +507,6 @@ void test_case6_matching_chip_id_proceeds(void) {
     s_mfr_lo_keyed = 0x08;
     firestarter_handle_t h = make_identity_handle(0x1F08, 0);
     configure_memory(&h);
-    /* configure_memory() overwrites firestarter_get_data (Pattern 3) --
-     * re-assign it. D-01 (Phase 117): firestarter_set_data is left as
-     * configure_memory's real memory_set_data -- FIX-01's emitter is built
-     * on that exact pointer, so a no-op here would make the post-fix
-     * recorded stream empty. */
     h.firestarter_get_data = mock_get_data_keyed;
     reset_register_cache(0x00, 0x00, 0x00);
     clear_strobes();
@@ -777,18 +517,6 @@ void test_case6_matching_chip_id_proceeds(void) {
 }
 
 /* CORRECTION 2's finding, second-order evidence of the inverted completion
- * check -- the check does not merely fail, it DESTROYS severity information.
- * With FLAG_FORCE, eeprom28c_check_chip_id correctly sets
- * RESPONSE_CODE_WARNING on a chip-id mismatch (eeprom_28c.cpp:88), but
- * eeprom28c_write_init's completion wait is UNCONDITIONAL (no flag skips it):
- * eeprom28c_wait_for_write's timeout unconditionally overwrites
- * handle->response_code with RESPONSE_CODE_ERROR, destroying the WARNING.
- * D-12 originally routed this case to the always-green suite; CORRECTION 2
- * moves it here. Do NOT weaken this assertion to make it pass today -- the
- * force/severity fork is exactly what the v1.16 Phase-89 CR-01 regression
- * slipped through (see .planning memory
- * reference_golden_trace_misses_severity_fork.md).
- *
  * Before this plan, the two chip-ID mismatch ids -- MSG_WARN_CHIP_ID_MISMATCH
  * and MSG_ERR_CHIP_ID_MISMATCH -- appeared in ZERO test files anywhere in
  * this tree, so severity (which rides entirely in the id, not the
@@ -805,8 +533,6 @@ void test_case7_mismatching_chip_id_with_force_warns(void) {
     s_mfr_lo_keyed = 0xAD;
     firestarter_handle_t h = make_identity_handle(0x1F08, FLAG_FORCE);
     configure_memory(&h);
-    /* D-01 (Phase 117): see test_case6's comment above -- firestarter_set_data
-     * is left as the real memory_set_data. */
     h.firestarter_get_data = mock_get_data_keyed;
     reset_register_cache(0x00, 0x00, 0x00);
     clear_strobes();
@@ -862,23 +588,6 @@ void test_case7_mismatching_chip_id_with_force_warns(void) {
         "without FLAG_FORCE -- pins the fork in both directions inside this one case");
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Case 8 — completion poll must never destroy a prior severity (D-02, D-05)
- * ───────────────────────────────────────────────────────────────────────── */
-
-/* New at Phase 117 commit 1, a PERMANENT regression guard (not migrated,
- * not RED-only-by-construction). chip_id is 0 in make_sdp_handle, so no
- * identity path runs and the WARNING's provenance is unambiguous -- it can
- * only have been altered by the completion poll itself. s_poll_addr_toggles
- * makes the poll never conclude, so this also exercises the "never settles"
- * arm of the mock (the constant-return arm is already exercised by cases
- * 1-7). RED at this commit for a named reason: today's shipped
- * eeprom28c_write_init times out on its (0x5555, 0x20) read-back and
- * unconditionally overwrites handle->response_code with
- * RESPONSE_CODE_ERROR (eeprom_28c.cpp:153), destroying the WARNING -- the
- * same severity-destruction fork the v1.16 Phase-89 CR-01 regression
- * slipped through (.planning memory
- * reference_golden_trace_misses_severity_fork.md). */
 void test_case8_completion_poll_preserves_prior_severity(void) {
     firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[0]); /* AT28C256 */
     h.response_code = RESPONSE_CODE_WARNING;
@@ -889,23 +598,6 @@ void test_case8_completion_poll_preserves_prior_severity(void) {
         "a prior response_code, even when it never settles");
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Cases 9-10 — the skip/no-skip stream pair, content-positional, from ONE
- * handle factory (D-08, Plan 118-05 Task 1, OBS-02)
- * ───────────────────────────────────────────────────────────────────────── */
-
-/* D-08 constraint 1: drives PRODUCTION eeprom28c_write_init via
- * drive_write_init (configure_memory dispatch), never
- * drive_reference_emitter (which drives FLASH_DISABLE_WRITE_PROTECTION, a
- * DIFFERENT table -- proving nothing about the shipped FLAG_SKIP_SDP_UNLOCK
- * gate).
- *
- * D-08 constraint 2: every assertion below is on the ordered stream's
- * CONTENT, never a call count. Register-write elision (Phase 116 research
- * finding 10) is invisible to a counting test -- a bare
- * strobe_count() == 0 would pass even if the emitter ran and every write
- * happened to elide, so that check appears ONLY as secondary corroboration
- * at the end, never as the load-bearing proof. */
 void test_case9_skip_flag_suppresses_unlock_stream(void) {
     firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[0], FLAG_SKIP_SDP_UNLOCK); /* AT28C256 */
     drive_write_init(&h, 0x00);
@@ -913,21 +605,10 @@ void test_case9_skip_flag_suppresses_unlock_stream(void) {
     TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(),
         "Case 9 (OBS-02): recorded stream must not overflow");
 
-    /* Content-positional divergence (D-08 constraint 2): the recorded stream
-     * must diverge from the full unlock stream at EXACTLY index 0 -- the
-     * unlock sequence's own first strobe is absent from the very start, not
-     * merely "somewhere". Asserting the exact index, rather than != -1, is
-     * itself an assertion about content and position, never a count. */
     TEST_ASSERT_EQUAL_MESSAGE(0, sdp_first_divergence(SDP_FIXED_DIP28_28C256, SDP_FIXED_DIP28_28C256_LEN),
         "Case 9 (OBS-02): FLAG_SKIP_SDP_UNLOCK set -- the recorded stream must diverge from the "
         "full unlock stream (SDP_FIXED_DIP28_28C256) starting at index 0");
 
-    /* Content walk over every recorded DATA entry: none of EEPROM_SDP_DISABLE's
-     * own payload bytes -- the PRODUCTION command sequence's own command
-     * table, not a transcribed copy -- may appear as a DATA value anywhere in
-     * the recorded stream. This is the assertion that survives register-write
-     * elision (D-08 constraint 2): it inspects every recorded element's
-     * {kind, value}, never a length or a count. */
     for (int i = 0; i < strobe_count(); i++) {
         if (strobe_kind(i) != STROBE_KIND_DATA) {
             continue;
@@ -943,25 +624,11 @@ void test_case9_skip_flag_suppresses_unlock_stream(void) {
         }
     }
 
-    /* Secondary corroboration ONLY (D-08 explicitly forbids a bare
-     * strobe_count() from being the load-bearing proof) -- the two content
-     * assertions above are what this case actually rests on. With the whole
-     * unlock block skipped and FLAG_SKIP_BLANK_CHECK also set,
-     * eeprom28c_write_init emits nothing else, so the count happens to be 0. */
     TEST_ASSERT_EQUAL_MESSAGE(0, strobe_count(),
         "Case 9 (OBS-02, secondary corroboration ONLY -- see the index-0 divergence and the "
         "payload-byte-absence walk above for the load-bearing proof)");
 }
 
-/* D-08 constraint 3: the flag-absent counterpart, from the SAME handle
- * factory and the SAME row as Case 9 above, asserting the FULL
- * SDP_FIXED_DIP28_28C256 stream, ships in the SAME commit as Case 9. Case 1
- * already makes a similar full-stream assertion, but from the OLD
- * (pre-118-05) factory shape that always passed extra_flags == 0 implicitly
- * -- this counterpart exists so the skip/no-skip pair is self-contained at
- * one call site each, and so a future edit to make_sdp_handle's default
- * ctrl_flags cannot silently drift the flag-absent baseline Case 9 is
- * contrasted against. Cross-reference: Case 9 immediately above. */
 void test_case10_flag_absent_emits_full_unlock_stream(void) {
     firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[0], 0); /* AT28C256, flag NOT set */
     drive_write_init(&h, 0x00);
@@ -973,11 +640,6 @@ void test_case10_flag_absent_emits_full_unlock_stream(void) {
         "Case 10: the completion poll is advisory only (D-05) and must never report ERROR for a "
         "write-init that emitted the correct sequence");
 }
-
-/* ─────────────────────────────────────────────────────────────────────────
- * Case 11 — the t_BLC runtime budget WARN is observed to actually fire
- * (D-09, Plan 118-05 Task 2, OBS-03)
- * ───────────────────────────────────────────────────────────────────────── */
 
 void test_case11_tblc_budget_exceeded_warns(void) {
     /* AT28C_TBLC_MAX_US (100) is #define'd inside eeprom_28c.cpp's own
@@ -1023,10 +685,6 @@ void test_case11_tblc_budget_exceeded_warns(void) {
         "Case 11 (D-02/D-05): the budget WARN must never write handle->response_code -- severity "
         "lives in the message id's band alone");
 
-    /* Anti-hollow control, same case (D-09's own requirement): with the
-     * default tick behaviour (elapsed 0) restored, the WARN id must NOT
-     * appear -- an appearing-only assertion could pass against a branch that
-     * always fires regardless of the measured duration. */
     sdp_script_micros({0, 0});
     captured_frames.clear();
     firestarter_handle_t h2 = make_sdp_handle(SDP_BUS_CONFIGS[0]);
@@ -1039,28 +697,6 @@ void test_case11_tblc_budget_exceeded_warns(void) {
         "that always fires");
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Case 12 — exactly the two new report frames (flag absent) / exactly one
- * WARN frame (flag set), enumerated (D-07 strengthening, OBS-05)
- * ───────────────────────────────────────────────────────────────────────── */
-
-/* Strengthens, but never replaces, D-07's PRIMARY assertion: the recorded
- * BUS stream's byte-identity (Cases 1-3/10 above, and the _shared/ blob-SHA
- * record in RED-BASELINE.md, Plan 118-05 Task 3). This case only makes
- * OBS-05's serial-channel exception machine-checked instead of prose-only,
- * using the per-case capture declared above -- it does not build the
- * general-purpose recorder D-07 explicitly declined. */
-/* (re-verified under the scripted micros() queue, no
- * assertion changed): this case drives drive_write_init ONLY -- it never
- * calls eeprom28c_write_execute. That was incidental before the scripted
- * queue existed (the old modulo-2 alternator did not care how many
- * functions were driven); it is now LOAD-BEARING, because D-16's page-load
- * tracker (Plan 119-08) will add its own micros() calls inside
- * write_execute, and the frame counts asserted below (2 frames flag-absent,
- * 1 frame flag-set) describe write_init's report pair only. If this case is
- * ever widened to also drive write_execute, its frame-count expectations
- * MUST be re-scoped to account for write_execute's own report line -- do
- * not assume they stay 2 and 1. */
 void test_case12_flag_absent_emits_exactly_two_report_frames(void) {
     firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[0]); /* flag absent, default ticks */
     drive_write_init(&h, 0x00);
@@ -1078,9 +714,6 @@ void test_case12_flag_absent_emits_exactly_two_report_frames(void) {
     TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_WARN_SDP_TBLC_EXCEEDED),
         "Case 12: the flag-absent default (elapsed 0) path must never emit MSG_WARN_SDP_TBLC_EXCEEDED");
 
-    /* Skip-path mirror, same case -- the executable form of D-02's "in place
-     * of, never in addition to": with FLAG_SKIP_SDP_UNLOCK set, EXACTLY
-     * MSG_WARN_SDP_UNLOCK_SKIPPED and neither INFO id. */
     captured_frames.clear();
     firestarter_handle_t h_skip = make_sdp_handle(SDP_BUS_CONFIGS[0], FLAG_SKIP_SDP_UNLOCK);
     drive_write_init(&h_skip, 0x00);
@@ -1095,10 +728,6 @@ void test_case12_flag_absent_emits_exactly_two_report_frames(void) {
     TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids_skip, (uint8_t)MSG_INFO_SDP_UNLOCK_DONE_US),
         "Case 12 (skip mirror): the skip path must never emit MSG_INFO_SDP_UNLOCK_DONE_US");
 }
-
-/* ─────────────────────────────────────────────────────────────────────────
- * Cases 13-16 — the production lock op's stream, per pinout (LOCK-01)
- * ───────────────────────────────────────────────────────────────────────── */
 
 /* Every one of cases 13-19 below drives the PRODUCTION lock op --
  * h.cmd = CMD_SDP_LOCK, then h.firestarter_operation_main(&h) via
@@ -1143,10 +772,6 @@ void test_case16_lock_dip32_28c512_eeprom_stream_matches_fixed_stale_seed(void) 
         "upper-address CONTROL seed (CTRL_ADDRESS_LINE_17|18) its golden was recorded under");
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Case 17 — the no-payload termination, D-10's load-bearing absence (LOCK-05)
- * ───────────────────────────────────────────────────────────────────────── */
-
 /* EEPROM_SDP_ENABLE is byte-identical to FLASH_ENABLE_WRITE (the
  * protected-write prefix) and to FLASH_ENABLE_WRITE_PROTECTION -- the ONLY
  * thing that makes this sequence a LOCK rather than the first three writes
@@ -1188,11 +813,6 @@ void test_case17_lock_terminates_after_three_writes_no_trailing_data(void) {
     }
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Cases 18-19 — exact divergence from the unlock and chip-erase streams
- * (LOCK-05 stream half)
- * ───────────────────────────────────────────────────────────────────────── */
-
 /* The lock stream must diverge from the SIX-WRITE UNLOCK stream at an EXACT
  * index -- never `!= -1` (Pitfall 4: a golden pinned to the wrong
  * expectation stays green under a bare not-equal check). Drives the
@@ -1218,13 +838,6 @@ void test_case18_lock_diverges_from_unlock_at_exact_index(void) {
         "at EXACTLY index 27 -- write #3's payload byte (0xA0 in the lock vs 0x80 in the unlock)");
 }
 
-/* Same shape as Case 18, comparing against the stream FLASH_ERASE produces
- * through the SAME FIXED emitter. Chip-erase's third payload is ALSO 0x80
- * (identical to the unlock's), so this diverges from the lock at the
- * IDENTICAL index 27 -- FIX-05's one-nibble hazard class (EEPROM_SDP_DISABLE
- * vs FLASH_ERASE differing by one nibble in one byte), now checked for the
- * lock table too. Reads FLASH_ERASE from flash_utils.h (read-only; that file
- * stays FIX-04 frozen). */
 void test_case19_lock_diverges_from_chip_erase_at_exact_index(void) {
     firestarter_handle_t h = make_lock_handle(SDP_BUS_CONFIGS[0]); /* AT28C256 */
     drive_lock_op(&h, 0x00);
@@ -1244,33 +857,6 @@ void test_case19_lock_diverges_from_chip_erase_at_exact_index(void) {
         "so the lock's 0xA0 payload diverges from both at the identical position");
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Case 20 — D-12's report shape: both lock ids, ordered, response_code
- * untouched, FLAG_VERBOSE unset, unlock's ids and the skip-WARN absent
- * ───────────────────────────────────────────────────────────────────────── */
-
-/* Firmware-side proof of HOST-05: response_code is deliberately never
- * written on the SDP path (117 D-05 / 118 D-02, permanently enforced by
- * Case 8 above), so an untouched path reports OK -- the honesty therefore
- * cannot live in the status code and lives in MSG_INFO_SDP_LOCK_DONE_US's
- * message text instead, which states both that the sequence was emitted
- * and that the protection state is not readable.
- *
- * Rejected alternatives (D-12), recorded here because this case is their
- * disproof: (1) an unconditional unverifiable-state WARN on every lock --
- * rejected because it warns on a correctly completed operation and trains
- * users to ignore the WARN band; (2) reporting the DQ6 toggle poll's
- * outcome as lock evidence -- rejected because a settled toggle bit proves
- * a write cycle finished, not that protection latched, which is FIX-02's
- * deleted mistake in a new costume (eeprom28c_sdp_lock_execute deliberately
- * never calls eeprom28c_wait_for_sdp_completion at all, per D-11).
- *
- * make_lock_handle sets ctrl_flags = 0, so this case drives with
- * FLAG_VERBOSE NOT set by construction -- pinning the unconditional bare
- * LOG_ID / LOG_ID_U32 spelling (118 D-01) rather than the
- * FLAG_VERBOSE-gated LOG_INFO_ID* family: with the gated family a default
- * `dev sdp enable` would go silent, which is the defect this spelling
- * exists to avoid. */
 void test_case20_lock_report_shape_and_response_code(void) {
     firestarter_handle_t h = make_lock_handle(SDP_BUS_CONFIGS[0]); /* AT28C256, ctrl_flags = 0 */
     drive_lock_op(&h, 0x00);
@@ -1311,11 +897,6 @@ void test_case20_lock_report_shape_and_response_code(void) {
         "only to the unlock's skip path");
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Cases 21-22 — D-14's t_BLC budget WARN: fires over budget, does NOT fire
- * at a normal elapsed time (the anti-hollow pair)
- * ───────────────────────────────────────────────────────────────────────── */
-
 /* Case 21: the budget WARN fires. Mirrors Case 11's shape for the six-write
  * unlock budget, but for the three-write lock. AT28C_TBLC_MAX_US (100) is
  * #define'd inside eeprom_28c.cpp's own translation unit (eeprom_28c.cpp:58)
@@ -1348,17 +929,6 @@ void test_case21_lock_tblc_budget_warn_fires(void) {
         "severity lives in the message id's band alone");
 }
 
-/* Case 22: the anti-hollow control. A check that always fires and a check
- * that never fires are BOTH hollow, so D-14 needs the pair: this case
- * scripts ticks comfortably inside the 300 us budget and asserts the WARN
- * id is absent WHILE both lock INFO ids are present -- the presence half is
- * load-bearing, since without it this case would pass vacuously if nothing
- * were captured at all. F-118-01 measured the real unlock timing at ~95 us
- * per byte against a 100 us per-byte datasheet maximum, so the lock's
- * 300 us budget lands near ~286 us on real hardware -- a synthetic in-budget
- * value is used here since native host timing is not representative of AVR
- * cycles, but the real-hardware margin is why this check is genuinely
- * load-bearing rather than a latent invariant. */
 void test_case22_lock_tblc_budget_warn_does_not_fire_at_normal_elapsed(void) {
     sdp_script_micros({0, 50}); /* comfortably inside the 300 us budget */
     firestarter_handle_t h = make_lock_handle(SDP_BUS_CONFIGS[0]);
@@ -1376,22 +946,7 @@ void test_case22_lock_tblc_budget_warn_does_not_fire_at_normal_elapsed(void) {
         "Case 22: MSG_INFO_SDP_LOCK_DONE_US must also be present, for the same reason");
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Case 23 — the standalone unlock's stream is byte-identical to the
- * auto-unlock's (D-13's "reads identically however it was triggered")
- * ───────────────────────────────────────────────────────────────────────── */
-
 /* Drives the standalone CMD_SDP_UNLOCK op directly (h.firestarter_operation_main,
- * since init/end are NULL for this cmd per LOCK-02), snapshotting its stream
- * (mandatory: the next drive's clear_strobes() would otherwise erase it),
- * then drives eeprom28c_write_init on a fresh handle with FLAG_SKIP_SDP_UNLOCK
- * clear (the auto-unlock path) and asserts exact-index (-1) divergence
- * against the snapshot. This holds because both paths call the SAME shared
- * eeprom28c_emit_sdp_sequence_timed helper with the SAME table
- * (EEPROM_SDP_DISABLE) and the SAME completion wait
- * (eeprom28c_wait_for_sdp_completion) -- D-13's reused-ids decision made
- * assertable, not merely asserted.
- *
  * firestarter_get_data is reassigned to mock_get_data_keyed for the
  * standalone drive, mirroring drive_write_init's own override above: the
  * standalone op does NOT go through drive_write_init (it drives `main`
@@ -1419,9 +974,6 @@ void test_case23_standalone_unlock_matches_auto_unlock_stream(void) {
     sdp_strobe_t unlock_snapshot[64];
     int unlock_len = sdp_snapshot(unlock_snapshot, 64);
 
-    /* Secondary assertion (D-13's reused-ids decision made explicit) --
-     * captured BEFORE the second drive/clear below, since captured_frames is
-     * cleared per-case in setUp() only, not between the two drives here. */
     std::vector<uint8_t> unlock_ids;
     sdp_captured_frame_ids(&unlock_ids);
     TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(unlock_ids, (uint8_t)MSG_INFO_SDP_UNLOCK),
@@ -1451,15 +1003,6 @@ void test_case23_standalone_unlock_matches_auto_unlock_stream(void) {
     sdp_assert_stream_equals(unlock_snapshot, unlock_len,
         "Case 23 (D-13): standalone unlock == auto-unlock (byte-identical streams)");
 }
-
-/* ─────────────────────────────────────────────────────────────────────────
- * Cases 24-25 (v1.22 Phase 119 D-06/D-07, 119-07 Task 3, option (a)) — the
- * refusal FRAME itself, proven at the op layer, plus DEVTEST-01's firmware
- * half proven end to end through the CMD_ERASE dispatch path on 0x0D. Both
- * are possible only because Task 1 widened build_src_filter with
- * operation_utils.cpp -- under option (b) neither case would exist and the
- * matrix would be prose.
- * ───────────────────────────────────────────────────────────────────────── */
 
 /* Case 24: a handle whose firestarter_operation_main is NULL (no dispatch
  * involved -- this proves the REFUSAL itself, not any one handler's
@@ -1524,33 +1067,7 @@ static int case25_serial_read() {
     return b;
 }
 
-/* Case 25 -- MANDATORY INVERSION (Phase 153 / ERASE-03). Recorded in the
- * reversal-record voice this project uses: mechanism-corrected,
- * intent-satisfied -- never as failed. `configure_eeprom28c` now carries a
- * `case CMD_ERASE:` arm (Phase 153 plan 03) assigning `eeprom28c_erase_execute`,
- * so this cell has LEFT Phase 119 D-06's op-layer NULL-main guard's coverage
- * -- the same guard test_case24 above still proves, generically, for every
- * cell that remains NULL. All four beats stay POSITIVE.
- *
- * Switched the handle factory from make_lock_handle to make_erase_handle
- * (defined above, alongside drive_erase_op) and reassigned
- * firestarter_get_data to mock_get_data_keyed before driving: this case now
- * drives the REAL eeprom28c_erase_execute through op_execute_simple_operation,
- * whose SDP-disable prefix polls via handle->firestarter_get_data --
- * left as the real memory_get_data, that poll's read iterations would each
- * latch a fresh address and could overflow the 512-entry strobe recorder
- * before this case's own assertions run (drive_erase_op's own comment states
- * this same reason in full; this case does not use that helper directly
- * because op_execute_simple_operation, not h.firestarter_operation_main, is
- * the call under test here -- DEVTEST-01's op-layer entry point). This case
- * still calls op_execute_simple_operation directly, not eprom_erase
- * (src/eprom_operations.cpp, an AVR-only TU excluded from [env:native]'s
- * build_src_filter) -- the exact op-layer function eprom_erase's body
- * delegates to (`return op_execute_simple_operation(handle);`),
- * deliberately bypassing eprom_erase's own EARLIER FLAG_CAN_ERASE
- * precondition check (a different, unrelated refusal) so this case isolates
- * ERASE-03's dispatch arm alone.
- *
+/*
  * DEVIATION (discovered running this case, Rule 1/3): with main non-NULL,
  * op_execute_stateful_operation no longer short-circuits at the top -- it
  * enters the REAL INIT/MAIN/END housekeeping state machine
@@ -1612,11 +1129,6 @@ void test_case25_cmd_erase_on_0x0d_dispatches_and_succeeds_erase03(void) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
- * Cases 26-29 (Plan 119-08, D-16) — the page-load worst-per-byte-interval
- * report: fires with the correct decoded value on a completing multi-page
- * write, fires on the aborting exit the bench actually takes, adds no
- * budget WARN, and leaves response_code untouched.
- *
  * These cases drive PRODUCTION eeprom28c_write_execute directly via
  * h.firestarter_operation_main(&h) after configure_memory (CMD_WRITE's main
  * on 0x0D), never a hand-rolled copy of the loop.
@@ -1656,13 +1168,6 @@ static uint8_t mock_get_data_page_load_ok(firestarter_handle_t* h, uint32_t addr
     return (uint8_t)h->data_buffer[k];
 }
 
-/* Always-fails mock: a fixed 0xFF (DQ7 set) never matches any byte this
- * suite's data pattern produces (all < 0x80, DQ7 clear -- see
- * make_page_load_handle above), so eeprom28c_wait_for_page_write times out
- * on the FIRST flush window it polls. This IS Plan 119-11's bench
- * condition: an EMPTY SOCKET reads back a fixed idle level that never
- * matches an intended write, so the first page's write poll always fails
- * -- exactly the condition under which gh#11's symptom appears. */
 static uint8_t mock_get_data_page_load_always_wrong(firestarter_handle_t*, uint32_t) {
     return 0xFF;
 }
@@ -1720,18 +1225,6 @@ void test_case26_write_execute_reports_worst_interval_on_completing_write(void) 
         "instead of the running maximum");
 }
 
-/* Case 27 -- the report line fires on the ABORTING exit. Same two-page
- * geometry as Case 26, but mock_get_data_page_load_always_wrong makes the
- * FIRST page's write poll fail, so the loop takes the early exit (via the
- * flagged break -- D-16's single-exit restructure) after loading only the
- * first page's 64 bytes; the second page (bytes 64-71) is never reached.
- * This is the case that makes Plan 119-11's bench run meaningful: with an
- * EMPTY SOCKET the first page always fails, and it is also the condition
- * under which gh#11's symptom appears -- so a report unreachable on the
- * abort path would have measured nothing where it matters most. Only the
- * first 64 bytes' ticks are scripted (1 seed + 64 in-loop = 65 entries); a
- * huge tail value is installed and must NEVER be observed in the decoded
- * result, since the loop must abort before it is ever read. */
 void test_case27_write_execute_reports_worst_interval_on_aborting_write(void) {
     const size_t   loaded_before_abort = 64; /* AT28C_PAGE_SIZE_FALLBACK -- the first page, in full */
     const size_t   spike_after_byte = 30;    /* mid-first-page, not first/last of the loaded range */
@@ -1777,13 +1270,6 @@ void test_case27_write_execute_reports_worst_interval_on_aborting_write(void) {
         "never reach because it aborts first");
 }
 
-/* Case 28 -- no budget WARN on this path, even at an interval far above
- * AT28C_TBLC_MAX_US (100). D-16 deliberately declines a runtime compare in
- * the hot per-byte path, preserving 118's D-10; this case pins that
- * declination so a future editor who adds one sees it fail here and has to
- * make the decision deliberately. The presence half (MSG_INFO_PAGE_LOAD_WORST_US)
- * is load-bearing so this case cannot pass vacuously against a driven path
- * that captured no frames at all. */
 void test_case28_write_execute_no_tblc_budget_warn(void) {
     const uint32_t over_budget_interval_us = 1000; /* >> AT28C_TBLC_MAX_US (100) */
     sdp_script_micros({0, over_budget_interval_us});
@@ -1830,15 +1316,6 @@ void test_case29_write_execute_report_preserves_response_code(void) {
         "the response_code check above is meaningful rather than vacuous");
 }
 
-/* Case 30 -- ERASE-01 / 152-CONTEXT.md D-07. Built from
- * make_sdp_handle_blank_check_enabled (the ONLY factory in this suite that
- * leaves the blank-check axis live), this case proves that a write-INIT
- * driven with FLAG_SKIP_BLANK_CHECK CLEAR is byte-identical in behavior to
- * every other case here (which all drive with the flag SET): no blank-check
- * progress allocation, no multi-call INIT loop, and the exact same golden
- * stream. `mem_util_blank_check` is the ONLY setter of
- * is_operation_in_progress on this path, so a FALSE result below is the
- * single-shot-INIT proof, not an assumption. */
 void test_case30_write_init_no_blank_check_with_flag_clear_erase01(void) {
     firestarter_handle_t h = make_sdp_handle_blank_check_enabled(SDP_BUS_CONFIGS[0]); /* AT28C256 */
     drive_write_init(&h, 0x00);
@@ -1865,12 +1342,6 @@ void test_case30_write_init_no_blank_check_with_flag_clear_erase01(void) {
         "expressed as a stream identity: a pre-write blank check contributes zero strobes "
         "whether or not the caller asks to skip it");
 }
-
-/* ─────────────────────────────────────────────────────────────────────────
- * Cases 31-33 (Phase 153 / ERASE-04) -- pinning eeprom28c_erase_execute's
- * emitted stream against the tree at head, tail and divergence, per
- * D-153-01's binding gate on the plan-03 inline literals.
- * ───────────────────────────────────────────────────────────────────────── */
 
 /* Case 31 -- the erase stream's HEAD is the SDP-disable prefix, positionally,
  * over the golden's full length -- D-153-02's prefix is emitted verbatim
@@ -1902,13 +1373,6 @@ void test_case31_erase_stream_head_equals_sdp_disable_golden_erase04(void) {
         "D-153-02's erase");
 }
 
-/* Case 32 -- the erase stream's TAIL is the chip-erase terminal byte, not
- * the SDP-disable terminal byte -- FIX-05's one-nibble hazard class
- * (EEPROM_SDP_DISABLE 0x20 vs FLASH_ERASE 0x10 at the same table position),
- * checked on the erase op's own emitted stream. Modelled on Case 17's
- * derivation: payload, CE-low, CE-high are the last three entries of any
- * un-elided write, and the erase's own final write (chip-erase's sixth,
- * address 0x5555 differing from write #5's 0x2AAA) is never elided. */
 void test_case32_erase_stream_terminates_on_chip_erase_byte_erase04(void) {
     firestarter_handle_t h = make_erase_handle(SDP_BUS_CONFIGS[0]); /* AT28C256 / DIP28_28C256 */
     drive_erase_op(&h, 0x00);

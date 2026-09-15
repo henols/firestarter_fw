@@ -104,9 +104,6 @@ _INCLUDE = _REPO_ROOT / "include"
 _PLATFORM_SRC = _REPO_ROOT / "platform" / "py32f071" / "src"
 _CORE_SRC = _PLATFORM_SRC / "config_storage_dualslot.cpp"
 
-# The CRC32 known-answer vector (D-05) -- an INDEPENDENT vector, written
-# here, never derived from the module under test (the HOST-06 discipline).
-# The standard reflected CRC-32 (polynomial 0xEDB88320) check string.
 _CRC32_KAT_INPUT = b"123456789"
 _CRC32_KAT_EXPECTED = 0xCBF43926
 
@@ -135,15 +132,6 @@ def _resolve_compiler():
     return compiler
 
 
-# The shared RAM-fake primitive layer, written fresh into every RAM-fake
-# scenario's translation unit (never a committed fixture TU). Implements the
-# three primitives over two 4-byte-aligned 256-byte page buffers, honours an
-# abort-after-N-words hook (C-2), and fails the process (DEFECT marker on
-# stdout + abort()) if `program_page` is ever called on a slot not marked
-# erased since its last program (C-8). Every helper is annotated
-# [[maybe_unused]] because not every scenario's main() calls every helper,
-# and -Wall/-Wextra's -Wunused-function must not fire on the ones a given
-# scenario does not need.
 _FAKE_PREAMBLE = """
 #include "config_storage_dualslot.h"
 
