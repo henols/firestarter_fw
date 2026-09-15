@@ -6,7 +6,7 @@ citations and dispatch traceability.
 
 This is the developer-facing document. The user-facing description of what each
 protocol is and which chips it is for lives on the wiki:
-https://github.com/henols/firestarter_prom/wiki/Programming-Protocols
+https://github.com/henols/firestarter/wiki/Programming-Protocols
 
 No tool machine-reads this document — the `tools/wiki/` checkers in the meta repository that
 used to cross-check the dispatch table here, the host tool and the firmware were retired on
