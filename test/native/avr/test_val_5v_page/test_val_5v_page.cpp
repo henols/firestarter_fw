@@ -620,6 +620,104 @@ void test_5v_page_write_execute_boundary_524288_512(void) {
         "the second page start must not be observable before at least page_size bytes were processed -- an under-sized derived page fires it earlier");
 }
 
+void test_5v_page_write_execute_refuses_unaligned_second_chunk(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 0x40;
+    h.data_size      = 512;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "the first chunk starts mid-page and must refuse on its own start clause");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused first chunk must perform zero register writes");
+
+    h.response_code = RESPONSE_CODE_OK;
+    clear_bus_recording();
+    h.address   = 0x40 + 512;
+    h.data_size = 512;
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "the second chunk is unaligned only because the first chunk ended mid-page -- the guard refuses it on its own terms, with no memory of the first chunk's history");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused second chunk must perform zero register writes, so no page already committed by the first chunk is reopened and re-committed across the boundary");
+}
+
+void test_5v_page_write_execute_accepts_aligned_two_chunk_p256(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 524288;
+    h.page_size      = 256;
+    h.address        = 0;
+    h.data_size      = 512;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "the first aligned chunk must succeed before the second chunk is driven");
+
+    clear_bus_recording();
+    h.address   = 512;
+    h.data_size = 512;
+    h.firestarter_operation_main(&h);
+
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the signature count below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "the second aligned chunk must also succeed");
+    TEST_ASSERT_EQUAL_MESSAGE(2, sig_count,
+        "one page start per 256-byte page in the 512-byte chunk -- each page is opened exactly once across the chunk boundary");
+}
+
+void test_5v_page_write_execute_accepts_aligned_two_chunk_p512(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 524288;
+    h.page_size      = 512;
+    h.address        = 0;
+    h.data_size      = 512;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "the first aligned chunk must succeed before the second chunk is driven");
+
+    clear_bus_recording();
+    h.address   = 512;
+    h.data_size = 512;
+    h.firestarter_operation_main(&h);
+
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the signature count below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "the second aligned chunk must also succeed");
+    TEST_ASSERT_EQUAL_MESSAGE(1, sig_count,
+        "one page start per 512-byte chunk at page size 512 -- the only native coverage of the two 512-byte-page parts");
+}
+
 void test_5v_page_write_execute_ignores_mem_size_entirely(void) {
     firestarter_handle_t h = drive_page_boundary_case(524288, 128, 256);
     int indices[8];
@@ -907,6 +1005,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_5v_page_write_execute_boundary_262144_256);
     RUN_TEST(test_5v_page_write_execute_boundary_524288_256);
     RUN_TEST(test_5v_page_write_execute_boundary_524288_512);
+    RUN_TEST(test_5v_page_write_execute_refuses_unaligned_second_chunk);
+    RUN_TEST(test_5v_page_write_execute_accepts_aligned_two_chunk_p256);
+    RUN_TEST(test_5v_page_write_execute_accepts_aligned_two_chunk_p512);
     RUN_TEST(test_5v_page_write_execute_ignores_mem_size_entirely);
 
     RUN_TEST(test_5v_page_write_execute_refuses_page_size_not_power_of_two);
