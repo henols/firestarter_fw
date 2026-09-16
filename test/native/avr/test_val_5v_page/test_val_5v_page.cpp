@@ -404,6 +404,90 @@ void test_5v_page_write_execute_accepts_page_exact_write(void) {
         "exactly one SDP signature from the single page start");
 }
 
+void test_5v_page_write_execute_refuses_partial_length(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 0;
+    h.data_size      = 64;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "a page-aligned start with a partial-length chunk must refuse");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused partial-length chunk must perform zero register writes");
+}
+
+void test_5v_page_write_execute_refuses_unaligned_start_and_partial_length(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 64;
+    h.data_size      = 64;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "both the start and length clauses fire here -- a guard written with && instead of || would pass the single-clause cases and fail only this one");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused chunk with both clauses firing must perform zero register writes");
+}
+
+void test_5v_page_write_execute_refuses_single_byte_payload(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 0;
+    h.data_size      = 1;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "one byte is never a whole page on any part whose page size exceeds one byte");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused single-byte payload must perform zero register writes");
+}
+
+void test_5v_page_write_execute_accepts_zero_length_chunk(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 0;
+    h.data_size      = 0;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "a zero-length chunk is a whole multiple of every page size and must not be refused");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a zero-length chunk drives no page cycle at all -- committing a page here would be the defect itself");
+}
+
 static firestarter_handle_t drive_page_boundary_case(uint32_t mem_size, uint16_t page_size, uint32_t data_size) {
     firestarter_handle_t h = {};
     h.protocol       = 0x05;
@@ -811,6 +895,10 @@ int main(int argc, char** argv) {
     RUN_TEST(test_5v_page_write_execute_refuses_with_no_page_size);
     RUN_TEST(test_5v_page_write_execute_refuses_unaligned_start);
     RUN_TEST(test_5v_page_write_execute_accepts_page_exact_write);
+    RUN_TEST(test_5v_page_write_execute_refuses_partial_length);
+    RUN_TEST(test_5v_page_write_execute_refuses_unaligned_start_and_partial_length);
+    RUN_TEST(test_5v_page_write_execute_refuses_single_byte_payload);
+    RUN_TEST(test_5v_page_write_execute_accepts_zero_length_chunk);
 
     RUN_TEST(test_5v_page_write_execute_boundary_32768_64);
     RUN_TEST(test_5v_page_write_execute_boundary_65536_128);
