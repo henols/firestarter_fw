@@ -163,9 +163,8 @@ void test_5v_page_0x39_write_configure_no_vpp(void) {
  * firestarter_set_data = memory_set_data and the operation_main pointer.
  * Then clear_bus_recording() resets the capture, fill data_buffer with zeros
  * (so flash_5v_page_wait_for_page_write's DQ7 poll passes in one iteration since the
- * stub's rurp_read_data_buffer() always returns 0 = expected), set data_size=4
- * at address=0, and call h.firestarter_operation_main(&h) to drive
- * flash_5v_page_write_execute.
+ * stub's rurp_read_data_buffer() always returns 0 = expected), and call
+ * h.firestarter_operation_main(&h) to drive flash_5v_page_write_execute.
  *
  * The recording captures every rurp_write_to_register call:
  *   - flash_util_byte_flipping (SDP sequence) writes CONTROL_REGISTER
@@ -182,7 +181,6 @@ void test_5v_page_0x39_write_configure_no_vpp(void) {
  * during the write-execute call. Passes today and MUST keep passing after the fix.
  */
 
-/* Helper to build a write handle with 4-byte zero data buffer at address 0. */
 static firestarter_handle_t make_write_handle_with_data(void) {
     firestarter_handle_t h = {};
     h.protocol   = 0x05;
@@ -192,7 +190,7 @@ static firestarter_handle_t make_write_handle_with_data(void) {
     h.mem_size   = 524288; /* 512 KB (W29C040) */
     h.page_size  = 256; /* W29C040's real page */
     h.address    = 0;
-    h.data_size  = 4; /* small: 4 zero bytes at page 0; poll passes immediately */
+    h.data_size  = 256;
     /* data_buffer is zero-initialized by {} */
     /* ctrl_flags = 0: no FLAG_CAN_ERASE, no FLAG_SKIP_BLANK_CHECK —
      * flash_5v_page_write_init would call blank-check, but we bypass init and call
@@ -282,7 +280,7 @@ void test_5v_page_write_execute_emits_sdp(void) {
     h.firestarter_operation_main(&h);
 
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
-        "flash_5v_page_write_execute must not error on 4-byte zero write");
+        "flash_5v_page_write_execute must not error on a full-page zero write");
     TEST_ASSERT_TRUE_MESSAGE(recording_contains_sdp_signature(),
         "flash_5v_page_write_execute must emit FLASH_ENABLE_WRITE SDP (0x5555,0x2AAA,0x5555 MSB pattern) at page start");
 }
@@ -300,7 +298,7 @@ void test_5v_page_write_execute_no_vpp(void) {
     h.firestarter_operation_main(&h);
 
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
-        "flash_5v_page_write_execute must not error on 4-byte zero write");
+        "flash_5v_page_write_execute must not error on a full-page zero write");
     assert_no_vpp_in_recording(
         "flash_5v_page_write_execute (operation phase) must NOT set any VPP-enable CTL bit");
 }
@@ -358,6 +356,52 @@ void test_5v_page_write_execute_refuses_with_no_page_size(void) {
         "a write with no resolvable page size must refuse");
     TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
         "a refused write must perform zero register writes");
+}
+
+void test_5v_page_write_execute_refuses_unaligned_start(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 64;
+    h.data_size      = 128;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "a chunk starting one byte inside a page must refuse");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused unaligned chunk must perform zero register writes");
+}
+
+void test_5v_page_write_execute_accepts_page_exact_write(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 128;
+    h.data_size      = 128;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the assertions below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "a page-exact write at a non-zero page-aligned start must succeed");
+    TEST_ASSERT_EQUAL_MESSAGE(1, sig_count,
+        "exactly one SDP signature from the single page start");
 }
 
 static firestarter_handle_t drive_page_boundary_case(uint32_t mem_size, uint16_t page_size, uint32_t data_size) {
@@ -765,6 +809,8 @@ int main(int argc, char** argv) {
 
     RUN_TEST(test_5v_page_write_execute_page_starts_at_real_page_not_derived);
     RUN_TEST(test_5v_page_write_execute_refuses_with_no_page_size);
+    RUN_TEST(test_5v_page_write_execute_refuses_unaligned_start);
+    RUN_TEST(test_5v_page_write_execute_accepts_page_exact_write);
 
     RUN_TEST(test_5v_page_write_execute_boundary_32768_64);
     RUN_TEST(test_5v_page_write_execute_boundary_65536_128);

@@ -84,6 +84,17 @@ void flash_5v_page_write_execute(firestarter_handle_t* handle) {
         handle->response_code = RESPONSE_CODE_ERROR;
         return;
     }
+    if ((handle->address & page_mask) != 0 || (handle->data_size & page_mask) != 0) {
+        uint8_t _b[5];
+        _b[0] = (uint8_t)((handle->address >> 16) & 0xFF);
+        _b[1] = (uint8_t)((handle->address >> 8) & 0xFF);
+        _b[2] = (uint8_t)(handle->address & 0xFF);
+        _b[3] = (uint8_t)((handle->data_size >> 8) & 0xFF);
+        _b[4] = (uint8_t)(handle->data_size & 0xFF);
+        LOG_ERROR_ID_BYTES(MSG_ERR_FL4_PAGE_ALIGN, _b, 5);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return;
+    }
     for (uint32_t i = 0; i < handle->data_size; i++) {
         uint32_t address = handle->address + i;
         uint8_t expected = handle->data_buffer[i];
