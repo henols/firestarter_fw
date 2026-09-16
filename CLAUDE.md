@@ -53,7 +53,7 @@ key it names; numbers stay the dispatch key end to end (GATE-01). Source of
 truth for the name set: the `Programming Protocols` wiki page (operator-approved).
 
 Dispatch order in `memory.cpp:configure_memory` (source-of-truth — must match
-`firestarter/src/proms/memory.cpp` line-for-line):
+`src/proms/memory.cpp` line-for-line):
 
 1. `protocol == PROTO_FLASH_INTEL (0x10)` → `configure_flash_intel()` — Intel 28F command-register flash
 2. `protocol == PROTO_EEPROM_PARALLEL (0x0D)` → `configure_eeprom28c()` — AT28C-series 5V EEPROM with page write
