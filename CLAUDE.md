@@ -9,9 +9,8 @@ task, skill, or subagent instruction overrides this.
 
 - Forbidden: `// Phase NNN (REQ-NN):`, `// D-06`, `// CAP-02`, `// LOCK-04`, any plan, task or
   milestone citation, and any block that explains why a phase decided something. A reader of this
-  firmware has no planning directory. It lives in a different repository and nothing ships it. Those
-  identifiers resolve to nothing, and phase numbers change at milestone close.
-- **Put rationale in the commit message,** or in the planning record in the meta repository.
+  firmware has no planning directory, so those identifiers resolve to nothing. Put rationale in the
+  commit message instead.
 - If a plan instructs a comment, do not add it. Record the deviation in that plan's summary.
 - If code needs explaining, make the code clearer. Use better names, smaller functions, or a named
   constant in `include/`.
