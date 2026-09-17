@@ -17,6 +17,16 @@ not overridable by a plan, task, skill, or subagent instruction.
 - If code needs explaining, make the code clearer: better names, smaller functions, a named
   constant in `include/`.
 - Flash size is a first-class constraint here, so comment bloat has a real cost beyond noise.
+- **The rule is not "no GSD citations".** You delete `Phase 194` from a comment and keep the
+  comment. This still breaks the rule. Add no `//` or `/* */` line, for any reason, however
+  helpful it seems. State the rule in these words when you spawn a subagent that touches source.
+- Before each commit, run this check. It must print nothing:
+  `git diff --cached | /usr/bin/grep -E '^\+\s*(//|/\*|\*)'`
+- Deleting one clause from an existing comment reflows the rest. Read the remainder. Confirm it
+  still parses and that every pronoun still has an antecedent.
+- CI enforces this. Both workflows run `tools/citations/code_digest.py` from the meta repo as the
+  `No planning citations in source` step. It reads comment text only. It skips string literals and
+  Python docstrings. It exits 2 when it scans no files, so a wrong path cannot pass it vacuously.
 
 ## Build Commands
 
@@ -28,6 +38,22 @@ pio test                # run unit tests (all envs)
 pio test -e native      # run host-side dispatch tests (no hardware needed)
 pio test -e native -f "*test_dispatch*"   # run only the configure_memory dispatch suite
 ```
+
+### What CI runs
+
+CI runs four steps, and no others:
+
+1. `No planning citations in source` — the meta repo's `tools/citations/code_digest.py`.
+2. `pio test -e native` — the `DEV_TOOLS` build.
+3. `pio test -e native_nodevtools` — the build without `DEV_TOOLS`.
+4. `pytest tests/ -v` — the second test tree, described below.
+
+**This repository has two test trees. Do not confuse them.** `test/` holds the PlatformIO Unity
+suites. `tests/` holds a separate Python suite of about 286 tests. Most of them scan firmware
+source text. Both trees run in CI. Every other `pio` environment named in this file runs in no CI
+leg, so its case counts are a local run-by-name obligation.
+
+`pytest tests/ -v` needs full git history. The workflow sets `fetch-depth: 0` for that reason.
 
 ## Architecture
 
@@ -89,14 +115,18 @@ source of truth the `Programming Protocols` wiki page) — the label IS the numb
 | 0x10                   | `PROTO_FLASH_INTEL`    | flash_intel.cpp   | 12V via CTRL_VPP_P1_ENABLE | Command register, SR polling                                 |
 | 0x34                   | `PROTO_EEPROM_8051BUS` | not_implemented.cpp (PCB-blocked, FUT-01) | None (5V) | No dedicated dispatch arm — falls through the generic `protocol != 0` fail-closed guard |
 
-**Program-VCC ceiling on the three 27C rows (accepted debt).** The raised program-VCC all four
-vendor algorithms assume for threshold margin — the ~6.25 V ceiling `include/eprom_params.h`'s
-`verify_mode` header comment names — is unreachable on this shield, which has no VCC-raise path.
-This milestone's per-byte loop above buys timing, pulse-count and verify fidelity and **not**
-silicon-margin fidelity on the `0x07`/`0x08`/`0x0B` rows; it is hardware-bound, recorded here rather
-than attempted, and tracked as a future requirement (`.planning/REQUIREMENTS.md` §"Evidence ceiling
-— fixed before any code moves").
-Citation: `include/eprom_params.h:32-34`; `.planning/REQUIREMENTS.md` §"Evidence ceiling — fixed before any code moves".
+**Program-VCC ceiling on the three 27C rows. Accepted debt.** All four vendor algorithms assume a
+raised program-VCC for threshold margin. That ceiling is about 6.25 V. This shield has no
+VCC-raise path, so the ceiling is unreachable.
+
+The per-byte loop described above buys timing fidelity, pulse-count fidelity and verify fidelity
+on the `0x07`, `0x08` and `0x0B` rows. It does **not** buy silicon-margin fidelity. The limit is
+hardware-bound. It is recorded here, not attempted.
+
+Citations: `include/eprom_params.h:31-33`, the `verify_mode` header comment that names the ceiling.
+Also `.planning/milestones/v1.31-REQUIREMENTS.md` § "Evidence ceiling — fixed before any code
+moves". That requirement was archived at v1.31 close. It is not in the live
+`.planning/REQUIREMENTS.md`.
 
 ### Protocol 0x0D notes (AT28C / 28C-family EEPROM)
 
@@ -201,6 +231,10 @@ to pre-empt it.
 - `src/proms/memory.cpp` — top-level dispatch (`configure_memory()`)
 - `include/firestarter.h` — `firestarter_handle_t` struct definition
 - `include/rurp_pinout.h` — control register bit definitions (CTRL_VPP_REGULATOR_ENABLE, CTRL_VPP_VPE_DROP_ENABLE, CTRL_VPP_P1_ENABLE, etc.)
+- `include/messages.h` — **generated. Do not edit it by hand.** It carries message IDs only. The
+  source of truth is `messages.toml` in the meta repo. Codegen runs in the meta repo only. This
+  repository consumes the synced artifact. To change a message, edit `messages.toml`, run the
+  codegen there, and sync the result here.
 
 ### Constants
 
@@ -220,7 +254,7 @@ Firmware flags (from `firestarter.h`):
 
 ### Hardware Revision Documentation
 
-The operator-facing canonical RURP shield revision reference, the `Shield Revisions` wiki page, is a subset clone of the Firestarter meta-repo investigation document at `.planning/v1.7-SHIELD-REVS.md`. It contains the inventory (§1), per-rev capability matrix (§6), silkscreen → code alias table (§7), and per-rev ADC band table (§9). If any of those sections changes in the meta-repo, update the wiki page in lockstep (Phase 35 / v1.7 — close).
+The operator-facing canonical RURP shield revision reference, the `Shield Revisions` wiki page, is a subset clone of the Firestarter meta-repo investigation document at `.planning/milestones/v1.7-SHIELD-REVS.md`. It contains the inventory (§1), per-rev capability matrix (§6), silkscreen → code alias table (§7), and per-rev ADC band table (§9). If any of those sections changes in the meta-repo, update the wiki page in lockstep (Phase 35 / v1.7 — close).
 
 The `rurp_pinout.h` `ADC_BAND_R41_*` `#define` values are the firmware-side source of truth for the band-lookup math; the §4 ADC Band Table in the `Shield Revisions` wiki page mirrors those values verbatim. Drift between the two = bug; if the values change in `rurp_pinout.h`, update the wiki page's §4 table + the meta-repo §9 in the same commit-pair.
 
@@ -229,7 +263,7 @@ Post-Phase-35 semantic note: Plan 01 switched `pinMode(PIN_HW_REVISION_DETECT_AD
 ### PY32F071 Flash-Path and PCB Documentation
 
 `platform/py32f071/FLASH-PATH-AND-PCB.md` is a subset clone of the Firestarter meta-repo decision
-record at `.planning/v1.23-FLASH-PATH-DECISION.md`. It carries five shared sections, named by
+record at `.planning/milestones/v1.23-FLASH-PATH-DECISION.md`. It carries five shared sections, named by
 marker so a reader can find the contract from the sub-repo, from the meta record, or from this
 file — the third of the three places the same five keys are named, matching the v1.7 precedent:
 `[SHARED:S1]` the three-tier flash path, `[SHARED:S2]` the PCB checklist, `[SHARED:S3]` the flash
