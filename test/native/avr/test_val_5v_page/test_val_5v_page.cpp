@@ -41,6 +41,7 @@ extern "C" void clear_bus_recording();
 extern "C" int  bus_recording_count();
 extern "C" uint8_t recorded_reg(int i);
 extern "C" uint8_t recorded_data(int i);
+extern "C" bool bus_recording_saturated();
 
 static std::vector<uint8_t> s_wire_bytes;
 
@@ -162,9 +163,8 @@ void test_5v_page_0x39_write_configure_no_vpp(void) {
  * firestarter_set_data = memory_set_data and the operation_main pointer.
  * Then clear_bus_recording() resets the capture, fill data_buffer with zeros
  * (so flash_5v_page_wait_for_page_write's DQ7 poll passes in one iteration since the
- * stub's rurp_read_data_buffer() always returns 0 = expected), set data_size=4
- * at address=0, and call h.firestarter_operation_main(&h) to drive
- * flash_5v_page_write_execute.
+ * stub's rurp_read_data_buffer() always returns 0 = expected), and call
+ * h.firestarter_operation_main(&h) to drive flash_5v_page_write_execute.
  *
  * The recording captures every rurp_write_to_register call:
  *   - flash_util_byte_flipping (SDP sequence) writes CONTROL_REGISTER
@@ -181,7 +181,6 @@ void test_5v_page_0x39_write_configure_no_vpp(void) {
  * during the write-execute call. Passes today and MUST keep passing after the fix.
  */
 
-/* Helper to build a write handle with 4-byte zero data buffer at address 0. */
 static firestarter_handle_t make_write_handle_with_data(void) {
     firestarter_handle_t h = {};
     h.protocol   = 0x05;
@@ -189,8 +188,9 @@ static firestarter_handle_t make_write_handle_with_data(void) {
     h.response_code = RESPONSE_CODE_OK;
     h.chip_id    = 0; /* skip chip-id branch in write_init */
     h.mem_size   = 524288; /* 512 KB (W29C040) */
+    h.page_size  = 256; /* W29C040's real page */
     h.address    = 0;
-    h.data_size  = 4; /* small: 4 zero bytes at page 0; poll passes immediately */
+    h.data_size  = 256;
     /* data_buffer is zero-initialized by {} */
     /* ctrl_flags = 0: no FLAG_CAN_ERASE, no FLAG_SKIP_BLANK_CHECK —
      * flash_5v_page_write_init would call blank-check, but we bypass init and call
@@ -237,8 +237,12 @@ static firestarter_handle_t make_write_init_handle_can_erase_set(void) {
  * fu_flash_fast_address writes (LSB=addr&0xFF, MSB=(addr>>8)&0xFF).
  * Signature MSB pattern at start: 0x55, 0x2A, 0x55 in consecutive MSB writes.
  * Returns true if found, false if not. */
-static bool recording_contains_sdp_signature(void) {
-    /* Look for the MSB sequence: 0x55, 0x2A, 0x55 (MSBs of 0x5555, 0x2AAA, 0x5555) */
+/* Counts every occurrence of the SDP MSB signature in the recording and
+ * reports the recorded index of each, via an optional out-array. Immune to
+ * register-write elision because the three unlock addresses (0x5555, 0x2AAA,
+ * 0x5555) differ from each other and from every data address. */
+static int count_sdp_signatures(int* out_indices, int max_out) {
+    int count = 0;
     int msb_seq_index = 0;
     const uint8_t msb_pattern[3] = {0x55, 0x2A, 0x55};
     for (int i = 0; i < bus_recording_count(); i++) {
@@ -246,7 +250,11 @@ static bool recording_contains_sdp_signature(void) {
             if (recorded_data(i) == msb_pattern[msb_seq_index]) {
                 msb_seq_index++;
                 if (msb_seq_index == 3) {
-                    return true; /* full SDP MSB signature found */
+                    if (out_indices != NULL && count < max_out) {
+                        out_indices[count] = i;
+                    }
+                    count++;
+                    msb_seq_index = 0;
                 }
             } else {
                 /* Reset if sequence breaks (partial match then mismatch) */
@@ -254,7 +262,11 @@ static bool recording_contains_sdp_signature(void) {
             }
         }
     }
-    return false;
+    return count;
+}
+
+static bool recording_contains_sdp_signature(void) {
+    return count_sdp_signatures(NULL, 0) > 0;
 }
 
 /* Test 1 (FIX-02B SDP): flash_5v_page_write_execute must emit FLASH_ENABLE_WRITE
@@ -268,7 +280,7 @@ void test_5v_page_write_execute_emits_sdp(void) {
     h.firestarter_operation_main(&h);
 
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
-        "flash_5v_page_write_execute must not error on 4-byte zero write");
+        "flash_5v_page_write_execute must not error on a full-page zero write");
     TEST_ASSERT_TRUE_MESSAGE(recording_contains_sdp_signature(),
         "flash_5v_page_write_execute must emit FLASH_ENABLE_WRITE SDP (0x5555,0x2AAA,0x5555 MSB pattern) at page start");
 }
@@ -286,9 +298,492 @@ void test_5v_page_write_execute_no_vpp(void) {
     h.firestarter_operation_main(&h);
 
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
-        "flash_5v_page_write_execute must not error on 4-byte zero write");
+        "flash_5v_page_write_execute must not error on a full-page zero write");
     assert_no_vpp_in_recording(
         "flash_5v_page_write_execute (operation phase) must NOT set any VPP-enable CTL bit");
+}
+
+/* W29C512's real geometry is (mem_size 65536, page_size 128). A
+ * capacity-derived page size would have picked 64 here, producing a second
+ * page start at address 64 -- a second SDP signature. Exactly one signature
+ * over 128 bytes proves the firmware used the real 128-byte page. */
+void test_5v_page_write_execute_page_starts_at_real_page_not_derived(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 65536;
+    h.page_size      = 128;
+    h.address        = 0;
+    h.data_size      = 128;
+    /* data_buffer is zero-initialized by {} -- write poll converges on its
+     * first iteration. */
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the boundary assertion below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "non-vacuity control: the write must have actually run");
+    TEST_ASSERT_EQUAL_MESSAGE(1, sig_count,
+        "exactly one SDP signature over 128 bytes -- the old 64-byte derivation would have produced a second page start at address 64");
+}
+
+/* Refusal counterpart: the same geometry with page_size 0 (absent) must
+ * refuse and perform zero register writes. Refusing without performing no
+ * write would still corrupt the device silently. */
+void test_5v_page_write_execute_refuses_with_no_page_size(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 65536;
+    h.page_size      = 0;
+    h.address        = 0;
+    h.data_size      = 128;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "a write with no resolvable page size must refuse");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused write must perform zero register writes");
+}
+
+void test_5v_page_write_execute_refuses_unaligned_start(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 64;
+    h.data_size      = 128;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "a chunk starting one byte inside a page must refuse");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused unaligned chunk must perform zero register writes");
+}
+
+void test_5v_page_write_execute_accepts_page_exact_write(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 128;
+    h.data_size      = 128;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the assertions below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "a page-exact write at a non-zero page-aligned start must succeed");
+    TEST_ASSERT_EQUAL_MESSAGE(1, sig_count,
+        "exactly one SDP signature from the single page start");
+}
+
+void test_5v_page_write_execute_refuses_partial_length(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 0;
+    h.data_size      = 64;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "a page-aligned start with a partial-length chunk must refuse");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused partial-length chunk must perform zero register writes");
+}
+
+void test_5v_page_write_execute_refuses_unaligned_start_and_partial_length(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 64;
+    h.data_size      = 64;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "both the start and length clauses fire here -- a guard written with && instead of || would pass the single-clause cases and fail only this one");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused chunk with both clauses firing must perform zero register writes");
+}
+
+void test_5v_page_write_execute_refuses_single_byte_payload(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 0;
+    h.data_size      = 1;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "one byte is never a whole page on any part whose page size exceeds one byte");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused single-byte payload must perform zero register writes");
+}
+
+void test_5v_page_write_execute_accepts_zero_length_chunk(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 0;
+    h.data_size      = 0;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "a zero-length chunk is a whole multiple of every page size and must not be refused");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a zero-length chunk drives no page cycle at all -- committing a page here would be the defect itself");
+}
+
+static firestarter_handle_t drive_page_boundary_case(uint32_t mem_size, uint16_t page_size, uint32_t data_size) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = mem_size;
+    h.page_size      = page_size;
+    h.address        = 0;
+    h.data_size      = data_size;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+    return h;
+}
+
+void test_5v_page_write_execute_boundary_32768_64(void) {
+    firestarter_handle_t h = drive_page_boundary_case(32768, 64, 128);
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the boundary assertion below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "non-vacuity control: the write must have actually run");
+    TEST_ASSERT_EQUAL_MESSAGE(2, sig_count,
+        "exactly two SDP signatures across a two-page span -- a capacity-derived page would produce a different count");
+    TEST_ASSERT_TRUE_MESSAGE(indices[1] >= (int)(3 * 64),
+        "the second page start must not be observable before at least page_size bytes were processed -- an under-sized derived page fires it earlier");
+}
+
+void test_5v_page_write_execute_boundary_65536_128(void) {
+    firestarter_handle_t h = drive_page_boundary_case(65536, 128, 256);
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the boundary assertion below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "non-vacuity control: the write must have actually run");
+    TEST_ASSERT_EQUAL_MESSAGE(2, sig_count,
+        "exactly two SDP signatures across a two-page span -- a capacity-derived page would produce a different count");
+    TEST_ASSERT_TRUE_MESSAGE(indices[1] >= (int)(3 * 128),
+        "the second page start must not be observable before at least page_size bytes were processed -- an under-sized derived page fires it earlier");
+}
+
+void test_5v_page_write_execute_boundary_131072_128(void) {
+    firestarter_handle_t h = drive_page_boundary_case(131072, 128, 256);
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the boundary assertion below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "non-vacuity control: the write must have actually run");
+    TEST_ASSERT_EQUAL_MESSAGE(2, sig_count,
+        "exactly two SDP signatures across a two-page span -- a capacity-derived page would produce a different count");
+    TEST_ASSERT_TRUE_MESSAGE(indices[1] >= (int)(3 * 128),
+        "the second page start must not be observable before at least page_size bytes were processed -- an under-sized derived page fires it earlier");
+}
+
+void test_5v_page_write_execute_boundary_262144_128(void) {
+    firestarter_handle_t h = drive_page_boundary_case(262144, 128, 256);
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the boundary assertion below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "non-vacuity control: the write must have actually run");
+    TEST_ASSERT_EQUAL_MESSAGE(2, sig_count,
+        "exactly two SDP signatures across a two-page span -- a capacity-derived page would produce a different count");
+    TEST_ASSERT_TRUE_MESSAGE(indices[1] >= (int)(3 * 128),
+        "the second page start must not be observable before at least page_size bytes were processed -- an under-sized derived page fires it earlier");
+}
+
+void test_5v_page_write_execute_boundary_262144_256(void) {
+    firestarter_handle_t h = drive_page_boundary_case(262144, 256, 512);
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the boundary assertion below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "non-vacuity control: the write must have actually run");
+    TEST_ASSERT_EQUAL_MESSAGE(2, sig_count,
+        "exactly two SDP signatures across a two-page span -- a capacity-derived page would produce a different count");
+    TEST_ASSERT_TRUE_MESSAGE(indices[1] >= (int)(3 * 256),
+        "the second page start must not be observable before at least page_size bytes were processed -- an under-sized derived page fires it earlier");
+}
+
+void test_5v_page_write_execute_boundary_524288_256(void) {
+    firestarter_handle_t h = drive_page_boundary_case(524288, 256, 512);
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the boundary assertion below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "non-vacuity control: the write must have actually run");
+    TEST_ASSERT_EQUAL_MESSAGE(2, sig_count,
+        "exactly two SDP signatures across a two-page span -- a capacity-derived page would produce a different count");
+    TEST_ASSERT_TRUE_MESSAGE(indices[1] >= (int)(3 * 256),
+        "the second page start must not be observable before at least page_size bytes were processed -- an under-sized derived page fires it earlier");
+}
+
+void test_5v_page_write_execute_boundary_524288_512(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 524288;
+    h.page_size      = 512;
+    h.address        = 0;
+    h.data_size      = 512;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    h.address   = 512;
+    h.data_size = 512;
+    h.firestarter_operation_main(&h);
+
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the boundary assertion below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "non-vacuity control: the write must have actually run");
+    TEST_ASSERT_EQUAL_MESSAGE(2, sig_count,
+        "exactly two SDP signatures across two page-sized calls -- a capacity-derived page would produce a different count");
+    TEST_ASSERT_TRUE_MESSAGE(indices[1] >= (int)(3 * 512),
+        "the second page start must not be observable before at least page_size bytes were processed -- an under-sized derived page fires it earlier");
+}
+
+void test_5v_page_write_execute_refuses_unaligned_second_chunk(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 262144;
+    h.page_size      = 128;
+    h.address        = 0x40;
+    h.data_size      = 512;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "the first chunk starts mid-page and must refuse on its own start clause");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused first chunk must perform zero register writes");
+
+    h.response_code = RESPONSE_CODE_OK;
+    clear_bus_recording();
+    h.address   = 0x40 + 512;
+    h.data_size = 512;
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "the second chunk is unaligned only because the first chunk ended mid-page -- the guard refuses it on its own terms, with no memory of the first chunk's history");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused second chunk must perform zero register writes, so no page already committed by the first chunk is reopened and re-committed across the boundary");
+}
+
+void test_5v_page_write_execute_accepts_aligned_two_chunk_p256(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 524288;
+    h.page_size      = 256;
+    h.address        = 0;
+    h.data_size      = 512;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "the first aligned chunk must succeed before the second chunk is driven");
+
+    clear_bus_recording();
+    h.address   = 512;
+    h.data_size = 512;
+    h.firestarter_operation_main(&h);
+
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the signature count below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "the second aligned chunk must also succeed");
+    TEST_ASSERT_EQUAL_MESSAGE(2, sig_count,
+        "one page start per 256-byte page in the 512-byte chunk -- each page is opened exactly once across the chunk boundary");
+}
+
+void test_5v_page_write_execute_accepts_aligned_two_chunk_p512(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 524288;
+    h.page_size      = 512;
+    h.address        = 0;
+    h.data_size      = 512;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "the first aligned chunk must succeed before the second chunk is driven");
+
+    clear_bus_recording();
+    h.address   = 512;
+    h.data_size = 512;
+    h.firestarter_operation_main(&h);
+
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the signature count below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "the second aligned chunk must also succeed");
+    TEST_ASSERT_EQUAL_MESSAGE(1, sig_count,
+        "one page start per 512-byte chunk at page size 512 -- the only native coverage of the two 512-byte-page parts");
+}
+
+void test_5v_page_write_execute_ignores_mem_size_entirely(void) {
+    firestarter_handle_t h = drive_page_boundary_case(524288, 128, 256);
+    int indices[8];
+    int sig_count = count_sdp_signatures(indices, 8);
+    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
+        "recorder saturated -- the boundary assertion below would be vacuous");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "non-vacuity control: the write must have actually run");
+    TEST_ASSERT_EQUAL_MESSAGE(2, sig_count,
+        "boundaries land on multiples of page_size 128, not the mem_size-524288-derived 256");
+    TEST_ASSERT_TRUE_MESSAGE(indices[1] >= (int)(3 * 128),
+        "the second page start must not be observable before at least page_size bytes were processed -- an under-sized derived page fires it earlier");
+}
+
+static void run_page_size_refusal_case(uint16_t page_size) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 65536;
+    h.page_size      = page_size;
+    h.address        = 0;
+    h.data_size      = 128;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "a rejected page size must refuse");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "a refused write must perform zero register writes");
+}
+
+void test_5v_page_write_execute_refuses_page_size_not_power_of_two(void) {
+    run_page_size_refusal_case(96);
+}
+
+void test_5v_page_write_execute_refuses_page_size_above_ceiling(void) {
+    run_page_size_refusal_case(1024);
+}
+
+void test_5v_page_write_execute_refuses_page_size_transport_saturated(void) {
+    run_page_size_refusal_case(65535);
+}
+
+void test_5v_page_write_execute_positive_control_valid_page_size(void) {
+    firestarter_handle_t h = {};
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.chip_id        = 0;
+    h.mem_size       = 65536;
+    h.page_size      = 128;
+    h.address        = 0;
+    h.data_size      = 128;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "positive control: a valid page size must not refuse");
+    TEST_ASSERT_TRUE_MESSAGE(bus_recording_count() > 0,
+        "positive control: a valid write must perform at least one register write");
 }
 
 void test_5v_page_write_init_no_blank_check_erase02(void) {
@@ -493,6 +988,32 @@ int main(int argc, char** argv) {
     /* FIX-02B: operation-phase SDP emission + VPP-safety proofs */
     RUN_TEST(test_5v_page_write_execute_emits_sdp);
     RUN_TEST(test_5v_page_write_execute_no_vpp);
+
+    RUN_TEST(test_5v_page_write_execute_page_starts_at_real_page_not_derived);
+    RUN_TEST(test_5v_page_write_execute_refuses_with_no_page_size);
+    RUN_TEST(test_5v_page_write_execute_refuses_unaligned_start);
+    RUN_TEST(test_5v_page_write_execute_accepts_page_exact_write);
+    RUN_TEST(test_5v_page_write_execute_refuses_partial_length);
+    RUN_TEST(test_5v_page_write_execute_refuses_unaligned_start_and_partial_length);
+    RUN_TEST(test_5v_page_write_execute_refuses_single_byte_payload);
+    RUN_TEST(test_5v_page_write_execute_accepts_zero_length_chunk);
+
+    RUN_TEST(test_5v_page_write_execute_boundary_32768_64);
+    RUN_TEST(test_5v_page_write_execute_boundary_65536_128);
+    RUN_TEST(test_5v_page_write_execute_boundary_131072_128);
+    RUN_TEST(test_5v_page_write_execute_boundary_262144_128);
+    RUN_TEST(test_5v_page_write_execute_boundary_262144_256);
+    RUN_TEST(test_5v_page_write_execute_boundary_524288_256);
+    RUN_TEST(test_5v_page_write_execute_boundary_524288_512);
+    RUN_TEST(test_5v_page_write_execute_refuses_unaligned_second_chunk);
+    RUN_TEST(test_5v_page_write_execute_accepts_aligned_two_chunk_p256);
+    RUN_TEST(test_5v_page_write_execute_accepts_aligned_two_chunk_p512);
+    RUN_TEST(test_5v_page_write_execute_ignores_mem_size_entirely);
+
+    RUN_TEST(test_5v_page_write_execute_refuses_page_size_not_power_of_two);
+    RUN_TEST(test_5v_page_write_execute_refuses_page_size_above_ceiling);
+    RUN_TEST(test_5v_page_write_execute_refuses_page_size_transport_saturated);
+    RUN_TEST(test_5v_page_write_execute_positive_control_valid_page_size);
 
     RUN_TEST(test_5v_page_write_init_no_blank_check_erase02);
     RUN_TEST(test_5v_page_write_init_no_vpp_with_flag_can_erase_set);

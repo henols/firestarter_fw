@@ -184,9 +184,8 @@ typedef struct firestarter_handle {
                                    * future tenth flag above 0xFFFF trips that gate first. */
     uint16_t chip_id;
     uint16_t page_size;          /* per-chip page-write size delivered by the host over the wire;
-                                   * 0 = absent, so the 0x0D handler
-                                   * applies its own named fallback floor. Reset per command in
-                                   * json_parse, exactly like chip_id above. */
+                                   * 0 = absent. Reset per command in json_parse,
+                                   * exactly like chip_id above. */
     char data_buffer[DATA_BUFFER_SIZE];
     uint32_t data_size;
     bus_config_t bus_config;

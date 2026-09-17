@@ -147,12 +147,7 @@ static const field_desc_t key_parsers[] PROGMEM = {
     /* read-strobe-us -> handle->read_strobe_us, clamped to
      * READ_TIMING_MAX_US. */
     FIELD(key_read_strobe, read_strobe_us, READ_TIMING_MAX_US),
-    /* page-size -> handle->page_size. Validation of power-of-two, range and
-     * the silent fallback still live in the 0x0D handler
-     * (eeprom28c_page_mask), which keeps json_parse algorithm-agnostic;
-     * the table now also saturates an out-of-range value before that
-     * handler sees it, so the old "deliberately the plain non-clamp form"
-     * justification no longer applies. */
+    /* page-size -> handle->page_size */
     FIELD(key_page_size, page_size, 0),
 };
 
