@@ -391,9 +391,11 @@ copy:
 
 **If any of those sections changes in the meta repository, update the sub-repo copy in the same
 change.** `tests/test_flash_path_record_sync.py` enforces this mechanically, so a divergence is a
-test failure rather than a latent inconsistency. **Stated honestly:** that module runs in no CI leg
-on this branch, so the enforcement is a local-run obligation for anyone editing either copy. Do not
-imply CI coverage.
+test failure rather than a latent inconsistency. **Stated honestly:** `pytest tests/ -v` does run
+that module in CI, but its cross-repo legs skip there. CI checks out this repository alone, so the
+meta copy is absent and the `requires_meta` marker skips at collection time. Comparing the two
+records is therefore a local-run obligation for anyone editing either copy. Never imply that CI
+compared them.
 
 `FIRESTARTER_META_ROOT` overrides the resolved meta-repository **root only**, never the marker name.
 It sits alongside `FIRESTARTER_FW_ROOT` and `FIRESTARTER_SIZE_BASELINE`. It binds at import, so set

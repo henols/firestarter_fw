@@ -4,113 +4,42 @@ Copyright (c) 2024 Henrik Olsson
 
 Permission is hereby granted under MIT license.
 
-Phase 129 Plan 01 (fail-closed half) + Plan 02 (parity half) -- D-03's
-fail-closed sync gate over the two copies of the v1.23 flash-path and PCB
-requirements record.
+Fail-closed sync gate over the two copies of the flash-path and PCB record.
 
-Requirements: PCB-01, PCB-02, PCB-03, PCB-04, PCB-05 (mechanical
-content-gate slice only -- this module does NOT close any of them, and no
-requirement is marked complete in REQUIREMENTS.md from this plan).
+**The shared-section contract.** The two copies are the flash-path and PCB
+decision record in the meta repository, which is authoritative, and
+`platform/py32f071/FLASH-PATH-AND-PCB.md` in this repository, which is a
+subset. Five stable keys name the sections both copies must carry. Each key
+appears as a suffix on a `## ` heading line in both copies: `S1` three-tier
+flash path, `S2` PCB checklist, `S3` flash budget, `S4` USB VID/PID, `S5`
+socket-empty instruction. Only the **body** below each heading is compared.
+The meta copy numbers its headings and the subset does not, so heading text
+itself is never part of the comparison. `firestarter_fw/CLAUDE.md` names the
+same five keys, so the human instruction and the machine gate cannot drift
+apart.
 
-Decisions covered: D-01, D-03, D-04, D-11, D-16, D-17
+**CI coverage, stated honestly.** `pytest tests/ -v` in `build.yml` does
+collect and run this module. Its cross-repo legs nevertheless **skip** there,
+because CI checks out this repository alone and the meta copy is absent, which
+trips the `requires_meta` collection-time marker. Enforcement of the sync is
+therefore a local-run obligation for anyone editing either copy. Never imply
+that CI compared the two records.
 
-**The shared-section contract.** The two copies are
-`.planning/v1.23-FLASH-PATH-DECISION.md` in the meta repo (authoritative)
-and `platform/py32f071/FLASH-PATH-AND-PCB.md` in this repo (subset). Five
-stable keys name the sections both copies must carry, each appearing as a
-suffix on a `## ` heading line in both copies: `S1` three-tier flash path
-(`[SHARED:S1]`), `S2` PCB checklist (`[SHARED:S2]`), `S3` flash budget
-(`[SHARED:S3]`), `S4` USB VID/PID (`[SHARED:S4]`), `S5` socket-empty
-instruction (`[SHARED:S5]`). Only the **body** below each heading is
-compared -- the meta copy numbers its headings and the subset does not, so
-heading text itself is never part of the comparison. The same five keys are
-named in `firestarter/CLAUDE.md` so the human instruction and the machine
-gate cannot drift apart (v1.7 precedent).
+**Single-helper rule.** Every test, positive legs and planted-violation legs
+alike, goes through the one module-level `_extract_shared_section` and
+`_shared_sections` pair. The planted-violation demonstrations therefore
+exercise the same checking code the positive legs do. Two parallel
+implementations drift, and a planted violation then proves nothing.
 
-**CI coverage, stated honestly.** This module executes in NO CI leg on this branch:
-`pytest tests/ -v` runs only in `build.yml` (push/PR to `main`) and
-`beta-build.yml` (push to `beta`) -- neither fires on this firmware
-milestone branch, and `py32f071.yml` has no pytest step at all. The local
-run recorded in this phase's evidence artifact is the only evidence this
-module's assertions were ever exercised. Never imply CI coverage.
-
-**Single-helper rule.** Every test -- positive legs and planted-violation
-legs alike -- goes through the one module-level `_extract_shared_section` /
-`_shared_sections` pair, so the RED demonstrations exercise the same
-checking code the positive legs do. Two parallel implementations drift and
-the RED then proves nothing.
-
-**The RED-first disposition.** This module was committed before either
-record existed. Plan 02's parity legs were therefore RED-by-construction on
-arrival, and the RED took the form of `MissingScanTargetError` -- the
-hard-failure half of the split -- not a skip.
-
-**No conftest.py.** This module resolves its own paths, the same
+**No conftest.py.** This module resolves its own paths, using the same
 `_HERE`-relative idiom every other module in this directory uses. No
-`conftest.py`, `pytest.ini`, `pyproject.toml`, `setup.cfg` or `tox.ini`
-exists anywhere in this repository -- a recorded house rule, not an
-omission.
+`conftest.py`, `pytest.ini`, `pyproject.toml`, `setup.cfg` or `tox.ini` exists
+anywhere in this repository. That is a house rule, not an omission.
 
-Coverage (this plan's fail-closed half only -- Plan 02 adds the parity and
-content class, `TestFlashPathRecordSync`, to this same module):
-  1. test_absent_meta_root_skip_is_auditable_not_silent -- F-14 mode 3.
-  2. test_absent_meta_claim_can_never_be_false -- the census assertion: a
-     skip claiming absence while the marker exists must be impossible.
-  3. test_present_root_with_missing_target_raises_not_skips -- F-14 mode
-     3's hard half: a missing scan target under a present repo raises.
-  4. test_marker_name_is_not_overridable -- the seam overrides the root
-     only, never the marker name.
-  5. test_empty_extraction_is_not_a_vacuous_pass -- F-14 mode 2.
-  6. test_renamed_marker_yields_a_refusal_not_a_guess -- F-14 mode 4.
-  7. test_duplicate_marker_refuses_to_guess -- a parser that refuses to
-     guess between two candidates.
-  8. test_planted_divergence_in_synthetic_copies_is_detected -- F-14 mode
-     1.
-  9. test_dirty_tree_is_detected -- F-14 mode 5.
-  10. test_git_binary_is_required_not_optional.
-
-Plan 02's parity and content class, `TestFlashPathRecordSync` (12 test
-functions, 31 collected legs -- RED by construction on arrival, since
-neither record exists yet):
-  11. test_meta_extract_is_non_vacuous -- parametrized over _SHARED_KEYS (5
-      legs).
-  12. test_fw_extract_is_non_vacuous -- parametrized over _SHARED_KEYS (5
-      legs).
-  13. test_shared_sections_match -- parametrized over _SHARED_KEYS (5 legs).
-  14. test_three_tiers_and_non_retirement -- parametrized over
-      ("meta", "fw") (2 legs). PCB-01.
-  15. test_pcb_checklist_rows_are_wellformed -- parametrized over
-      ("meta", "fw") (2 legs). PCB-02.
-  16. test_flash_budget_cites_reserved_map -- parametrized over
-      ("meta", "fw") (2 legs). PCB-03.
-  17. test_bootloader_figure_carries_its_cost -- parametrized over
-      ("meta", "fw") (2 legs). D-10's proximity gate.
-  18. test_vid_pid_decision_and_ship_gate -- parametrized over
-      ("meta", "fw") (2 legs). PCB-04.
-  19. test_socket_empty_instruction_present -- parametrized over
-      ("meta", "fw", "readme") (3 legs). PCB-05.
-  20. test_linker_comment_cross_references_record (1 leg). D-11 / C-1.
-  21. test_seed_status_is_no_longer_dormant (1 leg). D-17 / D-18.
-  22. test_planted_mutation_of_the_real_subset_is_detected (1 leg). F-14
-      mode 1 against the real artifact.
-
-Expected-RED ledger on arrival. All 31 legs added by Plan 02 are RED when
-this module is committed -- neither `.planning/v1.23-FLASH-PATH-DECISION.md`
-nor `platform/py32f071/FLASH-PATH-AND-PCB.md` exists yet. The RED for every
-`meta`-side leg is `MissingScanTargetError` (never a skip): `_meta_doc()`
-routes through `meta_presence.meta_path()`, which raises under a present
-meta repo with a missing target. The RED for every `fw`-side and `readme`
-leg is a plain `AssertionError` from the `.exists()` guard in
-`_fw_doc_text()` / `_readme_text()`, or (once the firmware subset exists) a
-content `AssertionError` from a needle/literal miss. Discharging plan per
-group: `129-03` discharges S1 (test 14); `129-04` discharges S2 and S3
-(tests 15, 16, 17); `129-05` discharges S4 and S5 (tests 18, 19); `129-06`
-discharges every `fw` and `readme` parametrization not already covered, all
-five `test_shared_sections_match` legs (test 13) and the planted-mutation
-leg (test 22); `129-07` discharges the linker leg (test 20); `129-08`
-discharges the seed leg (test 21). Tests 11 and 12 (the per-copy
-non-vacuity legs) are discharged incrementally as each record's content
-lands.
+An absent meta repository must produce an auditable skip, never a silent pass.
+A missing scan target under a *present* meta repository must raise
+`MissingScanTargetError` rather than downgrade to a skip, because that
+downgrade is the fail-open this module exists to prevent.
 """
 
 from __future__ import annotations

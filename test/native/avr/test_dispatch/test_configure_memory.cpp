@@ -167,23 +167,11 @@ void test_5v_page_check_chip_id_0x39_sets_operation(void) {
         "CMD_CHECK_CHIP_ID on 0x39 must set a non-NULL operation_main");
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * One representative protocol value per family (every value within a
- * family routes to the IDENTICAL configure_* function -- see
- * firestarter/CLAUDE.md's dispatch-order table) EXCEPT where a group's own
- * members might plausibly diverge (SRAM's four ids, tested individually in
- * case group 5, since configure_sram's body is empty and any future
- * per-id divergence there is exactly the kind of regression this sweep
- * exists to catch).
- * ───────────────────────────────────────────────────────────────────────── */
-
 struct protocol_family_row_t {
     uint32_t protocol;
     const char* family_name;
 };
 
-/* Walks configure_memory's protocol chain (memory.cpp:70-113) literally,
- * table-driven so adding a protocol is one row, not one function. */
 static const protocol_family_row_t kAllProtocolFamilies[] = {
     {0x07, "eprom (0x07/0x08/0x0B)"},
     {0x08, "eprom (0x07/0x08/0x0B)"},
