@@ -47,7 +47,7 @@ Three workflows exist. Read the trigger before you assume a commit was tested.
 | Workflow | Fires on | Note |
 |---|---|---|
 | `build.yml` | Push to any branch except `beta`, and every pull request | **Ignores markdown-only commits.** A commit that touches only `**.md`, `**.sh`, `.gitignore`, `docs/`, `documents/`, `images/`, `.vscode/` or `.editorconfig/` triggers nothing. |
-| `beta-build.yml` | Push to `beta`, and manual dispatch | Cuts the pre-release. It carries no path filter, deliberately, because the version compiles into the binary. |
+| `beta-build.yml` | Push to `beta`, and manual dispatch | **Publishes.** It bumps the version, builds, and cuts a GitHub pre-release carrying the `.hex` assets. It has no path filter, deliberately, because the version compiles into the binary — so a documentation-only push publishes a new firmware version too. |
 | `py32f071.yml` | Push to any branch, and pull requests that touch ARM paths | Builds the ARM target. It is the loud ARM gate and never continues on error. |
 
 `build.yml` runs these steps in order:
