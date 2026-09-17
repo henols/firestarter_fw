@@ -24,11 +24,10 @@ task, skill, or subagent instruction overrides this.
   the check reports a file it does not govern.
 - Deleting one clause from an existing comment reflows the rest. Read the remainder. Confirm it
   still parses and that every pronoun still has an antecedent.
-- CI enforces this. `tools/planning_citation_gate.py` in this repository is the gate. It reads
-  comment text only. It skips string literals and Python docstrings. It exits 2 when it scans no
-  files, so a wrong path cannot pass it vacuously. It scans `.c`, `.cpp`, `.cc`, `.h`, `.hpp`,
-  `.inc`, `.ino` and `.py` files under `src`, `include`, `test`, `tests`, `scripts`, `platform` and
-  `tools`, plus three named scripts. **It does not scan `.md`, so it does not check this file.**
+- **No CI gate enforces this any more.** A scanner used to fail the build on a planning citation in
+  source. It was removed by operator decision, so the pre-commit check above is now the only thing
+  standing between this rule and a slow return of the roughly 6,600 comment lines a previous sweep
+  deleted. Run it.
 
 ## Build Commands
 
@@ -53,11 +52,10 @@ Three workflows exist. Read the trigger before you assume a commit was tested.
 
 `build.yml` runs these steps in order:
 
-1. `tools/planning_citation_gate.py` — the comment gate described above.
-2. `pio test -e native` — **pull requests only.** A branch push skips it.
-3. `pio test -e native_nodevtools` — the build without `DEV_TOOLS`. This one always runs.
-4. `pytest tests/ -v` — the second test tree, described next.
-5. `pio run` — the firmware build.
+1. `pio test -e native` — **pull requests only.** A branch push skips it.
+2. `pio test -e native_nodevtools` — the build without `DEV_TOOLS`. This one always runs.
+3. `pytest tests/ -v` — the second test tree, described next.
+4. `pio run` — the firmware build.
 
 **This repository has two test trees. Do not confuse them.** `test/` holds the PlatformIO Unity
 suites. `tests/` holds a separate Python suite of about 286 tests. Most of them scan firmware source
@@ -332,7 +330,6 @@ value to pre-empt it.
   source of truth is `messages.toml` in the meta repository. Codegen runs there and nowhere else.
   This repository consumes the synced artifact. To change a message, edit `messages.toml`, run the
   codegen in the meta repository, and sync the result here.
-- `tools/planning_citation_gate.py` — the comment gate described at the top of this file.
 
 ### Constants
 
