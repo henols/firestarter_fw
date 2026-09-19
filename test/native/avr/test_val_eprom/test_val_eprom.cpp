@@ -30,6 +30,8 @@
 
 extern "C" {
 #include "memory.h"
+#include "eprom.h"
+#include "operation_utils.h"
 }
 #include "firestarter.h"
 #include "rurp_pinout.h"
@@ -412,6 +414,138 @@ void test_shadow_seed_is_address_keyed_not_modulo_aliased(void) {
         "recorder saturated -- the addresses composed above would be unreliable");
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * 201-01 Task 2 -- BLANK-02 contract freeze, written BEFORE the region split
+ * lands in plans 201-03 / 201-04, so these characterize TODAY's behaviour
+ * rather than tomorrow's (RESEARCH Pitfall 2).
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Region-check handle factory: unlike make_handle / make_write_handle above,
+ * this clears ctrl_flags entirely so the blank-check axis is LIVE (both
+ * FLAG_SKIP_BLANK_CHECK and FLAG_SKIP_ERASE clear, FLAG_CAN_ERASE clear too).
+ * make_handle's FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE would make every case
+ * below vacuous -- the whole point of these two cases is to drive the
+ * blank-check path itself.
+ *
+ * bus_config = VAL_EPROM_BUS_CONFIG_0x07 for the same reason as the shadow
+ * control above: the plan text for this factory did not list bus_config,
+ * but an omitted (zeroed) one is degenerate, not an identity remap.
+ * Recorded as a deviation. */
+static firestarter_handle_t make_region_handle(uint32_t protocol, uint8_t cmd, uint32_t mem_size) {
+    firestarter_handle_t h = {};
+    h.protocol      = protocol;
+    h.cmd           = cmd;
+    h.response_code = RESPONSE_CODE_OK;
+    h.vpp_mv        = 0;
+    h.chip_id       = 0;
+    h.mem_size      = mem_size;
+    h.address       = 0;
+    h.ctrl_flags    = 0;
+    h.bus_config    = VAL_EPROM_BUS_CONFIG_0x07;
+    return h;
+}
+
+/* Composes the FIRST absolute address seen in the current recording -- the
+ * mirror image of rurp_read_data_buffer's backward (latest-write) scan in
+ * host_stubs.cpp. Walking forward and taking the EARLIEST occurrence of each
+ * register gives the address the very first mem_util_set_address call in
+ * this recording targeted. See host_stubs.cpp for why CONTROL_REGISTER
+ * stands in for the plan's "TOP_ADDRESS" -- no such register exists. */
+static uint32_t first_recorded_address(void) {
+    uint32_t lsb = 0, msb = 0, top = 0;
+    bool have_lsb = false, have_msb = false, have_top = false;
+    for (int i = 0; i < bus_recording_count() && !(have_lsb && have_msb && have_top); i++) {
+        uint8_t reg = recorded_reg(i);
+        if (!have_lsb && reg == LEAST_SIGNIFICANT_BYTE) {
+            lsb = recorded_data(i);
+            have_lsb = true;
+        } else if (!have_msb && reg == MOST_SIGNIFICANT_BYTE) {
+            msb = recorded_data(i);
+            have_msb = true;
+        } else if (!have_top && reg == CONTROL_REGISTER) {
+            top = recorded_data(i);
+            have_top = true;
+        }
+    }
+    return lsb | (msb << 8) | ((top & 0x07) << 16);
+}
+
+/* D-15.1: pins the multi-call chunking contract of mem_util_blank_check
+ * against UNMODIFIED firmware. 0x2A is neither 0 nor a chunk boundary, so a
+ * restore that merely zeroes the cursor instead of restoring it would fail
+ * the final assertion -- and this is the BLANK-02 contract verbatim. */
+void test_blank_check_resumes_across_chunks_and_restores_the_cursor(void) {
+    firestarter_handle_t h = make_region_handle(0x07, CMD_BLANK_CHECK, 16384);
+    configure_memory(&h);
+    configure_eprom(&h);  /* configure_memory already dispatches here for 0x07; explicit for clarity. */
+    val_shadow_enable();
+    h.address = 0x2A;
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "call 1 must not error on a blank part");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(8192, h.address,
+        "call 1 must advance the cursor exactly one chunk (BLANK_CHECK_CHUNK_SIZE)");
+    TEST_ASSERT_TRUE_MESSAGE(is_operation_in_progress(&h),
+        "call 1 must leave the operation in progress -- more of the part remains to scan");
+
+    h.firestarter_operation_main(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "call 2 must not error on a blank part");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(16384, h.address,
+        "call 2 must advance the cursor to exactly the second chunk boundary");
+    TEST_ASSERT_TRUE_MESSAGE(is_operation_in_progress(&h),
+        "call 2 must still be in progress -- the completion branch fires on the NEXT call");
+
+    h.firestarter_operation_main(&h);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "call 3 must not error");
+    TEST_ASSERT_FALSE_MESSAGE(is_operation_in_progress(&h),
+        "call 3 must complete the operation -- handle.address has reached mem_size");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0x2A, h.address,
+        "call 3 must restore handle.address to its pre-call value -- this is the BLANK-02 contract verbatim");
+}
+
+/* D-15.2: pins that CMD_ERASE's blank-check completion arm
+ * (firestarter_operation_end) always scans from address 0, even when
+ * handle.address was left non-zero by whatever ran before it.
+ *
+ * SATURATION, MEASURED AND RECORDED AS A DEVIATION: the plan text for this
+ * case says to assert val_recording_saturated() is false. That does not
+ * hold here: a single mem_util_blank_check call over this handle's 16384-byte
+ * mem_size scans a full BLANK_CHECK_CHUNK_SIZE (8192-byte) chunk in one call,
+ * which is 8192 * 3 = 24576 register writes -- far past
+ * HOST_STUBS_MAX_RECORDING (4096, this suite's compiled value; see
+ * host_stubs.cpp). The recorder WILL saturate on every such call regardless
+ * of chunk contents, so this case asserts the measured fact instead of the
+ * planned one. That is not a problem for the address this case actually
+ * checks: the recorder's own saturation behaviour drops only the TAIL and
+ * keeps the PREFIX valid (host_stubs_common.inc), and first_recorded_address()
+ * only ever needs the EARLIEST occurrence of each register -- captured
+ * within the first three recorded entries, long before saturation. */
+void test_erase_end_blank_check_scans_from_zero(void) {
+    firestarter_handle_t h = make_region_handle(0x07, CMD_ERASE, 16384);
+    configure_memory(&h);
+    configure_eprom(&h);  /* configure_memory already dispatches here for 0x07; explicit for clarity. */
+    TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_end,
+        "CMD_ERASE with FLAG_SKIP_BLANK_CHECK clear must assign firestarter_operation_end -- "
+        "a null pointer here means the fixture, not the production code, is wrong");
+
+    val_shadow_enable();
+    h.address = 8000;
+    clear_bus_recording();
+
+    h.firestarter_operation_end(&h);
+
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, first_recorded_address(),
+        "the erase-end blank check must scan from address 0 regardless of the handle's pre-call address");
+    TEST_ASSERT_TRUE_MESSAGE(val_recording_saturated(),
+        "measured fact, not a defect: one full BLANK_CHECK_CHUNK_SIZE (8192-byte) chunk always "
+        "exceeds HOST_STUBS_MAX_RECORDING (4096) at 3 register writes per byte -- see the block "
+        "comment above this case. first_recorded_address() only needs the preserved PREFIX.");
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -435,6 +569,12 @@ int main(int argc, char** argv) {
     /* 201-01 Task 1 control: the address-keyed shadow model is not aliased
      * modulo 16 like the legacy 16-slot model above. */
     RUN_TEST(test_shadow_seed_is_address_keyed_not_modulo_aliased);
+
+    /* 201-01 Task 2: BLANK-02 contract freeze, written before the region
+     * split in plans 201-03 / 201-04 lands, so these characterize today's
+     * behaviour rather than tomorrow's. */
+    RUN_TEST(test_blank_check_resumes_across_chunks_and_restores_the_cursor);
+    RUN_TEST(test_erase_end_blank_check_scans_from_zero);
 
     return UNITY_END();
 }
