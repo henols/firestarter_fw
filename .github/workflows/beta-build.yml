@@ -109,6 +109,33 @@ jobs:
           PLATFORMIO_BUILD_FLAGS: -D DEV_TOOLS=1
         run: pio run
 
+      - name: Assert every AVR image implements the dev commands
+        run: |
+          set -euo pipefail
+          NEEDLE_DIR="$RUNNER_TEMP/devtools-needle"
+          mkdir -p "$NEEDLE_DIR"
+          CHECKED=0
+          for ENV in uno uno328pb leonardo; do
+            MATCHES=(.pio/build/"$ENV"/firestarter_*.elf)
+            if [ "${#MATCHES[@]}" -ne 1 ]; then
+              echo "::error::expected exactly one firestarter_*.elf under .pio/build/$ENV, found ${#MATCHES[@]}"
+              exit 2
+            fi
+            ELF="${MATCHES[0]}"
+            STRINGS_OUT="$NEEDLE_DIR/$ENV.txt"
+            strings "$ELF" > "$STRINGS_OUT"
+            if ! grep -Fq -- 'CTRL remapped' "$STRINGS_OUT"; then
+              echo "::error::$ENV image does not implement the dev commands (needle absent) -- check that PLATFORMIO_BUILD_FLAGS: -D DEV_TOOLS=1 is still set on the Build PlatformIO Project step"
+              exit 1
+            fi
+            CHECKED=$((CHECKED + 1))
+          done
+          if [ "$CHECKED" -ne 3 ]; then
+            echo "::error::checked $CHECKED envs, expected 3"
+            exit 2
+          fi
+          echo "PASS: uno, uno328pb and leonardo all implement the dev commands" | tee -a "$GITHUB_STEP_SUMMARY"
+
       # REL-01/D-06: everything ARM must sit strictly below the
       # `stefanzweifel/git-auto-commit-action@v5` step above, because that is
       # where `include/version.h` becomes the release version -- an image

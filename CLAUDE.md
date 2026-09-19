@@ -64,6 +64,30 @@ text. Both trees run in `build.yml`. Every `pio` environment this file names bey
 
 `pytest tests/ -v` needs full git history. The workflow sets `fetch-depth: 0` for that reason.
 
+### Which channel ships dev tools
+
+Dev tools are not in `platformio.ini`'s shared `[env]` block, and have not been since firmware
+commit `e6888a9` ("build: make dev tools a per-channel decision, off by default"). `beta-build.yml`
+sets `PLATFORMIO_BUILD_FLAGS` to `-D DEV_TOOLS=1` for its `pio run`, so every published pre-release
+image implements `CMD_DEV_ADDRESS` (`7`) and `CMD_DEV_REGISTER` (`8`) — what `firestarter dev addr`
+and `firestarter dev reg` need. `build.yml`, the stable publisher, sets no such flag, so a stable
+image refuses both commands.
+
+**Reading `platformio.ini` alone tells you what a local build does and never what ships.** A local
+build that matches the beta artifact is:
+
+```bash
+PLATFORMIO_BUILD_FLAGS="-D DEV_TOOLS=1" pio run -e leonardo
+```
+
+A plain `pio run` or `pio run -t upload` produces a stable-configured image that answers the two
+dev commands with an unknown-command error, while still reporting the version string in
+`include/version.h`. Both directions are asserted in CI — one step in `beta-build.yml` fails the
+run if any AVR image loses the dev commands, and the mirror step in `build.yml` fails if any AVR
+image gains them — so a lost `PLATFORMIO_BUILD_FLAGS` line fails a beta publish rather than
+shipping silently. Measured evidence: the published `3.0.0b31` release assets were decoded on
+2026-09-19 and all three carry `dev_tools.cpp` code.
+
 ## Architecture
 
 ### Protocol Dispatch
