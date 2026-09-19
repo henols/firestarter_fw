@@ -117,6 +117,8 @@ extern "C" {
 #define EPROM_HV_ROUTE_MASK    (CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_VPE_DROP_ENABLE)
 #define EPROM_HV_ALL_OFF_MASK  (CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_VPE_DROP_ENABLE | CTRL_VPP_A9_ENABLE | CTRL_VPE_ENABLE)
 
+#define RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV 17380
+
 #define CTRL_ADDRESS_LINE_13          0x20  // reserved — no current call-site
 
 // ---- Section 3: Per-rev variants (CTRL_*_REV1 / CTRL_*_REV2) -----------

@@ -248,6 +248,9 @@ rurp_register_t eprom_hv_route_mask(firestarter_handle_t* handle) {
     if (pgm_read_byte(&row->vpp_path) == VPP_PATH_DIRECT_VPE) {
         return CTRL_VPP_REGULATOR_ENABLE;
     }
+    if (handle->vpp_mv > RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV) {
+        return CTRL_VPP_REGULATOR_ENABLE;
+    }
     return EPROM_HV_ROUTE_MASK;
 }
 
