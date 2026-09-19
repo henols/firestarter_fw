@@ -228,14 +228,20 @@ static void eprom_internal_program_pulse(firestarter_handle_t* handle, uint32_t 
  *
  * Resolution order, exactly:
  *   1. FLAG_VPE_AS_VPP -> CTRL_VPP_REGULATOR_ENABLE. Checked FIRST because it
- *      is a pure human override (25V NMOS parts, the manual-pot workflow) set
- *      by no database entry, so it wins over the table with no table read.
+ *      is a human override (25V NMOS parts, the manual-pot workflow) set by
+ *      no database entry, so it wins over the table with no table read. It
+ *      is no longer the only route to the undropped rail: step 4 below also
+ *      raises it when handle->vpp_mv exceeds the drop path's ceiling.
  *   2. row == NULL -> EPROM_HV_ROUTE_MASK, failing closed toward the
  *      drop-resistor path -- a regulated ~13V rather than an unregulated rail.
  *   3. row->vpp_path, read ONLY via pgm_read_byte (a direct read compiles and
  *      silently returns RAM garbage on AVR): VPP_PATH_DIRECT_VPE ->
  *      CTRL_VPP_REGULATOR_ENABLE; anything else, including unrecognised
- *      values, -> EPROM_HV_ROUTE_MASK, also failing closed toward the drop path.
+ *      values, falls through to step 4 rather than returning
+ *      EPROM_HV_ROUTE_MASK outright.
+ *   4. handle->vpp_mv > RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV ->
+ *      CTRL_VPP_REGULATOR_ENABLE; otherwise EPROM_HV_ROUTE_MASK, failing
+ *      closed toward the drop path.
  */
 rurp_register_t eprom_hv_route_mask(firestarter_handle_t* handle) {
     if (is_flag_set(FLAG_VPE_AS_VPP)) {
