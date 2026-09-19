@@ -50,6 +50,12 @@ extern "C" void val_readback_reset();
 extern "C" void val_readback_seed(uint8_t idx, uint8_t target, uint8_t converge_after);
 extern "C" int  val_recording_saturated();
 
+/* 201-01 Task 1 -- address-keyed shadow model. See host_stubs.cpp for the
+ * byte-index derivation and the recorder-saturation fallback. */
+extern "C" void val_shadow_reset();
+extern "C" void val_shadow_enable();
+extern "C" void val_shadow_seed(uint32_t address, uint8_t value);
+
 void setUp(void) {
     ArduinoFakeReset();
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t))).AlwaysReturn(1);
@@ -70,6 +76,7 @@ void setUp(void) {
     When(Method(ArduinoFake(), millis)).AlwaysReturn(0);
     clear_bus_recording();
     val_readback_reset();
+    val_shadow_reset();
 }
 
 void tearDown(void) {}
@@ -364,6 +371,47 @@ void test_writeperf_route_assert_count_tracks_passes_not_pulses(void) {
         "route asserts must never scale with the programmed-byte count");
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * 201-01 Task 1 -- positive control for the address-keyed shadow model.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Proves the shadow model recovers a full absolute address rather than
+ * aliasing modulo 16 like the legacy 16-slot model above. 0x20, 0x30 and
+ * 0x1010 are all congruent to the seeded 0x10 modulo 16 -- under the old
+ * model all three would incorrectly read back 0x00 too. */
+void test_shadow_seed_is_address_keyed_not_modulo_aliased(void) {
+    firestarter_handle_t h = {};
+    h.protocol      = 0x07;
+    h.cmd           = CMD_BLANK_CHECK;
+    h.mem_size      = 16384;
+    h.ctrl_flags    = 0;
+    h.chip_id       = 0;
+    h.vpp_mv        = 0;
+    h.response_code = RESPONSE_CODE_OK;
+    /* Identity address mapping. A zeroed bus_config is DEGENERATE, not an
+     * identity remap -- see VAL_EPROM_BUS_CONFIG_0x07's own comment above.
+     * The plan text for this fixture did not list bus_config; without it
+     * mem_util_remap_address_bus collapses every address passed below to
+     * the same physical line, and the control could not tell 0x10 from
+     * 0x20/0x30/0x1010. Recorded as a deviation. */
+    h.bus_config = VAL_EPROM_BUS_CONFIG_0x07;
+    configure_memory(&h);
+
+    val_shadow_seed(0x10, 0x00);
+
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x00, h.firestarter_get_data(&h, 0x10),
+        "the seeded address must read back the seeded value");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, h.firestarter_get_data(&h, 0x20),
+        "0x20 is congruent to 0x10 modulo 16 -- a modulo-16-aliased model would wrongly read 0x00 here");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, h.firestarter_get_data(&h, 0x30),
+        "0x30 is congruent to 0x10 modulo 16 -- same aliasing failure mode");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, h.firestarter_get_data(&h, 0x1010),
+        "0x1010 is congruent to 0x10 modulo 16 -- same aliasing failure mode, at a larger address");
+
+    TEST_ASSERT_FALSE_MESSAGE(val_recording_saturated(),
+        "recorder saturated -- the addresses composed above would be unreliable");
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -383,6 +431,10 @@ int main(int argc, char** argv) {
      * pinned native envs. See the block comment above these two cases. */
     RUN_TEST(test_writeperf_route_is_asserted_once_per_pass_not_once_per_byte);
     RUN_TEST(test_writeperf_route_assert_count_tracks_passes_not_pulses);
+
+    /* 201-01 Task 1 control: the address-keyed shadow model is not aliased
+     * modulo 16 like the legacy 16-slot model above. */
+    RUN_TEST(test_shadow_seed_is_address_keyed_not_modulo_aliased);
 
     return UNITY_END();
 }
