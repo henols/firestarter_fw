@@ -74,9 +74,12 @@ bool dt_set_registers(firestarter_handle_t* handle) {
         return false;
     };
 
-    if (rurp_communication_available() < 4) {
-        return false;
-    };
+    unsigned long payload_deadline = millis() + TIMEOUT_MS;
+    while (rurp_communication_available() < 4) {
+        if ((long)(millis() - payload_deadline) >= 0) {
+            return false;
+        }
+    }
 
     uint8_t msb = rurp_communication_read();
     uint8_t lsb = rurp_communication_read();
