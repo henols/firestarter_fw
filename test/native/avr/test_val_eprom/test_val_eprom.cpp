@@ -546,6 +546,149 @@ void test_erase_end_blank_check_scans_from_zero(void) {
         "comment above this case. first_recorded_address() only needs the preserved PREFIX.");
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * 201-02 Task 2 -- D-16.1: the regression test whose absence is why backlog
+ * 999.44 shipped. Drives eprom_write_init with the blank-check axis LIVE
+ * against a part that is non-blank OUTSIDE the write's own target region.
+ *
+ * The positive case below is EXPECTED RED at this commit: today's
+ * mem_util_blank_check always scans from address 0 across the WHOLE
+ * device, so it has no notion of "the write's own region" to scope
+ * against. Plan 201-03's commit greens it by teaching the blank check to
+ * scope to [handle->address, handle->region_end) when region_end is
+ * non-zero. The paired negative control below is GREEN both before and
+ * after that fix: scoping the check is not deleting it, because a
+ * programmed bit on a UV part cannot be un-programmed.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* A single call to firestarter_operation_init proves nothing here: the
+ * blank check runs inside it, so is_operation_in_progress is TRUE after
+ * call 1 and the seeded byte may live in a chunk the loop has not reached
+ * yet (BLANK_CHECK_CHUNK_SIZE is 8192; mem_size here is 16384, i.e. two
+ * chunks). Drive it to completion or to an error, with a hard cap so a
+ * fixture that never converges fails loudly instead of hanging the suite.
+ * unity_capped_iterations names which of the two D-16.1 cases hit the cap,
+ * since both loops share this helper.
+ *
+ * DEVIATION, measured: clear_bus_recording() is called before EVERY
+ * iteration, not just once before the loop. One BLANK_CHECK_CHUNK_SIZE
+ * (8192-byte) chunk scan is 8192 * 3 = 24576 register writes -- see
+ * test_erase_end_blank_check_scans_from_zero's own comment above -- which
+ * blows past HOST_STUBS_MAX_RECORDING (4096) well inside a SINGLE chunk.
+ * val_shadow's address-keyed read-back model (host_stubs.cpp) recovers the
+ * current absolute address by scanning the recorder backward; once it
+ * saturates, rurp_read_data_buffer() falls back to the last address it
+ * recovered BEFORE saturation and repeats that byte for the rest of the
+ * call, so any target address more than ~1365 entries into an uncleared
+ * recording silently reads the wrong (stale) shadow slot instead of its
+ * own. The negative control's target (0x2400, offset 1024 into chunk 2)
+ * sits inside that 1365-entry window only if chunk 2's OWN call starts
+ * from a freshly cleared recording -- otherwise chunk 1's already-saturated
+ * recording is still active when chunk 2 begins, and the control silently
+ * fails to catch its seeded byte at all. Clearing here, per call, keeps
+ * every chunk's own address recovery valid for at least its first ~1365
+ * bytes, which both D-16.1 targets (offset 16 and offset 1024) sit well
+ * inside. */
+static void unity_capped_iterations(firestarter_handle_t* h, const char* case_name) {
+    /* do-while, deliberately: before the FIRST call, the operation has not
+     * started yet, so is_operation_in_progress(h) reads false. A while-loop
+     * on that condition would never call firestarter_operation_init at all
+     * and both cases would spuriously read RESPONSE_CODE_OK, unchanged from
+     * make_region_handle's default -- a silent false pass, not a real
+     * exercise of the blank check. */
+    int iterations = 0;
+    do {
+        iterations++;
+        if (iterations > 8) {
+            char msg[96];
+            snprintf(msg, sizeof(msg),
+                "%s: firestarter_operation_init did not converge within 8 calls -- "
+                "fixture is hung, not just slow", case_name);
+            TEST_FAIL_MESSAGE(msg);
+            return;
+        }
+        clear_bus_recording();
+        h->firestarter_operation_init(h);
+    } while (is_operation_in_progress(h) && h->response_code != RESPONSE_CODE_ERROR);
+}
+
+/* D-16.1 positive case. Seeds exactly one non-blank byte at 0x10 (16) --
+ * deliberately in the FIRST 8192-byte chunk the whole-device scan walks,
+ * so the RED is unambiguous rather than dependent on chunk arithmetic --
+ * while the write's own target region is [8192, 12288), entirely outside
+ * that first chunk. region_end is an ABSOLUTE EXCLUSIVE end address (C-3),
+ * never a length: h.address = 8192, h.region_end = 12288.
+ *
+ * DEVIATION from the plan's literal action text: configure_eprom(&h) is NOT
+ * called explicitly here. configure_memory() already dispatches to it for
+ * protocol 0x07 (memory.cpp: `if (handle->protocol == PROTO_EPROM_28PIN ||
+ * ...) { configure_eprom(handle); return; }`), and configure_eprom's own
+ * body does `ep_set_control_register = handle->firestarter_set_control_register;
+ * handle->firestarter_set_control_register = eprom_internal_set_control_register;`
+ * -- a second, explicit call reads back the WRAPPER it just installed and
+ * assigns it to ep_set_control_register, making eprom_internal_set_control_register
+ * call itself. Every path this test exercises (eprom_write_init ->
+ * eprom_generic_init -> eprom_check_vpp) calls
+ * handle->firestarter_set_control_register, so the corrupted pointer
+ * recurses until the stack overflows -- measured as a SIGSEGV. The two
+ * 201-01 tests that use this same "configure_memory then explicit
+ * configure_eprom" shape never trip it because they drive
+ * firestarter_operation_main/end (mem_util_blank_check), which never calls
+ * the control-register setter. */
+void test_write_init_accepts_blank_region_on_non_blank_part(void) {
+    firestarter_handle_t h = make_region_handle(0x07, CMD_WRITE, 16384);
+    configure_memory(&h);
+    TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_init,
+        "CMD_WRITE must assign firestarter_operation_init -- a null pointer here means the "
+        "fixture, not the production code, is wrong");
+
+    h.address = 8192;
+    h.region_end = 12288;
+
+    val_shadow_enable();
+    val_shadow_seed(0x10, 0x00);
+
+    unity_capped_iterations(&h, "test_write_init_accepts_blank_region_on_non_blank_part");
+
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "D-16.1: a non-blank byte OUTSIDE the write's own target region [8192, 12288) must not "
+        "refuse the write. RED at this commit means the whole-device blank check does not yet "
+        "scope to the region -- plan 201-03's fix is what greens this.");
+    TEST_ASSERT_FALSE_MESSAGE(val_recording_saturated(),
+        "recorder saturated -- the addresses composed during this run would be unreliable");
+}
+
+/* D-16.1's paired negative control. Identical fixture except the non-blank
+ * byte is seeded at 0x2400 (9216) -- strictly inside [8192, 12288), i.e.
+ * inside the write's own target region. This must refuse both before and
+ * after plan 201-03's fix: a region-scoped blank check still catches a
+ * non-blank byte that is actually inside the region being written.
+ *
+ * Same deviation as the positive case above: no explicit configure_eprom(&h)
+ * call, for the same self-recursion reason. */
+void test_write_init_still_refuses_when_target_region_is_non_blank(void) {
+    firestarter_handle_t h = make_region_handle(0x07, CMD_WRITE, 16384);
+    configure_memory(&h);
+    TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_init,
+        "CMD_WRITE must assign firestarter_operation_init -- a null pointer here means the "
+        "fixture, not the production code, is wrong");
+
+    h.address = 8192;
+    h.region_end = 12288;
+
+    val_shadow_enable();
+    val_shadow_seed(0x2400, 0x00);
+
+    unity_capped_iterations(&h, "test_write_init_still_refuses_when_target_region_is_non_blank");
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "negative control: a non-blank byte INSIDE the write's own target region [8192, 12288) "
+        "must still refuse the write, both before and after plan 201-03's fix -- scoping the "
+        "blank check is not deleting it.");
+    TEST_ASSERT_FALSE_MESSAGE(val_recording_saturated(),
+        "recorder saturated -- the addresses composed during this run would be unreliable");
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -575,6 +718,15 @@ int main(int argc, char** argv) {
      * behaviour rather than tomorrow's. */
     RUN_TEST(test_blank_check_resumes_across_chunks_and_restores_the_cursor);
     RUN_TEST(test_erase_end_blank_check_scans_from_zero);
+
+    /* 201-02 Task 2 -- D-16.1: the regression test whose absence is why
+     * backlog 999.44 shipped. The first case is EXPECTED RED at this
+     * commit: today's whole-device blank check has no notion of "the
+     * write's own region" to scope against. Plan 201-03's commit greens
+     * it. The second is its paired negative control, proving the refusal
+     * is scoped rather than removed -- it is green both before and after. */
+    RUN_TEST(test_write_init_accepts_blank_region_on_non_blank_part);
+    RUN_TEST(test_write_init_still_refuses_when_target_region_is_non_blank);
 
     return UNITY_END();
 }
