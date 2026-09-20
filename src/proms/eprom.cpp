@@ -311,6 +311,19 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
     // warning policy is exactly zero.
 #ifndef SERIAL_ON_IO
     uint32_t last_emit_ms = millis();
+    // op_end is the operation's end, not the device's end -- the end of
+    // the operation's range, equal to handle->mem_size whenever no region
+    // was supplied (D-04's absent-semantics), and to handle->region_end
+    // (clamped) otherwise. Resolved once per write-execute call, hoisted
+    // out of the per-byte loop below, and sent to the emit as a bare
+    // identifier: _EMIT_BLOCK_RE's arg2 capture group cannot match an
+    // expression containing parentheses, so an inline call or ternary here
+    // would make the gate's locator find zero blocks (see
+    // tests/test_progress_emission_is_leonardo_only.py's module comment on
+    // the w27c512-write-slow-3x session). Guarded identically to
+    // last_emit_ms above, for the same zero-warning reason: it is read
+    // only inside the #ifndef SERIAL_ON_IO emit block below.
+    const uint32_t op_end = mem_util_operation_end(handle);
 #endif
 
     /*
@@ -378,8 +391,12 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
          * COMPILE-time guard, not a runtime one -- this site has no handle->cmd it
          * could test.
          *
-         * Payload is (absolute chip address, mem_size), the same shape
-         * mem_util_blank_check emits, so 0xE0 keeps exactly one payload contract.
+         * Payload is (absolute chip address, op_end), where op_end is the
+         * operation's end -- equal to mem_size for a whole-device operation
+         * and to the region end for a bounded one (D-06). This is the same
+         * shape mem_util_blank_check emits, so 0xE0 keeps exactly one
+         * payload meaning: "the end of the operation's range", not merely
+         * "the device size".
          *
          * Placed BEFORE the skips below so the cadence is independent of how many
          * bytes are skipped. The unsigned-difference form means a millis() rollover
@@ -394,7 +411,7 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
         if (pulses == 0 &&
             (uint32_t)(millis() - last_emit_ms) >= EPROM_PROGRESS_EMIT_INTERVAL_MS) {
             last_emit_ms = millis();
-            LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, handle->address + i, handle->mem_size);
+            LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, handle->address + i, op_end);
         }
 #endif
             // Skips, before any pulse. 0xFF checked first, without a
