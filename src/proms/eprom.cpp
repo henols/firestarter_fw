@@ -142,7 +142,7 @@ static void eprom_internal_write_init_body(firestarter_handle_t* handle) {
         }
     }
     if (!is_flag_set(FLAG_SKIP_BLANK_CHECK)) {
-        mem_util_blank_check(handle);
+        mem_util_blank_check_region(handle, handle->address, mem_util_operation_end(handle));
     }
 }
 
