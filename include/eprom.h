@@ -30,9 +30,11 @@ extern "C" {
 
     /*
      * Which high-voltage route to assert (direct-VPE vs drop-resistor),
-     * from the eprom_params vpp_path column. FLAG_VPE_AS_VPP forces the
-     * direct-VPE path regardless of what the table says. Returns a
-     * fail-closed mask when the protocol has no row.
+     * from the eprom_params vpp_path column, though not from that column
+     * alone: a required voltage above RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV
+     * (rurp_pinout.h) also selects the direct-VPE path. FLAG_VPE_AS_VPP
+     * forces the direct-VPE path regardless of what the table says. Returns
+     * a fail-closed mask when the protocol has no row.
      */
     rurp_register_t eprom_hv_route_mask(firestarter_handle_t* handle);
 

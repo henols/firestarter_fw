@@ -97,12 +97,15 @@ Coverage:
      instead -- a literal would let the native cadence case and the
      firmware's own predicate drift apart silently.
   6. test_the_payload_keeps_one_contract_for_the_id -- the emit's second
-     argument is the handle's chip-geometry field (an ABSOLUTE quantity);
-     the forbidden block-relative payload alternative (concatenation-built
-     -- see the Naming note below) does not appear inside the emit's own
-     block. D-04: 0xE0 must keep exactly one payload meaning across its two
-     emitters (this one and mem_util_blank_check's pre-existing one in
-     memory.cpp).
+     argument is op_end, the resolved end of the operation's range (an
+     ABSOLUTE quantity, equal to handle->mem_size whenever no region was
+     supplied -- D-06); the forbidden block-relative payload alternative
+     (concatenation-built -- see the Naming note below) does not appear
+     inside the emit's own block. D-04/D-06: 0xE0 must keep exactly one
+     payload meaning across its two emitters (this one and
+     mem_util_blank_check's pre-existing one in memory.cpp) -- after D-06
+     that meaning is "the end of the operation's range", not merely "the
+     device size".
   7. test_serial_on_io_is_defined_on_exactly_the_uno_class_envs -- the
      Uno-class build flag's exact compiler-invocation spelling
      (concatenation-built -- see the Naming note below) is present in
@@ -583,14 +586,22 @@ def test_the_emit_uses_the_named_interval_constant():
 
 
 def test_the_payload_keeps_one_contract_for_the_id():
-    """Coverage 6 -- D-04: 0xE0 must keep exactly one payload meaning
+    """Coverage 6 -- D-04/D-06: 0xE0 must keep exactly one payload meaning
     across its two emitters (this one and mem_util_blank_check's
-    pre-existing one in memory.cpp). The emit's second argument must be the
-    handle's chip-geometry field (an ABSOLUTE quantity); the forbidden
-    block-relative payload alternative (concatenation-built -- see the
-    module docstring's Naming note) must not appear inside the emit's OWN
-    block. The check is scoped to the matched block itself, not the whole
-    function body, because the forbidden alternative's field name
+    pre-existing one in memory.cpp). After D-06, that meaning is "the end
+    of the operation's range" -- op_end, resolved once per write-execute
+    call from mem_util_operation_end(handle), equal to the device size for
+    a whole-device operation and to the region end for a bounded one. This
+    is still one meaning, not two: op_end simply equals handle->mem_size
+    whenever no region was supplied, which is exactly what the emit sent
+    before this plan. The emit's second argument must be that bare
+    identifier, op_end, never an inline expression (D-06's fallback is
+    resolved once, before this block, precisely so the argument here stays
+    a plain identifier the (?P<arg2>[^,()]+?) capture group can match); the
+    forbidden block-relative payload alternative (concatenation-built --
+    see the module docstring's Naming note) must not appear inside the
+    emit's OWN block. The check is scoped to the matched block itself, not
+    the whole function body, because the forbidden alternative's field name
     legitimately appears elsewhere in this same function as the per-byte
     loop's own upper bound (the for-loop condition just above this
     function's own final verify pass) -- an unscoped check would
@@ -604,12 +615,16 @@ def test_the_payload_keeps_one_contract_for_the_id():
         f"Body (comment-stripped):\n{body}"
     )
     arg2 = re.sub(r"\s+", "", hits[0].group("arg2"))
-    assert arg2 == "handle->mem_size", (
-        "expected the emit's second argument to be handle->mem_size (the "
-        f"chip's absolute geometry), found {hits[0].group('arg2')!r} -- "
-        "D-04: 0xE0 must keep exactly one payload meaning across its two "
-        "emitters; a block-relative pair would give the id a second "
-        "meaning depending on which operation emitted it.\n"
+    assert arg2 == "op_end", (
+        "expected the emit's second argument to be op_end (the resolved "
+        f"end of the operation's range), found {hits[0].group('arg2')!r} -- "
+        "D-06: after this plan, 0xE0's denominator means the end of the "
+        "operation's range, which is the device size for a whole-device "
+        "operation and the region end for a bounded one -- still one "
+        "meaning, expressed by a value that equals the device size "
+        "whenever no region was supplied. A block-relative pair would give "
+        "the id a second meaning depending on which operation emitted it; "
+        "that argument is not overturned by this change, only restated.\n"
         f"Body (comment-stripped):\n{body}"
     )
     emit_block_text = hits[0].group(0)
@@ -618,7 +633,7 @@ def test_the_payload_keeps_one_contract_for_the_id():
         "found the forbidden block-relative payload alternative inside "
         "the emit's OWN block (not merely elsewhere in the function, "
         "where it legitimately appears as the per-byte loop's own bound) "
-        "-- D-04: 0xE0 must keep exactly one payload meaning across its "
+        "-- D-06: 0xE0 must keep exactly one payload meaning across its "
         "two emitters.\n"
         f"Emit block (comment-stripped):\n{emit_block_text}"
     )

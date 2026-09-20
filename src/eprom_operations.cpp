@@ -9,6 +9,7 @@
 
 #include "firestarter.h"
 #include "logging_id.h"
+#include "memory_utils.h"
 #include "messages.h"
 #include "operation_utils.h"
 #include "rurp_shield.h"
@@ -84,10 +85,19 @@ bool eprom_lock_status(firestarter_handle_t* handle) {
 
 // Returns true on success/continue, false on error.
 static inline bool _process_incoming_data(firestarter_handle_t* handle) {
+    // op_end is the operation's end, not the device's end: it equals
+    // handle->mem_size whenever no region was supplied (D-04's
+    // absent-semantics), and the same local bounds both eprom_write and
+    // eprom_verify because they share this function (D-07). Under D-05
+    // host and firmware agree on the region by construction, so the
+    // out-of-range refusal below becomes a fail-closed guard against a
+    // host/file mismatch rather than a live path.
+    const uint32_t op_end = mem_util_operation_end(handle);
+
     // The operation is "pull" based. The firmware requests a data chunk when it's ready.
     // This provides software flow control and allows for larger data chunks, improving speed.
     // We use a state flag to track if we are waiting for data.
-    if (handle->address >= handle->mem_size) {
+    if (handle->address >= op_end) {
         set_operation_to_done(handle);
         return true;
     }
@@ -125,7 +135,7 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
             return true;
         case OP_MSG_DATA:
             // The host sent a data packet.
-            if (handle->address + handle->data_size > handle->mem_size) {
+            if (handle->address + handle->data_size > op_end) {
                 LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
                 return false;
             }

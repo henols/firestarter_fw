@@ -68,6 +68,11 @@ const char key_read_strobe[]   PROGMEM = "read-strobe-us";
  * programming.page_size uses an underscore, so a PROGMEM string written
  * against the underscore form would silently never match. */
 const char key_page_size[]     PROGMEM = "page-size";
+/* Absolute, exclusive end address of the operation's region.
+ * Wire key is the HYPHEN form "region-end" -- a PROGMEM string written
+ * against an underscore form would silently never match, exactly like
+ * key_page_size's warning above. */
+const char key_region_end[]    PROGMEM = "region-end";
 
 /*
  * field_desc_t -- one row per wire key: {key, clamp, offset, width}.
@@ -149,6 +154,8 @@ static const field_desc_t key_parsers[] PROGMEM = {
     FIELD(key_read_strobe, read_strobe_us, READ_TIMING_MAX_US),
     /* page-size -> handle->page_size */
     FIELD(key_page_size, page_size, 0),
+    /* region-end -> handle->region_end */
+    FIELD(key_region_end, region_end, 0),
 };
 
 /*
@@ -205,7 +212,11 @@ _Static_assert(offsetof(firestarter_handle_t, page_size) < 256 &&
                    sizeof(((firestarter_handle_t*)0)->page_size) <= 4,
                "page_size: a struct reorder moved it past the uint8_t offset column's range, "
                "or gave it a width the 32-bit store cannot carry");
-_Static_assert(sizeof(key_parsers) / sizeof(key_parsers[0]) == 11,
+_Static_assert(offsetof(firestarter_handle_t, region_end) < 256 &&
+                   sizeof(((firestarter_handle_t*)0)->region_end) <= 4,
+               "region_end: a struct reorder moved it past the uint8_t offset column's range, "
+               "or gave it a width the 32-bit store cannot carry");
+_Static_assert(sizeof(key_parsers) / sizeof(key_parsers[0]) == 12,
                "key_parsers row count changed -- add or remove the matching per-member offset "
                "guard above to match");
 
@@ -273,6 +284,16 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
      * instance of the same defect, filed as a todo, so their absence here is
      * not an oversight. */
     handle->page_size = 0;
+    /* region_end resets to 0 for a stronger reason than page_size above:
+     * handle is one file-scope global with no per-command memset, and
+     * under D-04 0 means "whole device" -- so a stale non-zero value left
+     * over from a previous command would NARROW a later whole-device blank
+     * check instead of widening it. That is fail-OPEN: a blank-check run
+     * right after a partial write could scan only the write's region and
+     * report the whole device blank. Without this reset that fail-open
+     * path is live; with it, every command starts from whole-device unless
+     * it supplies its own region-end. */
+    handle->region_end = 0;
 
     if (token_count < 1 || tokens[0].type != JSMN_OBJECT) {
         return -1; // Not a JSON object

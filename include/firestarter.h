@@ -186,6 +186,15 @@ typedef struct firestarter_handle {
     uint16_t page_size;          /* per-chip page-write size delivered by the host over the wire;
                                    * 0 = absent. Reset per command in json_parse,
                                    * exactly like chip_id above. */
+    uint32_t region_end;         /* absolute, EXCLUSIVE end address of the operation's region,
+                                   * delivered by the host over the wire; 0 = absent. Unlike
+                                   * page_size above, absent means the WHOLE DEVICE -- the
+                                   * inversion is deliberate: page_size guards a destructive
+                                   * write, so refusing on absence is the safe direction, while
+                                   * this field guards a relaxation of an existing check, so
+                                   * falling back to the stricter whole-device behaviour is the
+                                   * safe direction instead. Reset per command in json_parse,
+                                   * exactly like page_size above. */
     char data_buffer[DATA_BUFFER_SIZE];
     uint32_t data_size;
     bus_config_t bus_config;

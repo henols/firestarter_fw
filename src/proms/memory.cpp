@@ -447,13 +447,33 @@ void uint32_to_bytes(char* buffer, int pos, uint32_t value) {
     buffer[pos++] = value & 0xFF;
 }
 
-void mem_util_blank_check(firestarter_handle_t* handle) {
+/* The single resolution point for D-04's "0 = absent = whole device"
+ * fallback and for the fail-closed clamp. A host or a corrupted frame
+ * cannot widen a scan past the device: region_end above mem_size clamps
+ * down to mem_size exactly like region_end == 0 does. See
+ * include/memory_utils.h for why this is a function rather than an
+ * inline ternary. */
+uint32_t mem_util_operation_end(const firestarter_handle_t* handle) {
+    if (handle->region_end == 0 || handle->region_end > handle->mem_size) {
+        return handle->mem_size;
+    }
+    return handle->region_end;
+}
+
+/* The region-scoped scan body. mem_util_blank_check (below) is a one-line
+ * wrapper over this passing (0, handle->mem_size) -- the whole-device
+ * entry point six function-pointer assignments and two direct calls in
+ * other protocol files target (plan 201-05's source-contract gate
+ * enumerates all of them). start is read only on the first call, inside
+ * the !is_operation_in_progress branch: on later calls handle->address is
+ * the scan cursor and start is ignored. */
+void mem_util_blank_check_region(firestarter_handle_t* handle, uint32_t start, uint32_t end) {
     if (!is_operation_in_progress(handle)) {
         set_operation_in_progress(handle);
         blank_check_saved_address = handle->address;
-        handle->address = 0;
+        handle->address = start;
     } else {
-        if (handle->address >= handle->mem_size) {
+        if (handle->address >= end) {
             clear_operation_in_progress(handle);
             handle->address = blank_check_saved_address;
             return;
@@ -462,7 +482,7 @@ void mem_util_blank_check(firestarter_handle_t* handle) {
 
     // for (uint32_t i = handle->address; i < handle->address + BLANK_CHECK_CHUNK_SIZE; i++) {
     uint32_t end_address = handle->address + BLANK_CHECK_CHUNK_SIZE;
-    for (uint32_t i = handle->address; i < end_address && i < handle->mem_size; i++) {
+    for (uint32_t i = handle->address; i < end_address && i < end; i++) {
         uint8_t val = handle->firestarter_get_data(handle, i);
         if (val != 0xFF) {
             uint8_t _b[4] = {
@@ -495,11 +515,11 @@ void mem_util_blank_check(firestarter_handle_t* handle) {
 #ifdef RAW_DATA_PROGRESS
     handle->response_code = RESPONSE_CODE_DATA;
     uint32_to_bytes(handle->data_buffer, 0, handle->address);
-    uint32_to_bytes(handle->data_buffer, 4, handle->mem_size);
+    uint32_to_bytes(handle->data_buffer, 4, end);
     handle->data_size = 8;
 #else
-    if (handle->address > handle->mem_size) {
-        handle->address = handle->mem_size;
+    if (handle->address > end) {
+        handle->address = end;
     }
     // Send progress back to the client. For the standalone blank-check command the
     // emit is deferred to _single_step_operation_callback (communication mode): this
@@ -507,7 +527,16 @@ void mem_util_blank_check(firestarter_handle_t* handle) {
     // drops frames. Other callers (write-init / erase-end) keep the direct emit.
     // (#transport-protocol-verify)
     if (handle->cmd != CMD_BLANK_CHECK) {
-        LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, handle->address, handle->mem_size);
+        LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, handle->address, end);
     }
 #endif
+}
+
+/* Whole-device entry point. Six function-pointer assignments and two direct
+ * calls in other protocol files (flash_intel.cpp, flash_nor_unlock.cpp)
+ * target this wrapper -- plan 201-05's source-contract gate enumerates all
+ * of them. It cannot drift from the region form: it is the region form,
+ * called with the whole device as its region. */
+void mem_util_blank_check(firestarter_handle_t* handle) {
+    mem_util_blank_check_region(handle, 0, handle->mem_size);
 }

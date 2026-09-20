@@ -161,6 +161,33 @@ jobs:
       - name: Build PlatformIO Project
         run: pio run
 
+      - name: Assert no AVR image gained the dev commands
+        run: |
+          set -euo pipefail
+          NEEDLE_DIR="$RUNNER_TEMP/devtools-needle"
+          mkdir -p "$NEEDLE_DIR"
+          CHECKED=0
+          for ENV in uno uno328pb leonardo; do
+            MATCHES=(.pio/build/"$ENV"/firestarter_*.elf)
+            if [ "${#MATCHES[@]}" -ne 1 ]; then
+              echo "::error::expected exactly one firestarter_*.elf under .pio/build/$ENV, found ${#MATCHES[@]}"
+              exit 2
+            fi
+            ELF="${MATCHES[0]}"
+            STRINGS_OUT="$NEEDLE_DIR/$ENV.txt"
+            strings "$ELF" > "$STRINGS_OUT"
+            if grep -Fq -- 'CTRL remapped' "$STRINGS_OUT"; then
+              echo "::error::$ENV image implements the dev commands -- the stable publisher must not gain dev tools"
+              exit 1
+            fi
+            CHECKED=$((CHECKED + 1))
+          done
+          if [ "$CHECKED" -ne 3 ]; then
+            echo "::error::checked $CHECKED envs, expected 3"
+            exit 2
+          fi
+          echo "PASS: uno, uno328pb and leonardo all lack the dev commands" | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Creates a GitHub Release with make_latest: true. On any branch other
       # than main this would publish a spurious "latest" stable release under
       # whatever tag update_version.py produced.

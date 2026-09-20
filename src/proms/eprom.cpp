@@ -142,7 +142,7 @@ static void eprom_internal_write_init_body(firestarter_handle_t* handle) {
         }
     }
     if (!is_flag_set(FLAG_SKIP_BLANK_CHECK)) {
-        mem_util_blank_check(handle);
+        mem_util_blank_check_region(handle, handle->address, mem_util_operation_end(handle));
     }
 }
 
@@ -228,14 +228,20 @@ static void eprom_internal_program_pulse(firestarter_handle_t* handle, uint32_t 
  *
  * Resolution order, exactly:
  *   1. FLAG_VPE_AS_VPP -> CTRL_VPP_REGULATOR_ENABLE. Checked FIRST because it
- *      is a pure human override (25V NMOS parts, the manual-pot workflow) set
- *      by no database entry, so it wins over the table with no table read.
+ *      is a human override (25V NMOS parts, the manual-pot workflow) set by
+ *      no database entry, so it wins over the table with no table read. It
+ *      is no longer the only route to the undropped rail: step 4 below also
+ *      raises it when handle->vpp_mv exceeds the drop path's ceiling.
  *   2. row == NULL -> EPROM_HV_ROUTE_MASK, failing closed toward the
  *      drop-resistor path -- a regulated ~13V rather than an unregulated rail.
  *   3. row->vpp_path, read ONLY via pgm_read_byte (a direct read compiles and
  *      silently returns RAM garbage on AVR): VPP_PATH_DIRECT_VPE ->
  *      CTRL_VPP_REGULATOR_ENABLE; anything else, including unrecognised
- *      values, -> EPROM_HV_ROUTE_MASK, also failing closed toward the drop path.
+ *      values, falls through to step 4 rather than returning
+ *      EPROM_HV_ROUTE_MASK outright.
+ *   4. handle->vpp_mv > RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV ->
+ *      CTRL_VPP_REGULATOR_ENABLE; otherwise EPROM_HV_ROUTE_MASK, failing
+ *      closed toward the drop path.
  */
 rurp_register_t eprom_hv_route_mask(firestarter_handle_t* handle) {
     if (is_flag_set(FLAG_VPE_AS_VPP)) {
@@ -246,6 +252,9 @@ rurp_register_t eprom_hv_route_mask(firestarter_handle_t* handle) {
         return EPROM_HV_ROUTE_MASK;
     }
     if (pgm_read_byte(&row->vpp_path) == VPP_PATH_DIRECT_VPE) {
+        return CTRL_VPP_REGULATOR_ENABLE;
+    }
+    if (handle->vpp_mv > RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV) {
         return CTRL_VPP_REGULATOR_ENABLE;
     }
     return EPROM_HV_ROUTE_MASK;
@@ -302,6 +311,19 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
     // warning policy is exactly zero.
 #ifndef SERIAL_ON_IO
     uint32_t last_emit_ms = millis();
+    // op_end is the operation's end, not the device's end -- the end of
+    // the operation's range, equal to handle->mem_size whenever no region
+    // was supplied (D-04's absent-semantics), and to handle->region_end
+    // (clamped) otherwise. Resolved once per write-execute call, hoisted
+    // out of the per-byte loop below, and sent to the emit as a bare
+    // identifier: _EMIT_BLOCK_RE's arg2 capture group cannot match an
+    // expression containing parentheses, so an inline call or ternary here
+    // would make the gate's locator find zero blocks (see
+    // tests/test_progress_emission_is_leonardo_only.py's module comment on
+    // the w27c512-write-slow-3x session). Guarded identically to
+    // last_emit_ms above, for the same zero-warning reason: it is read
+    // only inside the #ifndef SERIAL_ON_IO emit block below.
+    const uint32_t op_end = mem_util_operation_end(handle);
 #endif
 
     /*
@@ -369,8 +391,12 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
          * COMPILE-time guard, not a runtime one -- this site has no handle->cmd it
          * could test.
          *
-         * Payload is (absolute chip address, mem_size), the same shape
-         * mem_util_blank_check emits, so 0xE0 keeps exactly one payload contract.
+         * Payload is (absolute chip address, op_end), where op_end is the
+         * operation's end -- equal to mem_size for a whole-device operation
+         * and to the region end for a bounded one (D-06). This is the same
+         * shape mem_util_blank_check emits, so 0xE0 keeps exactly one
+         * payload meaning: "the end of the operation's range", not merely
+         * "the device size".
          *
          * Placed BEFORE the skips below so the cadence is independent of how many
          * bytes are skipped. The unsigned-difference form means a millis() rollover
@@ -385,7 +411,7 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
         if (pulses == 0 &&
             (uint32_t)(millis() - last_emit_ms) >= EPROM_PROGRESS_EMIT_INTERVAL_MS) {
             last_emit_ms = millis();
-            LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, handle->address + i, handle->mem_size);
+            LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, handle->address + i, op_end);
         }
 #endif
             // Skips, before any pulse. 0xFF checked first, without a

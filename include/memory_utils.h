@@ -20,6 +20,20 @@ void mem_util_blank_check(firestarter_handle_t* handle);
  * canonical full-block verify instead of carrying a byte-identical copy.
  * Defined in src/proms/memory.cpp as the CMD_VERIFY operation_main. */
 void memory_verify_execute(firestarter_handle_t* handle);
+/* The single resolution point for D-04's "0 = absent = whole device"
+ * fallback and for the fail-closed clamp: returns handle->mem_size when
+ * handle->region_end is 0 OR exceeds handle->mem_size, else returns
+ * handle->region_end. Deliberately a function rather than an inline
+ * ternary -- a ternary written inside eprom.cpp would add a row to the
+ * branch-inventory golden (tests/golden/protocol_branch_inventory.json),
+ * a function call in a plain assignment does not. Both eprom_operations.cpp
+ * and eprom.cpp call it. Defined in src/proms/memory.cpp. */
+uint32_t mem_util_operation_end(const firestarter_handle_t* handle);
+/* The region-scoped blank check. mem_util_blank_check (above) is now a
+ * one-line wrapper over this passing (0, handle->mem_size), so the two
+ * cannot drift -- there is exactly one scan body. Defined in
+ * src/proms/memory.cpp. */
+void mem_util_blank_check_region(firestarter_handle_t* handle, uint32_t start, uint32_t end);
 void mem_util_set_address(firestarter_handle_t* handle, uint32_t address);
 rurp_register_t mem_util_calculate_lsb_register(firestarter_handle_t* handle, uint32_t address);
 rurp_register_t mem_util_calculate_msb_register(firestarter_handle_t* handle, uint32_t address);

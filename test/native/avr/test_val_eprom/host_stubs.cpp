@@ -116,7 +116,106 @@ extern "C" int val_recording_saturated() {
     return s_bus_recording_count >= HOST_STUBS_MAX_RECORDING;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * 201-01 Task 1 -- address-keyed read-back model, address-scoped rather than
+ * a 16-slot alias.
+ *
+ * WHY A SECOND MODEL EXISTS: the 16-slot model above recovers the byte index
+ * as `address & 15`, so it aliases modulo 16 across the whole address space
+ * -- seeding "non-blank at address A" also seeds A+-16, A+-32, ... That makes
+ * it impossible for a test to say "non-blank at this one absolute address
+ * and nowhere else", which is exactly what a region-gated blank check
+ * (D-16.1, plan 201-02) needs to prove. This model recovers the FULL
+ * absolute address instead of a 4-bit index. It is opt-in per test via
+ * val_shadow_enable() / val_shadow_seed(), and val_shadow_reset() in setUp
+ * turns it off by default, so every pre-existing case -- six of which depend
+ * on the 16-slot model above, two of them on exact program-route counts --
+ * is byte-for-byte unaffected.
+ *
+ * WHY 16384 BYTES: VAL_EPROM_SHADOW_SIZE is exactly two
+ * BLANK_CHECK_CHUNK_SIZE chunks (8192 each, memory.cpp), enough to exercise
+ * multi-chunk resumption in a native test, while staying far below anything
+ * that could matter for host RAM.
+ *
+ * REGISTER NAMES -- SUBSTITUTED FROM THE PLAN, RECORDED AS A DEVIATION: no
+ * firmware symbol named TOP_ADDRESS exists anywhere in this repository.
+ * Production writes the top address bits (address bits 16-18) to
+ * CONTROL_REGISTER (mem_util_calculate_top_address_register, called from
+ * mem_util_set_address, both in memory.cpp) -- there is no third, dedicated
+ * top-address register. CONTROL_REGISTER is therefore scanned here in that
+ * role. For every address this suite drives through the shadow (all
+ * < VAL_EPROM_SHADOW_SIZE == 65536), production's own top_address expression
+ * -- `(address >> 16) & mask` -- is structurally 0, so masking the recovered
+ * CONTROL_REGISTER byte with `0x07` and shifting into bits 16-18 recovers
+ * exactly that same zero contribution; the composition is written in full
+ * (not simplified to just lsb | (msb << 8)) so the model does not silently
+ * assume that ceiling.
+ *
+ * INDEPENDENT PER-REGISTER RECOVERY: `mem_util_set_address` writes all three
+ * registers on every call in this firmware, but the scan below still looks
+ * up each of the three independently (rather than stopping at the first
+ * match of any one of them) and treats a register never seen in the current
+ * recording as 0, so the model does not depend on that always being true.
+ *
+ * SATURATION: HOST_STUBS_MAX_RECORDING (host_stubs_common.inc) is 4096 for
+ * this suite (its default; this suite does not override it -- an existing
+ * in-suite comment elsewhere in this file states 256, which is stale and is
+ * NOT the compiled value) and the shared recorder drops silently past it
+ * (val_recording_saturated() exists for exactly this reason). A backward
+ * scan over a saturated recording would return a stale address rather than
+ * fail loudly, so this model keeps its own last-recovered address
+ * (s_val_last_address) and falls back to it whenever val_recording_saturated()
+ * is true, instead of trusting a truncated recording.
+ * ───────────────────────────────────────────────────────────────────────── */
+#define VAL_EPROM_SHADOW_SIZE 16384
+static uint8_t s_val_shadow[VAL_EPROM_SHADOW_SIZE];
+static bool s_val_shadow_active = false;
+static uint32_t s_val_last_address = 0;
+
+extern "C" void val_shadow_reset() {
+    memset(s_val_shadow, 0xFF, sizeof(s_val_shadow));
+    s_val_shadow_active = false;
+    s_val_last_address = 0;
+}
+
+extern "C" void val_shadow_enable() {
+    s_val_shadow_active = true;
+}
+
+extern "C" void val_shadow_seed(uint32_t address, uint8_t value) {
+    s_val_shadow_active = true;
+    if (address < VAL_EPROM_SHADOW_SIZE) {
+        s_val_shadow[address] = value;
+    }
+}
+
 extern "C" uint8_t rurp_read_data_buffer() {
+    if (s_val_shadow_active) {
+        uint32_t recovered_address = s_val_last_address;
+        if (!val_recording_saturated()) {
+            bool have_lsb = false, have_msb = false, have_top = false;
+            uint32_t lsb = 0, msb = 0, top = 0;
+            for (int i = s_bus_recording_count - 1;
+                 i >= 0 && !(have_lsb && have_msb && have_top); i--) {
+                if (!have_lsb && s_bus_recording[i].reg == LEAST_SIGNIFICANT_BYTE) {
+                    lsb = s_bus_recording[i].data;
+                    have_lsb = true;
+                } else if (!have_msb && s_bus_recording[i].reg == MOST_SIGNIFICANT_BYTE) {
+                    msb = s_bus_recording[i].data;
+                    have_msb = true;
+                } else if (!have_top && s_bus_recording[i].reg == CONTROL_REGISTER) {
+                    top = s_bus_recording[i].data;
+                    have_top = true;
+                }
+            }
+            recovered_address = lsb | (msb << 8) | ((top & 0x07) << 16);
+            s_val_last_address = recovered_address;
+        }
+        return (recovered_address < VAL_EPROM_SHADOW_SIZE)
+                   ? s_val_shadow[recovered_address]
+                   : 0xFF;
+    }
+
     uint8_t idx = 0;
     for (int i = s_bus_recording_count - 1; i >= 0; i--) {
         if (s_bus_recording[i].reg == LEAST_SIGNIFICANT_BYTE) {

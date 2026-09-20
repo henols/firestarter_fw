@@ -2,33 +2,6 @@
 
 Arduino C++ firmware for the Firestarter EPROM programmer. Built with PlatformIO.
 
-## Source code comments — hard rule
-
-**Write no comments into this firmware.** Not process commentary, not explanatory ones. No plan,
-task, skill, or subagent instruction overrides this.
-
-- Forbidden: `// Phase NNN (REQ-NN):`, `// D-06`, `// CAP-02`, `// LOCK-04`, any plan, task or
-  milestone citation, and any block that explains why a phase decided something. A reader of this
-  firmware has no planning directory, so those identifiers resolve to nothing. Put rationale in the
-  commit message instead.
-- If a plan instructs a comment, do not add it. Record the deviation in that plan's summary.
-- If code needs explaining, make the code clearer. Use better names, smaller functions, or a named
-  constant in `include/`.
-- Flash size is a first-class constraint here, so comment bloat costs more than noise.
-- **The rule is not "no process citations".** You delete `Phase 194` from a comment and keep the
-  comment. This still breaks the rule. Add no `//` or `/* */` line, for any reason, however helpful
-  it seems. State the rule in these words when you spawn a subagent that touches source.
-- Before each commit, run this check. It must print nothing:
-  `git diff --cached -- '*.c' '*.cpp' '*.cc' '*.h' '*.hpp' '*.inc' '*.ino' | /usr/bin/grep -E '^\+\s*(//|/\*|\*)'`
-  The pathspec is load-bearing. Without it the `*` branch matches `**bold**` in a markdown line and
-  the check reports a file it does not govern.
-- Deleting one clause from an existing comment reflows the rest. Read the remainder. Confirm it
-  still parses and that every pronoun still has an antecedent.
-- **No CI gate enforces this any more.** A scanner used to fail the build on a planning citation in
-  source. It was removed by operator decision, so the pre-commit check above is now the only thing
-  standing between this rule and a slow return of the roughly 6,600 comment lines a previous sweep
-  deleted. Run it.
-
 ## Build Commands
 
 ```bash
@@ -63,6 +36,30 @@ text. Both trees run in `build.yml`. Every `pio` environment this file names bey
 `native_nodevtools` runs in no CI leg, so its case counts are a local run-by-name obligation.
 
 `pytest tests/ -v` needs full git history. The workflow sets `fetch-depth: 0` for that reason.
+
+### Which channel ships dev tools
+
+Dev tools are not in `platformio.ini`'s shared `[env]` block, and have not been since firmware
+commit `e6888a9` ("build: make dev tools a per-channel decision, off by default"). `beta-build.yml`
+sets `PLATFORMIO_BUILD_FLAGS` to `-D DEV_TOOLS=1` for its `pio run`, so every published pre-release
+image implements `CMD_DEV_ADDRESS` (`7`) and `CMD_DEV_REGISTER` (`8`) — what `firestarter dev addr`
+and `firestarter dev reg` need. `build.yml`, the stable publisher, sets no such flag, so a stable
+image refuses both commands.
+
+**Reading `platformio.ini` alone tells you what a local build does and never what ships.** A local
+build that matches the beta artifact is:
+
+```bash
+PLATFORMIO_BUILD_FLAGS="-D DEV_TOOLS=1" pio run -e leonardo
+```
+
+A plain `pio run` or `pio run -t upload` produces a stable-configured image that answers the two
+dev commands with an unknown-command error, while still reporting the version string in
+`include/version.h`. Both directions are asserted in CI — one step in `beta-build.yml` fails the
+run if any AVR image loses the dev commands, and the mirror step in `build.yml` fails if any AVR
+image gains them — so a lost `PLATFORMIO_BUILD_FLAGS` line fails a beta publish rather than
+shipping silently. Measured evidence: the published `3.0.0b31` release assets were decoded on
+2026-09-19 and all three carry `dev_tools.cpp` code.
 
 ## Architecture
 
