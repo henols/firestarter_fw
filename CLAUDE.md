@@ -31,9 +31,10 @@ Three workflows exist. Read the trigger before you assume a commit was tested.
 4. `pio run` — the firmware build.
 
 **This repository has two test trees. Do not confuse them.** `test/` holds the PlatformIO Unity
-suites. `tests/` holds a separate Python suite of about 286 tests. Most of them scan firmware source
-text. Both trees run in `build.yml`. Every `pio` environment this file names beyond `native` and
-`native_nodevtools` runs in no CI leg, so its case counts are a local run-by-name obligation.
+suites. `tests/` holds a separate Python suite, measured at 320 collected tests on 2026-09-22. Most
+of them scan firmware source text. Both trees run in `build.yml`. Every `pio` environment this file
+names beyond `native` and `native_nodevtools` runs in no CI leg, so its case counts are a local
+run-by-name obligation.
 
 `pytest tests/ -v` needs full git history. The workflow sets `fetch-depth: 0` for that reason.
 
