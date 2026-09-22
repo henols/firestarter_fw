@@ -70,9 +70,6 @@ void configure_memory(firestarter_handle_t* handle) {
         case CMD_WRITE:
             handle->firestarter_operation_main = memory_write_execute;
             break;
-        case CMD_VERIFY:
-            handle->firestarter_operation_main = memory_verify_execute;
-            break;
     }
 
     handle->firestarter_get_data = memory_get_data;

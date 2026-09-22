@@ -190,10 +190,13 @@ static const protocol_family_row_t kAllProtocolFamilies[] = {
 static const size_t kAllProtocolFamiliesCount = sizeof(kAllProtocolFamilies) / sizeof(kAllProtocolFamilies[0]);
 
 void test_case_group1_read_write_verify_never_null_main_for_any_protocol(void) {
-    static const uint8_t cmds[] = {CMD_READ, CMD_WRITE, CMD_VERIFY};
-    static const char* cmd_names[] = {"CMD_READ", "CMD_WRITE", "CMD_VERIFY"};
+    /* CMD_VERIFY was retired in Phase 204 (ordinal 6, dropped from both arrays
+     * and the loop bound below) -- it never reaches configure_memory() any
+     * more, so this group is CMD_READ / CMD_WRITE only now. */
+    static const uint8_t cmds[] = {CMD_READ, CMD_WRITE};
+    static const char* cmd_names[] = {"CMD_READ", "CMD_WRITE"};
     for (size_t i = 0; i < kAllProtocolFamiliesCount; i++) {
-        for (size_t c = 0; c < 3; c++) {
+        for (size_t c = 0; c < 2; c++) {
             firestarter_handle_t h = make_handle(kAllProtocolFamilies[i].protocol, 0, cmds[c]);
             configure_memory(&h);
             char msg[224];

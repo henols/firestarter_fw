@@ -267,9 +267,6 @@ void loop() {
         case CMD_WRITE:
             finished = eprom_write(&handle);
             break;
-        case CMD_VERIFY:
-            finished = eprom_verify(&handle);
-            break;
         case CMD_ERASE:
             finished = eprom_erase(&handle);
             break;

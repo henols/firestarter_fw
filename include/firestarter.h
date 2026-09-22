@@ -51,7 +51,16 @@
 #define CMD_ERASE 3
 #define CMD_BLANK_CHECK 4
 #define CMD_CHECK_CHIP_ID 5
-#define CMD_VERIFY 6
+
+// Ordinal 6 -- the verify command -- retired in 3.1.0 (Phase 204). The host
+// side -- firestarter_app/firestarter/constants.py's COMMAND_VERIFY and its
+// COMMAND_NAMES row -- was retired in the same commit pair. This ordinal
+// must NEVER be reused for any new command, flag or reserved meaning: an
+// already-shipped host still composes it, and reassigning the number would
+// make that stale host silently drive a different operation. A frame
+// carrying ordinal 6 now falls through firestarter.cpp's dispatch switch
+// default: arm, which answers MSG_ERR_UNKNOWN_CMD rather than running any
+// handler.
 
 #if DEV_TOOLS
 #define CMD_DEV_ADDRESS 7
@@ -101,8 +110,11 @@
 // than re-listing the set.
 //
 // Hard constraints:
-//  - NO preprocessor conditional of any kind in this function's body. All nine
-//    named macros are unconditionally defined. A source-scan gate checks this.
+//  - NO preprocessor conditional of any kind in this function's body. All eight
+//    named macros are unconditionally defined. There is no source-scan gate
+//    that checks this -- a tree-wide search finds none -- and the only
+//    consumer of this predicate outside this header is
+//    test/native/avr/test_cmd_admission/test_cmd_admission.cpp's truth table.
 //  - static inline, IN THIS HEADER. [env:native]'s build_src_filter compiles
 //    only src/proms/, rurp_serial_utils.cpp and json_parser.c, so a definition
 //    elsewhere would not link into the native test binary.
@@ -116,7 +128,6 @@ static inline bool is_memory_cmd(uint8_t cmd) {
         case CMD_ERASE:
         case CMD_BLANK_CHECK:
         case CMD_CHECK_CHIP_ID:
-        case CMD_VERIFY:
         case CMD_SDP_UNLOCK:
         case CMD_SDP_LOCK:
         case CMD_LOCK_STATUS:
