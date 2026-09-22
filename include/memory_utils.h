@@ -19,9 +19,10 @@ void mem_util_blank_check(firestarter_handle_t* handle);
 /* The shared final-pass read-and-compare that eprom.cpp's
  * VERIFY_PER_PULSE_PLUS_FINAL arm calls after its per-pulse loop converges,
  * instead of carrying a byte-identical copy. Defined in
- * src/proms/memory.cpp. Its command surface -- CMD_VERIFY, ordinal 6 -- was
- * retired in 3.1.0 (Phase 204); the function itself was deliberately kept,
- * because it is still the eprom program loop's only final-pass verify. */
+ * src/proms/memory.cpp. Its command surface -- the standalone verify
+ * command's own wire ordinal -- was retired in 3.1.0 (Phase 204); the
+ * function itself was deliberately kept, because it is still the eprom
+ * program loop's only final-pass verify. */
 void memory_verify_execute(firestarter_handle_t* handle);
 /* The single resolution point for D-04's "0 = absent = whole device"
  * fallback and for the fail-closed clamp: returns handle->mem_size when
