@@ -385,7 +385,13 @@ void test_writeperf_route_assert_count_tracks_passes_not_pulses(void) {
 void test_shadow_seed_is_address_keyed_not_modulo_aliased(void) {
     firestarter_handle_t h = {};
     h.protocol      = 0x07;
-    h.cmd           = CMD_BLANK_CHECK;
+    /* cmd is never dispatched here -- this fixture only calls
+     * configure_memory(&h) and then drives h.firestarter_get_data directly,
+     * never h.firestarter_operation_main/init. Re-keyed in Phase 204
+     * (FWCMD-01) from the standalone blank-check command's now-retired
+     * ordinal to CMD_READ, a neutral surviving one; the value has no
+     * bearing on this test's outcome either way. */
+    h.cmd           = CMD_READ;
     h.mem_size      = 16384;
     h.ctrl_flags    = 0;
     h.chip_id       = 0;

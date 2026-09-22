@@ -44,11 +44,6 @@ bool eprom_check_chip_id(firestarter_handle_t* handle) {
     return op_execute_simple_operation(handle);
 }
 
-bool eprom_blank_check(firestarter_handle_t* handle) {
-    LOG_DEBUG_ID_SUB(DBG_BLANK_CHECK_PROM);
-    return op_execute_simple_operation(handle);
-}
-
 // Standalone entry points for CMD_SDP_UNLOCK / CMD_SDP_LOCK
 // (0x0D-only ops; configure_eeprom28c sets firestarter_operation_main to
 // eeprom28c_sdp_unlock_execute / eeprom28c_sdp_lock_execute). Deliberately no
@@ -65,7 +60,7 @@ bool eprom_sdp_lock(firestarter_handle_t* handle) {
     return op_execute_simple_operation(handle);
 }
 
-// CMD_LOCK_STATUS entry point, in eprom_blank_check's
+// CMD_LOCK_STATUS entry point, in eprom_check_chip_id's
 // single-step shape above -- but deliberately WITHOUT a LOG_DEBUG_ID_SUB
 // line. CMD_LOCK_STATUS (16) is numerically greater
 // than CMD_READ_VPP (11), so it falls outside the second, independent

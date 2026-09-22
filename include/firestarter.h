@@ -49,7 +49,20 @@
 #define CMD_READ 1
 #define CMD_WRITE 2
 #define CMD_ERASE 3
-#define CMD_BLANK_CHECK 4
+
+// Ordinal 4 -- the standalone blank-check command -- retired in 3.1.0
+// (Phase 204). The host side -- firestarter_app/firestarter/constants.py's
+// COMMAND_BLANK_CHECK and its COMMAND_NAMES row -- was retired in the same
+// commit pair. This ordinal must NEVER be reused for any new command, flag
+// or reserved meaning: an already-shipped host still composes it, and
+// reassigning the number would make that stale host silently drive a
+// different operation. A frame carrying ordinal 4 now falls through
+// firestarter.cpp's dispatch switch default: arm, which answers
+// MSG_ERR_UNKNOWN_CMD rather than running any handler. The region-scoped
+// blank-check machinery itself (mem_util_blank_check,
+// mem_util_blank_check_region) survives this retirement -- it is reached
+// only from write-init and erase-end now, and leaves in Phase 205.
+
 #define CMD_CHECK_CHIP_ID 5
 
 // Ordinal 6 -- the verify command -- retired in 3.1.0 (Phase 204). The host
@@ -110,7 +123,7 @@
 // than re-listing the set.
 //
 // Hard constraints:
-//  - NO preprocessor conditional of any kind in this function's body. All eight
+//  - NO preprocessor conditional of any kind in this function's body. All seven
 //    named macros are unconditionally defined. There is no source-scan gate
 //    that checks this -- a tree-wide search finds none -- and the only
 //    consumer of this predicate outside this header is
@@ -126,7 +139,6 @@ static inline bool is_memory_cmd(uint8_t cmd) {
         case CMD_READ:
         case CMD_WRITE:
         case CMD_ERASE:
-        case CMD_BLANK_CHECK:
         case CMD_CHECK_CHIP_ID:
         case CMD_SDP_UNLOCK:
         case CMD_SDP_LOCK:

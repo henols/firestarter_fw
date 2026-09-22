@@ -5,15 +5,23 @@ Copyright (c) 2024 Henrik Olsson
 Permission is hereby granted under MIT license.
 
 Phase 204 Plan 02 -- FWCMD-04's own source-contract gate, the eighth member
-of the house source-contract family. Phase 204 removes the CMD_VERIFY /
-CMD_BLANK_CHECK command surfaces from the firmware; this module proves that
-removing a command surface did not remove the in-algorithm verification that
-survives underneath it -- specifically, that the shared final-pass verify
-function is still called from inside the plus-final verify arm of the
-per-byte program loop, for the two 27C protocols (0x07, 0x08) that ship that
-verify mode.
+of the house source-contract family. Phase 204 removes the standalone
+verify and blank-check commands' wire ordinals from the firmware; this
+module proves that removing a command surface did not remove the
+in-algorithm verification that survives underneath it -- specifically, that
+the shared final-pass verify function is still called from inside the
+plus-final verify arm of the per-byte program loop, for the two 27C
+protocols (0x07, 0x08) that ship that verify mode.
 
-Requirements: FWCMD-04
+Phase 204 Plan 03 extended this module with the FWCMD-01 and FWCMD-03
+absence legs (Coverage 7-10 below): proving neither retired ordinal
+reappears in the dispatch switch, in the admission predicate, or in any of
+the five protocol configure handlers, and that the firmware header records
+a reserved-ordinal reason at both gaps. These legs' RED was observed
+against the pre-deletion tree before plan 03's sweep landed -- see that
+plan's SUMMARY for the captured transcript.
+
+Requirements: FWCMD-01, FWCMD-03, FWCMD-04
 
 Defect class this closes: a call-site-EXISTENCE property. "Is this call
 still made, from inside this specific arm, after ordinal 6 left the file?"
@@ -54,11 +62,24 @@ Coverage:
      source contains no skip-bypass call, no skip-marker decorator and no
      dependency-skip call anywhere.
   6. test_own_needles_do_not_appear_verbatim_in_this_module -- none of the
-     three concatenation-built needles (the shared verify call's own
+     six concatenation-built needles (the shared verify call's own
      identifier, the plus-final enumerator's identifier as used in the
-     containment arm's regex, and the same enumerator's identifier as used
-     in the parameter-table leg's regex) appears verbatim anywhere in this
-     module's own source, so this gate cannot match itself.
+     containment arm's regex, the same enumerator's identifier as used in
+     the parameter-table leg's regex, the two retired ordinals' own
+     identifiers, and the reserved-ordinal marker phrase) appears verbatim
+     anywhere in this module's own source, so this gate cannot match itself.
+  7. test_neither_retired_ordinal_appears_in_the_dispatch_switch -- neither
+     retired command's identifier appears anywhere inside the command
+     dispatch switch's brace-matched body in src/firestarter.cpp.
+  8. test_neither_retired_ordinal_appears_in_the_admission_predicate --
+     neither retired command's identifier appears anywhere inside
+     is_memory_cmd's brace-matched body in include/firestarter.h.
+  9. test_no_protocol_handler_configures_a_retired_ordinal -- neither
+     retired command's identifier appears ANYWHERE (a whole-file scan, not
+     brace-matched) in any of the five protocol configure handlers.
+  10. test_both_reserved_ordinal_gaps_carry_a_recorded_reason -- the
+      firmware header carries the reserved-ordinal marker phrase at least
+      twice, once per retired ordinal's gap in the CMD ladder.
 
 Environment seams: (this repository has no central environment-variable
 inventory -- this docstring is the only place a reader can discover this
@@ -99,6 +120,12 @@ _REPO_ROOT = _HERE.parent
 _EPROM_REL = "src/proms/eprom.cpp"
 _PARAMS_REL = "src/proms/eprom_params.cpp"
 _MEMORY_REL = "src/proms/memory.cpp"
+_DISPATCH_REL = "src/firestarter.cpp"
+_HEADER_REL = "include/firestarter.h"
+_FLASH_NOR_UNLOCK_REL = "src/proms/flash_nor_unlock.cpp"
+_FLASH_INTEL_REL = "src/proms/flash_intel.cpp"
+_FLASH_5V_PAGE_REL = "src/proms/flash_5v_page.cpp"
+_EEPROM_28C_REL = "src/proms/eeprom_28c.cpp"
 
 # Environment seam -- binds at IMPORT time. See the module docstring's
 # "Environment seams" section above. Only this one target is overridable.
@@ -108,11 +135,26 @@ _SCAN_EPROM = Path(
         str(_REPO_ROOT / _EPROM_REL),
     )
 )
-# The remaining two targets have no override -- see the docstring section
+# The remaining targets have no override -- see the docstring section
 # above for why. A stray environment value pointed at the eprom.cpp seam
-# cannot make Coverage 2 or 3 vacuous.
+# cannot make Coverage 2, 3, 9 or 10 vacuous.
 _SCAN_PARAMS = _REPO_ROOT / _PARAMS_REL
 _SCAN_MEMORY = _REPO_ROOT / _MEMORY_REL
+_SCAN_DISPATCH = _REPO_ROOT / _DISPATCH_REL
+_SCAN_HEADER = _REPO_ROOT / _HEADER_REL
+_SCAN_FLASH_NOR_UNLOCK = _REPO_ROOT / _FLASH_NOR_UNLOCK_REL
+_SCAN_FLASH_INTEL = _REPO_ROOT / _FLASH_INTEL_REL
+_SCAN_FLASH_5V_PAGE = _REPO_ROOT / _FLASH_5V_PAGE_REL
+_SCAN_EEPROM_28C = _REPO_ROOT / _EEPROM_28C_REL
+
+# The five protocol configure handlers Coverage 9 scans in full.
+_PROTOCOL_RELS = (
+    (_EPROM_REL, _SCAN_EPROM),
+    (_FLASH_NOR_UNLOCK_REL, _SCAN_FLASH_NOR_UNLOCK),
+    (_FLASH_INTEL_REL, _SCAN_FLASH_INTEL),
+    (_FLASH_5V_PAGE_REL, _SCAN_FLASH_5V_PAGE),
+    (_EEPROM_28C_REL, _SCAN_EEPROM_28C),
+)
 
 # Concatenation-built needles. Coverage 6 asserts none of these appears
 # verbatim anywhere in this module's own source -- see the module docstring
@@ -121,11 +163,17 @@ _SCAN_MEMORY = _REPO_ROOT / _MEMORY_REL
 _NEEDLE_CALL = "memory_verify_exec" + "ute"
 _NEEDLE_MODE = "VERIFY_PER_PULSE_PLUS" + "_FINAL"
 _NEEDLE_DEFINITION = "VERIFY_PER_PULSE_PLUS_FI" + "NAL"
+_NEEDLE_RETIRED_VERIFY = "CMD_" + "VERIFY"
+_NEEDLE_RETIRED_BLANK = "CMD_BLANK" + "_CHECK"
+_NEEDLE_RESERVED_MARKER = "retired in " + "3.1.0"
 
 _ALL_SELF_CHECK_NEEDLES = (
     ("the shared final-pass verify call's identifier", _NEEDLE_CALL),
     ("the plus-final enumerator's identifier (containment arm)", _NEEDLE_MODE),
     ("the plus-final enumerator's identifier (parameter-table leg)", _NEEDLE_DEFINITION),
+    ("the verify command's retired identifier", _NEEDLE_RETIRED_VERIFY),
+    ("the blank-check command's retired identifier", _NEEDLE_RETIRED_BLANK),
+    ("the reserved-ordinal marker phrase", _NEEDLE_RESERVED_MARKER),
 )
 
 _ARM_RE = re.compile(r"if\s*\(\s*verify_mode\s*==\s*" + _NEEDLE_MODE + r"\s*\)\s*\{")
@@ -139,6 +187,9 @@ _KEYS_RE = re.compile(r"EPROM_PARAM_KEYS\s*\[\s*\]\s*PROGMEM\s*=\s*\{([^}]*)\}")
 _PARAMS_BODY_RE = re.compile(r"EPROM_PARAMS\s*\[\s*\]\s*PROGMEM\s*=\s*\{(.*?)\}\s*;", re.S)
 _ROW_RE = re.compile(r"\{[^{}]*\}")
 _DEFINITION_TOKEN_RE = re.compile(r"\b" + _NEEDLE_DEFINITION + r"\b")
+
+_DISPATCH_SWITCH_RE = re.compile(r"switch\s*\(\s*handle\.cmd\s*\)\s*\{")
+_ADMISSION_FUNC_RE = re.compile(r"\bis_memory_cmd\s*\(\s*uint8_t\s+cmd\s*\)\s*\{")
 
 
 def _strip_comments(text):
@@ -294,6 +345,98 @@ def test_the_shared_verify_is_still_defined():
     )
 
 
+def test_neither_retired_ordinal_appears_in_the_dispatch_switch():
+    """Coverage 7 (FWCMD-01) -- neither retired command's identifier appears
+    anywhere inside the command dispatch switch's brace-matched body in
+    src/firestarter.cpp. Containment is proven by finding the switch's own
+    opening brace and walking to its matching close, never by line
+    proximity -- the whole-file scan for the five protocol handlers is a
+    separate leg below (Coverage 9), because a dispatch switch and a
+    configure handler are different failure classes: one selects a
+    callback, the other configures hardware."""
+    stripped = _read_stripped(_SCAN_DISPATCH)
+    span = _function_body_span(stripped, _DISPATCH_SWITCH_RE)
+    assert span is not None, (
+        f"the command dispatch switch is gone from {_DISPATCH_REL} -- this "
+        "leg has nothing left to scan."
+    )
+    body = stripped[span[0] : span[1] + 1]
+    for label, needle in (
+        ("the verify command's retired identifier", _NEEDLE_RETIRED_VERIFY),
+        ("the blank-check command's retired identifier", _NEEDLE_RETIRED_BLANK),
+    ):
+        assert needle not in body, (
+            f"{label} still appears inside the dispatch switch's body in "
+            f"{_DISPATCH_REL} -- both retired commands' wire ordinals must "
+            "route through the switch's default: arm only, never a named "
+            f"case.\nGot switch body:\n{body}"
+        )
+
+
+def test_neither_retired_ordinal_appears_in_the_admission_predicate():
+    """Coverage 8 (FWCMD-01) -- neither retired command's identifier appears
+    anywhere inside is_memory_cmd's brace-matched body in
+    include/firestarter.h, the access-control gate that decides which
+    commands may reach configure_memory() -- and so the 12V VPP boost
+    regulator -- at all."""
+    stripped = _read_stripped(_SCAN_HEADER)
+    span = _function_body_span(stripped, _ADMISSION_FUNC_RE)
+    assert span is not None, (
+        f"the admission predicate is gone from {_HEADER_REL} -- this leg "
+        "has nothing left to scan."
+    )
+    body = stripped[span[0] : span[1] + 1]
+    for label, needle in (
+        ("the verify command's retired identifier", _NEEDLE_RETIRED_VERIFY),
+        ("the blank-check command's retired identifier", _NEEDLE_RETIRED_BLANK),
+    ):
+        assert needle not in body, (
+            f"{label} still appears inside the admission predicate's body "
+            f"in {_HEADER_REL} -- a retired ordinal must never be admitted "
+            f"to configure_memory() again.\nGot predicate body:\n{body}"
+        )
+
+
+def test_no_protocol_handler_configures_a_retired_ordinal():
+    """Coverage 9 (FWCMD-01) -- neither retired command's identifier appears
+    ANYWHERE (not merely in a case label) in any of the five protocol
+    configure handlers. A whole-file scan, not a brace-matched one: this
+    leg exists to catch a stray reference left in a comment exactly as
+    loudly as one left in a case label."""
+    hits = []
+    for rel, path in _PROTOCOL_RELS:
+        stripped = _read_stripped(path)
+        for label, needle in (
+            ("the verify command's retired identifier", _NEEDLE_RETIRED_VERIFY),
+            ("the blank-check command's retired identifier", _NEEDLE_RETIRED_BLANK),
+        ):
+            if needle in stripped:
+                hits.append(f"{rel}: {label}")
+    assert hits == [], (
+        "found a retired command identifier surviving in a protocol "
+        "configure handler -- both wire ordinals must be gone from every "
+        "one of the five handlers, not merely from their dispatch "
+        "switches.\nGot:\n" + "\n".join(hits)
+    )
+
+
+def test_both_reserved_ordinal_gaps_carry_a_recorded_reason():
+    """Coverage 10 (FWCMD-03) -- the firmware header carries a
+    reserved-ordinal record at BOTH gaps in the CMD ladder, naming the
+    release that retired the ordinal and stating the never-reuse reason --
+    the place a future author scanning the ladder for a free slot will
+    actually read. Counts occurrences of the shared marker phrase rather
+    than parsing prose, so a rewritten sentence that keeps the marker still
+    passes and a note deleted outright still fails."""
+    raw = _SCAN_HEADER.read_text()
+    count = raw.count(_NEEDLE_RESERVED_MARKER)
+    assert count >= 2, (
+        f"expected the reserved-ordinal marker to appear at least twice in "
+        f"{_HEADER_REL} (once per retired ordinal), found {count} -- a "
+        "reserved-ordinal record is missing at one of the two gaps."
+    )
+
+
 def test_scan_targets_are_non_vacuous():
     """Coverage 4 -- structural self-check, never reads the environment
     seam: every DEFAULT scan target (recomputed fresh from _REPO_ROOT --
@@ -301,11 +444,19 @@ def test_scan_targets_are_non_vacuous():
     landmine, closed here by construction) exists, is non-empty, resolves
     inside this repository, and its comment-stripped text is non-empty. A
     missing or empty scan target must FAIL, never silently pass as if
-    nothing needed checking."""
+    nothing needed checking. Extended in Phase 204 Plan 03 to cover the
+    dispatch source, the header, and the four protocol handlers this
+    module did not previously scan (eprom.cpp was already covered)."""
     default_targets = (
         (_EPROM_REL, _REPO_ROOT / _EPROM_REL),
         (_PARAMS_REL, _REPO_ROOT / _PARAMS_REL),
         (_MEMORY_REL, _REPO_ROOT / _MEMORY_REL),
+        (_DISPATCH_REL, _REPO_ROOT / _DISPATCH_REL),
+        (_HEADER_REL, _REPO_ROOT / _HEADER_REL),
+        (_FLASH_NOR_UNLOCK_REL, _REPO_ROOT / _FLASH_NOR_UNLOCK_REL),
+        (_FLASH_INTEL_REL, _REPO_ROOT / _FLASH_INTEL_REL),
+        (_FLASH_5V_PAGE_REL, _REPO_ROOT / _FLASH_5V_PAGE_REL),
+        (_EEPROM_28C_REL, _REPO_ROOT / _EEPROM_28C_REL),
     )
     for label, p in default_targets:
         assert p.is_file(), (
