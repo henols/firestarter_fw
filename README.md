@@ -4,7 +4,7 @@
 # Firestarter Firmware
 
 > [!IMPORTANT]
-> Bugs, feature requests, support requests, and project-wide work are tracked in the [central Firestarter issue tracker](https://github.com/henols/firestarter_prom/issues).
+> Bugs, feature requests, support requests, and project-wide work are tracked in the [central Firestarter issue tracker](https://github.com/henols/firestarter/issues).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
