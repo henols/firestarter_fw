@@ -488,21 +488,18 @@ void mem_util_blank_check_region(firestarter_handle_t* handle, uint32_t start, u
                 (uint8_t)(i & 0xFF),
                 (uint8_t)val,
             };
-            // On the Uno, rurp_log_id is com_mode-gated and this function runs in
-            // programmer mode, so a direct emit here is silently dropped. For the
-            // standalone blank-check command, stash the offset+value and let
-            // _single_step_operation_callback emit MSG_ERR_NOT_BLANK in communication
-            // mode. Other callers (write-init / erase-end) keep the direct emit.
-            // (#transport-protocol-verify)
-            if (handle->cmd == CMD_BLANK_CHECK) {
-                handle->data_buffer[0] = (char)_b[0];
-                handle->data_buffer[1] = (char)_b[1];
-                handle->data_buffer[2] = (char)_b[2];
-                handle->data_buffer[3] = (char)_b[3];
-                handle->data_size = 4;
-            } else {
-                LOG_ERROR_ID_BYTES(MSG_ERR_NOT_BLANK, _b, 4);
-            }
+            // This function runs in programmer mode, and on the Uno rurp_log_id
+            // is com_mode-gated, so a direct emit here used to be silently
+            // dropped for the standalone blank-check command: that command
+            // stashed the offset+value in data_buffer instead and let
+            // _single_step_operation_callback (operation_utils.cpp) emit
+            // MSG_ERR_NOT_BLANK from communication mode. That command's wire
+            // ordinal was retired in 3.1.0. The two callers that remain --
+            // eprom_write_init and configure_eprom's erase arm (both
+            // eprom.cpp) -- already took this direct-emit arm before the
+            // retirement, so the deferral machinery went with the ordinal it
+            // existed to serve. (#transport-protocol-verify)
+            LOG_ERROR_ID_BYTES(MSG_ERR_NOT_BLANK, _b, 4);
             handle->response_code = RESPONSE_CODE_ERROR;
             return;
         }
@@ -518,14 +515,15 @@ void mem_util_blank_check_region(firestarter_handle_t* handle, uint32_t start, u
     if (handle->address > end) {
         handle->address = end;
     }
-    // Send progress back to the client. For the standalone blank-check command the
-    // emit is deferred to _single_step_operation_callback (communication mode): this
-    // function runs in programmer mode where the Uno's com_mode-gated rurp_log_id
-    // drops frames. Other callers (write-init / erase-end) keep the direct emit.
+    // Send progress back to the client, unconditionally. The standalone
+    // blank-check command used to defer this emit to
+    // _single_step_operation_callback (communication mode), because this
+    // function runs in programmer mode where the Uno's com_mode-gated
+    // rurp_log_id drops frames. That command's wire ordinal was retired in
+    // 3.1.0; the two callers that remain, write-init and erase-end (both
+    // eprom.cpp), already took this direct emit before the retirement.
     // (#transport-protocol-verify)
-    if (handle->cmd != CMD_BLANK_CHECK) {
-        LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, handle->address, end);
-    }
+    LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, handle->address, end);
 #endif
 }
 
