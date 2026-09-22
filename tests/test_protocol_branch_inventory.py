@@ -442,19 +442,28 @@ def test_exactly_one_protocol_keyed_site_at_the_pinned_line():
     """Phase 142 Plan 04 (D-05): the eprom_hv_route_mask resolver collapsed
     the two duplicated protocol-keyed VPP-route forks (formerly tier-1
     sites at :190 and :340) into a single call site apiece, leaving only
-    line 70's pulse-fallback switch as a protocol-keyed branch. This
-    locator is now STRICTLY STRONGER than its three-site predecessor: with
-    only one legitimate tier-1 site, ANY second protocol-keyed branch is a
-    violation, where before three were permitted."""
+    the pulse-fallback switch as a protocol-keyed branch. This locator is
+    now STRICTLY STRONGER than its three-site predecessor: with only one
+    legitimate tier-1 site, ANY second protocol-keyed branch is a
+    violation, where before three were permitted.
+
+    Phase 204 Plan 03 (FWCMD-01): the pinned line moved from 70 to 67 --
+    configure_eprom's `case CMD_BLANK_CHECK:` arm (three lines, no
+    predicate of its own) was deleted above the pulse-fallback switch when
+    the standalone blank-check command's wire ordinal was retired in
+    3.1.0. The switch itself is untouched; only its line number shifted.
+    A number is a measurement of the live source, not a constant to be
+    carried forward by habit -- re-derive it with the extractor at commit
+    time if this file's diff ever grows again."""
     live = _extract_predicates(_SCAN_EPROM.read_text())
     protocol_lines = sorted(s["line"] for s in live if s["tier"] == "protocol")
-    assert protocol_lines == [70], (
-        "expected exactly one tier-protocol site, at line [70], found "
-        f"{protocol_lines} instead. More than [70] means a SECOND "
+    assert protocol_lines == [67], (
+        "expected exactly one tier-protocol site, at line [67], found "
+        f"{protocol_lines} instead. More than [67] means a SECOND "
         "protocol-keyed branch has appeared -- a second algorithm selector "
         "and a TABLE-05 violation, to be fixed in src/proms/eprom.cpp, "
-        "never here. An empty list means line 70's own pulse-fallback "
-        "switch was removed without updating this inventory."
+        "never here. An empty list means the pulse-fallback switch was "
+        "removed without updating this inventory."
     )
 
 

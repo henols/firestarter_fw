@@ -53,9 +53,6 @@ void configure_eprom(firestarter_handle_t* handle) {
                 handle->firestarter_operation_end = mem_util_blank_check;
             }
             break;
-        case CMD_BLANK_CHECK:
-            handle->firestarter_operation_main = mem_util_blank_check;
-            break;
         case CMD_CHECK_CHIP_ID:
             handle->firestarter_operation_init = eprom_check_chip_id_init;
             handle->firestarter_operation_main = eprom_check_chip_id_execute;

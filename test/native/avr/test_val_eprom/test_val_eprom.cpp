@@ -32,6 +32,7 @@ extern "C" {
 #include "memory.h"
 #include "eprom.h"
 #include "operation_utils.h"
+#include "memory_utils.h"
 }
 #include "firestarter.h"
 #include "rurp_pinout.h"
@@ -475,9 +476,19 @@ static uint32_t first_recorded_address(void) {
  * restore that merely zeroes the cursor instead of restoring it would fail
  * the final assertion -- and this is the BLANK-02 contract verbatim. */
 void test_blank_check_resumes_across_chunks_and_restores_the_cursor(void) {
-    firestarter_handle_t h = make_region_handle(0x07, CMD_BLANK_CHECK, 16384);
+    /* Re-keyed in Phase 204 (FWCMD-01, Fork C): the standalone blank-check
+     * command's configure_eprom arm is gone, so nothing dispatches this
+     * handle's operation-main pointer to the whole-device blank-check
+     * function any more -- assign it directly instead. This test guards
+     * the chunking and cursor-restore contract (BLANK-02), which survives
+     * to Phase 205; cmd is CMD_READ, a neutral surviving ordinal, because
+     * mem_util_blank_check_region no longer reads handle->cmd at all
+     * (Phase 204 collapsed its two command-keyed branches to their
+     * direct-emit arm). */
+    firestarter_handle_t h = make_region_handle(0x07, CMD_READ, 16384);
     configure_memory(&h);
     configure_eprom(&h);  /* configure_memory already dispatches here for 0x07; explicit for clarity. */
+    h.firestarter_operation_main = mem_util_blank_check;
     val_shadow_enable();
     h.address = 0x2A;
     clear_bus_recording();

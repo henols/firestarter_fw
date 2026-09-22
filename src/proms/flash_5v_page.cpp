@@ -43,9 +43,6 @@ void configure_flash_5v_page(firestarter_handle_t* handle) {
             handle->firestarter_operation_init = flash_5v_page_write_init;
             handle->firestarter_operation_main = flash_5v_page_write_execute;
             break;
-        case CMD_BLANK_CHECK:
-            handle->firestarter_operation_main = mem_util_blank_check;
-            break;
         case CMD_CHECK_CHIP_ID:
             handle->firestarter_operation_init = NULL;
             handle->firestarter_operation_main = flash_5v_page_check_chip_id_execute;

@@ -58,9 +58,6 @@ void configure_flash_intel(firestarter_handle_t* handle) {
         case CMD_ERASE:
             handle->firestarter_operation_main = flash_intel_erase_execute;
             break;
-        case CMD_BLANK_CHECK:
-            handle->firestarter_operation_main = mem_util_blank_check;
-            break;
         case CMD_CHECK_CHIP_ID:
             handle->firestarter_operation_init = NULL;
             handle->firestarter_operation_end = NULL;

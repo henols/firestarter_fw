@@ -36,6 +36,14 @@ the shape a future widening would take: repointing one of the six
 function-pointer assignments at the region-scoped body instead of the
 wrapper.
 
+Phase 204 retired the standalone blank-check command and deleted its arm
+from all five protocol configure handlers -- five of the six
+function-pointer assignments named above were that command's own arm and
+went with it. Only eprom.cpp's erase-end assignment survives; Coverage 5
+below is re-anchored from six to one accordingly. This module itself
+retires in Phase 205, when the region-scoped scan body, the whole-device
+wrapper and their remaining callers are deleted.
+
 Coverage:
   1. test_region_form_is_defined_exactly_once_with_three_parameters --
      the region-scoped scan body is defined exactly once, in memory.cpp,
@@ -52,11 +60,13 @@ Coverage:
   4. test_out_of_scope_protocol_files_contain_zero_region_form_calls --
      zero calls to the region form in the four out-of-scope protocol
      files D-10 puts out of scope for this phase.
-  5. test_exactly_six_whole_device_function_pointer_assignments_and_zero_region_form_ones --
-     exactly six assignments of the whole-device wrapper to
+  5. test_exactly_one_whole_device_function_pointer_assignment_and_zero_region_form_ones --
+     exactly one assignment of the whole-device wrapper to
      handle->firestarter_operation_main or handle->firestarter_operation_end
      across the five protocol source files that reference either form, and
-     zero assignments of the region form to either pointer.
+     zero assignments of the region form to either pointer. Re-anchored from
+     six in Phase 204: five of the six were the standalone blank-check
+     command's own configure-handler arm, retired in this release.
   6. test_operation_end_is_defined_exactly_once_and_reads_both_members --
      the operation-end resolution point (plan 201-04's D-06 anchor) is
      defined exactly once and its body reads both the region-end member
@@ -356,19 +366,22 @@ def test_out_of_scope_protocol_files_contain_zero_region_form_calls():
         )
 
 
-def test_exactly_six_whole_device_function_pointer_assignments_and_zero_region_form_ones():
-    """Coverage 5 -- the six function-pointer assignments RESEARCH.md's
-    caller census names (two in eprom.cpp, one each in the four
-    out-of-scope protocol files) all still target the whole-device
-    wrapper, and none targets the region form. This leg is belt-and-braces
-    against a future SIGNATURE change: the region form's three-parameter
-    signature does not match the
+def test_exactly_one_whole_device_function_pointer_assignment_and_zero_region_form_ones():
+    """Coverage 5 -- re-anchored in Phase 204 from six to one. RESEARCH.md's
+    caller census originally named six function-pointer assignments (two in
+    eprom.cpp, one each in the four out-of-scope protocol files); five of
+    those six were the standalone blank-check command's own configure-handler
+    arm, deleted when that command's wire ordinal was retired in 3.1.0. Only
+    eprom.cpp's erase-end assignment survives -- this module itself retires
+    in Phase 205, when the functions it guards are deleted. This leg is
+    belt-and-braces against a future SIGNATURE change: the region form's
+    three-parameter signature does not match the
     void (*)(firestarter_handle_t*) function-pointer type today, so a
-    compiler would reject repointing one of these six assignments at it as
-    written -- this leg does not guard against something the compiler
-    cannot already see, it guards against that type ever being loosened.
+    compiler would reject repointing this assignment at it as written --
+    this leg does not guard against something the compiler cannot already
+    see, it guards against that type ever being loosened.
     Asserted as an EQUALITY against a named count, not a floor, so a
-    seventh assignment appearing anywhere is caught exactly as loudly as a
+    second assignment appearing anywhere is caught exactly as loudly as a
     repointed one."""
     wrapper_hits = []
     region_hits = []
@@ -380,8 +393,8 @@ def test_exactly_six_whole_device_function_pointer_assignments_and_zero_region_f
                 wrapper_hits.append(f"{rel}: {m.group(0).strip()}")
             elif target == _NEEDLE_REGION:
                 region_hits.append(f"{rel}: {m.group(0).strip()}")
-    assert len(wrapper_hits) == 6, (
-        "expected exactly 6 function-pointer assignments of the "
+    assert len(wrapper_hits) == 1, (
+        "expected exactly 1 function-pointer assignment of the "
         "whole-device wrapper to handle->firestarter_operation_main or "
         f"handle->firestarter_operation_end, found {len(wrapper_hits)}.\n"
         "Got:\n" + "\n".join(wrapper_hits)
