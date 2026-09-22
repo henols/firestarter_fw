@@ -21,7 +21,16 @@ a reserved-ordinal reason at both gaps. These legs' RED was observed
 against the pre-deletion tree before plan 03's sweep landed -- see that
 plan's SUMMARY for the captured transcript.
 
-Requirements: FWCMD-01, FWCMD-03, FWCMD-04
+Phase 205 Plan 03 (task 1) extends this module again, with the FWBLANK-01
+and FWBLANK-02 absence legs (Coverage 11-12 below), and MIGRATES Coverage 13
+from test_blank_check_region_source_contract.py (Phase 201 Plan 05), which
+retires in this same commit: that module's own Coverage 6 was the only
+mechanical fence around the operation-end resolution point's definition, so
+it moves here rather than being lost with the module that held it. Coverage
+11-12's RED was observed against the pre-sweep tree before this plan's
+source edits landed -- see 205-03-SUMMARY.md for the captured transcript.
+
+Requirements: FWCMD-01, FWCMD-03, FWCMD-04, FWBLANK-01, FWBLANK-02
 
 Defect class this closes: a call-site-EXISTENCE property. "Is this call
 still made, from inside this specific arm, after ordinal 6 left the file?"
@@ -80,6 +89,23 @@ Coverage:
   10. test_both_reserved_ordinal_gaps_carry_a_recorded_reason -- the
       firmware header carries the reserved-ordinal marker phrase at least
       twice, once per retired ordinal's gap in the CMD ladder.
+  11. test_no_write_init_body_performs_a_blank_check (FWBLANK-01) -- none
+      of the three write-init bodies (eprom.cpp, flash_intel.cpp,
+      flash_nor_unlock.cpp) references the whole-device or the
+      region-scoped blank-check function anymore, scanned over RAW text so
+      a stray reference left in a comment fails exactly as loudly as one
+      left in a call expression.
+  12. test_the_erase_arm_assigns_no_operation_end_in_eprom_cpp
+      (FWBLANK-02) -- configure_eprom's CMD_ERASE arm assigns no
+      handle->firestarter_operation_end at all, contained to the arm via a
+      brace-matched function lookup.
+  13. test_operation_end_is_defined_exactly_once_and_reads_both_members --
+      MIGRATED from test_blank_check_region_source_contract.py's own
+      Coverage 6 (that module retires in this commit): the operation-end
+      resolution point (plan 201-04's D-06 anchor) is defined exactly once
+      and its body reads both the region-end member and the device-size
+      member, so the fail-closed clamp cannot be silently dropped while the
+      function stays defined and apparently intact.
 
 Environment seams: (this repository has no central environment-variable
 inventory -- this docstring is the only place a reader can discover this
@@ -167,6 +193,15 @@ _NEEDLE_RETIRED_VERIFY = "CMD_" + "VERIFY"
 _NEEDLE_RETIRED_BLANK = "CMD_BLANK" + "_CHECK"
 _NEEDLE_RESERVED_MARKER = "retired in " + "3.1.0"
 
+# FWBLANK-01/02/03 (Phase 205 Plan 03) -- concatenation-built needles for the
+# blank-check absence legs and for the operation-end survivor fence migrated
+# from test_blank_check_region_source_contract.py, which retires in the same
+# commit. Split strictly inside each identifier's own name, matching that
+# module's own convention, so neither fragment nor the full needle value
+# ever appears as a contiguous run of characters anywhere else in this file.
+_NEEDLE_BLANK_CHECK_FN = "mem_util_blank_c" + "heck"
+_NEEDLE_BLANK_CHECK_REGION_FN = "mem_util_blank_che" + "ck_region"
+
 _ALL_SELF_CHECK_NEEDLES = (
     ("the shared final-pass verify call's identifier", _NEEDLE_CALL),
     ("the plus-final enumerator's identifier (containment arm)", _NEEDLE_MODE),
@@ -174,6 +209,8 @@ _ALL_SELF_CHECK_NEEDLES = (
     ("the verify command's retired identifier", _NEEDLE_RETIRED_VERIFY),
     ("the blank-check command's retired identifier", _NEEDLE_RETIRED_BLANK),
     ("the reserved-ordinal marker phrase", _NEEDLE_RESERVED_MARKER),
+    ("the whole-device blank-check function's identifier", _NEEDLE_BLANK_CHECK_FN),
+    ("the region-scoped blank-check function's identifier", _NEEDLE_BLANK_CHECK_REGION_FN),
 )
 
 _ARM_RE = re.compile(r"if\s*\(\s*verify_mode\s*==\s*" + _NEEDLE_MODE + r"\s*\)\s*\{")
@@ -190,6 +227,25 @@ _DEFINITION_TOKEN_RE = re.compile(r"\b" + _NEEDLE_DEFINITION + r"\b")
 
 _DISPATCH_SWITCH_RE = re.compile(r"switch\s*\(\s*handle\.cmd\s*\)\s*\{")
 _ADMISSION_FUNC_RE = re.compile(r"\bis_memory_cmd\s*\(\s*uint8_t\s+cmd\s*\)\s*\{")
+
+# FWBLANK-01/02 (Phase 205 Plan 03) -- the CMD_ERASE arm's own containment
+# regex, scoped to configure_eprom so this leg proves absence inside the
+# right arm rather than merely somewhere in the file.
+_CONFIGURE_EPROM_DEF_RE = re.compile(
+    r"\bvoid\s+configure_eprom\s*\(\s*firestarter_handle_t\s*\*\s*handle\s*\)\s*\{"
+)
+_ERASE_ARM_RE = re.compile(r"case\s+CMD_ERASE\s*:(.*?)break\s*;", re.S)
+
+# Migrated from test_blank_check_region_source_contract.py (Phase 201 Plan
+# 05), which retires in this commit -- plan 201-04's D-06 anchor. This is
+# the only mechanical fence around mem_util_operation_end's definition, so
+# it moves here rather than being dropped with the module that held it.
+_OP_END_DEF_RE = re.compile(
+    r"\buint32_t\s+mem_util_operation_end\s*\(\s*const\s+firestarter_handle_t\s*\*"
+    r"\s*handle\s*\)\s*\{"
+)
+_OP_END_READS_REGION_END_RE = re.compile(r"handle\s*->\s*region_end\b")
+_OP_END_READS_MEM_SIZE_RE = re.compile(r"handle\s*->\s*mem_size\b")
 
 
 def _strip_comments(text):
@@ -434,6 +490,99 @@ def test_both_reserved_ordinal_gaps_carry_a_recorded_reason():
         f"expected the reserved-ordinal marker to appear at least twice in "
         f"{_HEADER_REL} (once per retired ordinal), found {count} -- a "
         "reserved-ordinal record is missing at one of the two gaps."
+    )
+
+
+def test_no_write_init_body_performs_a_blank_check():
+    """Coverage 11 (FWBLANK-01) -- none of the three write-init bodies
+    (eprom.cpp's internal write-init helper, flash_intel.cpp's write-init,
+    flash_nor_unlock.cpp's write-init) calls the whole-device or the
+    region-scoped blank-check function anymore. The pre-write refusal moved
+    to the host in Phase 203; this leg proves the firmware's own duplicate
+    pre-flight is gone from all three write-init bodies. A whole-file scan
+    over RAW (not comment-stripped) text, matching Coverage 9's own stated
+    intent above -- these absence legs exist to catch a stray reference
+    left in a comment exactly as loudly as one left in a call expression,
+    so stripping comments first would defeat the point."""
+    hits = []
+    for rel, path in (
+        (_EPROM_REL, _SCAN_EPROM),
+        (_FLASH_INTEL_REL, _SCAN_FLASH_INTEL),
+        (_FLASH_NOR_UNLOCK_REL, _SCAN_FLASH_NOR_UNLOCK),
+    ):
+        raw = path.read_text()
+        for label, needle in (
+            ("the whole-device blank-check function", _NEEDLE_BLANK_CHECK_FN),
+            ("the region-scoped blank-check function", _NEEDLE_BLANK_CHECK_REGION_FN),
+        ):
+            if needle in raw:
+                hits.append(f"{rel}: {label}")
+    assert hits == [], (
+        "found a write-init body still referencing a blank-check function "
+        "-- FWBLANK-01 removes the firmware's pre-write blank-check "
+        "pre-flight from every write-init body; the host now owns this "
+        "refusal.\nGot:\n" + "\n".join(hits)
+    )
+
+
+def test_the_erase_arm_assigns_no_operation_end_in_eprom_cpp():
+    """Coverage 12 (FWBLANK-02) -- configure_eprom's CMD_ERASE arm assigns
+    no handle->firestarter_operation_end at all -- not a different one, not
+    a conditional one -- so the UV handler's erase has no end-op and the
+    host owns the post-erase verdict. Contained to the arm via a
+    brace-matched function lookup followed by a case/break slice, never by
+    line proximity."""
+    stripped = _read_stripped(_SCAN_EPROM)
+    func_span = _function_body_span(stripped, _CONFIGURE_EPROM_DEF_RE)
+    assert func_span is not None, (
+        f"configure_eprom is gone from {_EPROM_REL} -- this leg has "
+        "nothing left to scan."
+    )
+    func_body = stripped[func_span[0] : func_span[1] + 1]
+    arm_match = _ERASE_ARM_RE.search(func_body)
+    assert arm_match is not None, (
+        f"the CMD_ERASE arm is gone from configure_eprom in {_EPROM_REL} -- "
+        "this leg has nothing left to scan."
+    )
+    arm_body = arm_match.group(1)
+    assert "firestarter_operation_end" not in arm_body, (
+        "configure_eprom's CMD_ERASE arm in "
+        f"{_EPROM_REL} still assigns handle->firestarter_operation_end -- "
+        "FWBLANK-02 removes the post-erase blank check; the arm must "
+        f"assign no end-op at all.\nGot arm body:\n{arm_body}"
+    )
+
+
+def test_operation_end_is_defined_exactly_once_and_reads_both_members():
+    """Coverage 13 -- MIGRATED from test_blank_check_region_source_contract.py
+    (that module's own Coverage 6), which retires in this same commit.
+    Plan 201-04's D-06 anchor: the operation-end resolution point (D-04's
+    0=absent=whole-device fallback plus the fail-closed clamp) is defined
+    exactly once and its body reads both the region-end member and the
+    device-size member, so the fail-closed clamp cannot be silently
+    dropped while the function stays defined and apparently intact. This
+    is the only mechanical fence around mem_util_operation_end's
+    definition, so it moves here rather than being lost with the module
+    that held it."""
+    stripped = _read_stripped(_SCAN_MEMORY)
+    def_matches = list(_OP_END_DEF_RE.finditer(stripped))
+    assert len(def_matches) == 1, (
+        "expected exactly 1 definition of the operation-end resolution "
+        f"point in {_MEMORY_REL}, found {len(def_matches)}.\n"
+        f"Got (comment-stripped {_MEMORY_REL}):\n{stripped}"
+    )
+    body_span = _function_body_span(stripped, _OP_END_DEF_RE)
+    assert body_span is not None and body_span[1] > body_span[0], (
+        f"could not brace-match the operation-end resolution point's body in {_MEMORY_REL}."
+    )
+    body_text = stripped[body_span[0] : body_span[1] + 1]
+    assert _OP_END_READS_REGION_END_RE.search(body_text), (
+        "expected the operation-end resolution point's body to read "
+        f"handle->region_end in {_MEMORY_REL}.\nGot body:\n{body_text}"
+    )
+    assert _OP_END_READS_MEM_SIZE_RE.search(body_text), (
+        "expected the operation-end resolution point's body to read "
+        f"handle->mem_size in {_MEMORY_REL}.\nGot body:\n{body_text}"
     )
 
 

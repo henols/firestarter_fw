@@ -524,44 +524,13 @@ void test_blank_check_resumes_across_chunks_and_restores_the_cursor(void) {
         "call 3 must restore handle.address to its pre-call value -- this is the BLANK-02 contract verbatim");
 }
 
-/* D-15.2: pins that CMD_ERASE's blank-check completion arm
- * (firestarter_operation_end) always scans from address 0, even when
- * handle.address was left non-zero by whatever ran before it.
- *
- * SATURATION, MEASURED AND RECORDED AS A DEVIATION: the plan text for this
- * case says to assert val_recording_saturated() is false. That does not
- * hold here: a single mem_util_blank_check call over this handle's 16384-byte
- * mem_size scans a full BLANK_CHECK_CHUNK_SIZE (8192-byte) chunk in one call,
- * which is 8192 * 3 = 24576 register writes -- far past
- * HOST_STUBS_MAX_RECORDING (4096, this suite's compiled value; see
- * host_stubs.cpp). The recorder WILL saturate on every such call regardless
- * of chunk contents, so this case asserts the measured fact instead of the
- * planned one. That is not a problem for the address this case actually
- * checks: the recorder's own saturation behaviour drops only the TAIL and
- * keeps the PREFIX valid (host_stubs_common.inc), and first_recorded_address()
- * only ever needs the EARLIEST occurrence of each register -- captured
- * within the first three recorded entries, long before saturation. */
-void test_erase_end_blank_check_scans_from_zero(void) {
-    firestarter_handle_t h = make_region_handle(0x07, CMD_ERASE, 16384);
-    configure_memory(&h);
-    configure_eprom(&h);  /* configure_memory already dispatches here for 0x07; explicit for clarity. */
-    TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_end,
-        "CMD_ERASE with FLAG_SKIP_BLANK_CHECK clear must assign firestarter_operation_end -- "
-        "a null pointer here means the fixture, not the production code, is wrong");
-
-    val_shadow_enable();
-    h.address = 8000;
-    clear_bus_recording();
-
-    h.firestarter_operation_end(&h);
-
-    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, first_recorded_address(),
-        "the erase-end blank check must scan from address 0 regardless of the handle's pre-call address");
-    TEST_ASSERT_TRUE_MESSAGE(val_recording_saturated(),
-        "measured fact, not a defect: one full BLANK_CHECK_CHUNK_SIZE (8192-byte) chunk always "
-        "exceeds HOST_STUBS_MAX_RECORDING (4096) at 3 register writes per byte -- see the block "
-        "comment above this case. first_recorded_address() only needs the preserved PREFIX.");
-}
+/* FWBLANK-02 (Phase 205 Plan 03 Task 1) -- test_erase_end_blank_check_scans_from_zero
+ * used to pin here that CMD_ERASE's blank-check completion arm
+ * (firestarter_operation_end) always scans from address 0. That arm's
+ * assignment is deleted by this commit -- configure_eprom's CMD_ERASE case
+ * now assigns no firestarter_operation_end at all -- so the contract this
+ * test asserted no longer exists to re-key onto anything. DELETED, not
+ * re-anchored: see 205-03-SUMMARY.md. */
 
 /* ═══════════════════════════════════════════════════════════════════════
  * 201-02 Task 2 -- D-16.1: the regression test whose absence is why backlog
@@ -629,12 +598,17 @@ static void unity_capped_iterations(firestarter_handle_t* h, const char* case_na
     } while (is_operation_in_progress(h) && h->response_code != RESPONSE_CODE_ERROR);
 }
 
-/* D-16.1 positive case. Seeds exactly one non-blank byte at 0x10 (16) --
- * deliberately in the FIRST 8192-byte chunk the whole-device scan walks,
- * so the RED is unambiguous rather than dependent on chunk arithmetic --
- * while the write's own target region is [8192, 12288), entirely outside
- * that first chunk. region_end is an ABSOLUTE EXCLUSIVE end address (C-3),
- * never a length: h.address = 8192, h.region_end = 12288.
+/* FWBLANK-01 (Phase 205 Plan 03 Task 1) -- RE-KEYED. This case used to
+ * prove the NARROWER fact that a non-blank byte at 0x10 (16), OUTSIDE the
+ * write's own target region [8192, 12288), did not refuse the write --
+ * true because the (then region-scoped) check only looked inside the
+ * region. That check is now gone entirely, so the narrower proof would
+ * stay green for the wrong reason. Re-keyed to the STRONGER, positive
+ * claim FWBLANK-01 actually makes: write-init performs no blank check at
+ * all, so a non-blank byte anywhere on the device -- inside or outside
+ * the region -- never refuses the write. region_end is an ABSOLUTE
+ * EXCLUSIVE end address (C-3), never a length: h.address = 8192,
+ * h.region_end = 12288.
  *
  * DEVIATION from the plan's literal action text: configure_eprom(&h) is NOT
  * called explicitly here. configure_memory() already dispatches to it for
@@ -647,12 +621,8 @@ static void unity_capped_iterations(firestarter_handle_t* h, const char* case_na
  * call itself. Every path this test exercises (eprom_write_init ->
  * eprom_generic_init -> eprom_check_vpp) calls
  * handle->firestarter_set_control_register, so the corrupted pointer
- * recurses until the stack overflows -- measured as a SIGSEGV. The two
- * 201-01 tests that use this same "configure_memory then explicit
- * configure_eprom" shape never trip it because they drive
- * firestarter_operation_main/end (mem_util_blank_check), which never calls
- * the control-register setter. */
-void test_write_init_accepts_blank_region_on_non_blank_part(void) {
+ * recurses until the stack overflows -- measured as a SIGSEGV. */
+void test_write_init_performs_no_blank_check_at_all(void) {
     firestarter_handle_t h = make_region_handle(0x07, CMD_WRITE, 16384);
     configure_memory(&h);
     TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_init,
@@ -665,25 +635,28 @@ void test_write_init_accepts_blank_region_on_non_blank_part(void) {
     val_shadow_enable();
     val_shadow_seed(0x10, 0x00);
 
-    unity_capped_iterations(&h, "test_write_init_accepts_blank_region_on_non_blank_part");
+    unity_capped_iterations(&h, "test_write_init_performs_no_blank_check_at_all");
 
     TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "D-16.1: a non-blank byte OUTSIDE the write's own target region [8192, 12288) must not "
-        "refuse the write. RED at this commit means the whole-device blank check does not yet "
-        "scope to the region -- plan 201-03's fix is what greens this.");
+        "FWBLANK-01: write-init performs no blank check at all, so a non-blank byte outside "
+        "the write's own target region [8192, 12288) must not refuse the write. The host now "
+        "owns this refusal.");
     TEST_ASSERT_FALSE_MESSAGE(val_recording_saturated(),
         "recorder saturated -- the addresses composed during this run would be unreliable");
 }
 
-/* D-16.1's paired negative control. Identical fixture except the non-blank
- * byte is seeded at 0x2400 (9216) -- strictly inside [8192, 12288), i.e.
- * inside the write's own target region. This must refuse both before and
- * after plan 201-03's fix: a region-scoped blank check still catches a
- * non-blank byte that is actually inside the region being written.
+/* FWBLANK-01 (Phase 205 Plan 03 Task 1) -- INVERTED. This case used to be
+ * the paired negative control proving a non-blank byte INSIDE the write's
+ * own target region [8192, 12288) still refused the write -- true because
+ * a region-scoped blank check still caught a non-blank byte actually
+ * inside the region. FWBLANK-01 removes that check entirely, so the
+ * assertion below is the OPPOSITE of what this case asserted before:
+ * criterion 3's native-level counterpart, and a cheaper proof than the
+ * bench alone. Renamed to the assertion it now makes.
  *
- * Same deviation as the positive case above: no explicit configure_eprom(&h)
- * call, for the same self-recursion reason. */
-void test_write_init_still_refuses_when_target_region_is_non_blank(void) {
+ * Same deviation as the case above: no explicit configure_eprom(&h) call,
+ * for the same self-recursion reason. */
+void test_write_init_no_longer_refuses_when_target_region_is_non_blank(void) {
     firestarter_handle_t h = make_region_handle(0x07, CMD_WRITE, 16384);
     configure_memory(&h);
     TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_init,
@@ -696,12 +669,12 @@ void test_write_init_still_refuses_when_target_region_is_non_blank(void) {
     val_shadow_enable();
     val_shadow_seed(0x2400, 0x00);
 
-    unity_capped_iterations(&h, "test_write_init_still_refuses_when_target_region_is_non_blank");
+    unity_capped_iterations(&h, "test_write_init_no_longer_refuses_when_target_region_is_non_blank");
 
-    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "negative control: a non-blank byte INSIDE the write's own target region [8192, 12288) "
-        "must still refuse the write, both before and after plan 201-03's fix -- scoping the "
-        "blank check is not deleting it.");
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "FWBLANK-01: a non-blank byte INSIDE the write's own target region [8192, 12288) no "
+        "longer refuses the write -- the device-side blank-check pre-flight is gone; the host "
+        "now owns this refusal.");
     TEST_ASSERT_FALSE_MESSAGE(val_recording_saturated(),
         "recorder saturated -- the addresses composed during this run would be unreliable");
 }
@@ -732,18 +705,17 @@ int main(int argc, char** argv) {
 
     /* 201-01 Task 2: BLANK-02 contract freeze, written before the region
      * split in plans 201-03 / 201-04 lands, so these characterize today's
-     * behaviour rather than tomorrow's. */
+     * behaviour rather than tomorrow's. test_erase_end_blank_check_scans_from_zero
+     * is DELETED (FWBLANK-02, Phase 205 Plan 03 Task 1) -- see the comment
+     * where its body used to be. test_blank_check_resumes_across_chunks_and_restores_the_cursor
+     * is task 2's disposition, not this task's. */
     RUN_TEST(test_blank_check_resumes_across_chunks_and_restores_the_cursor);
-    RUN_TEST(test_erase_end_blank_check_scans_from_zero);
 
-    /* 201-02 Task 2 -- D-16.1: the regression test whose absence is why
-     * backlog 999.44 shipped. The first case is EXPECTED RED at this
-     * commit: today's whole-device blank check has no notion of "the
-     * write's own region" to scope against. Plan 201-03's commit greens
-     * it. The second is its paired negative control, proving the refusal
-     * is scoped rather than removed -- it is green both before and after. */
-    RUN_TEST(test_write_init_accepts_blank_region_on_non_blank_part);
-    RUN_TEST(test_write_init_still_refuses_when_target_region_is_non_blank);
+    /* FWBLANK-01 (Phase 205 Plan 03 Task 1) -- both cases RE-KEYED / INVERTED
+     * from the D-16.1 pair that used to live here. See the comments above
+     * each case's definition for the RE-KEY/INVERT rationale. */
+    RUN_TEST(test_write_init_performs_no_blank_check_at_all);
+    RUN_TEST(test_write_init_no_longer_refuses_when_target_region_is_non_blank);
 
     return UNITY_END();
 }

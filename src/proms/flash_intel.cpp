@@ -88,9 +88,6 @@ void flash_intel_write_init(firestarter_handle_t* handle) {
     if (is_flag_set(FLAG_CAN_ERASE) && !is_flag_set(FLAG_SKIP_ERASE)) {
         flash_intel_erase_execute(handle);
     }
-    if (!is_flag_set(FLAG_SKIP_BLANK_CHECK)) {
-        mem_util_blank_check(handle);
-    }
 }
 
 void flash_intel_write_execute(firestarter_handle_t* handle) {
