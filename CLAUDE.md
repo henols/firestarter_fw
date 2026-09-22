@@ -85,7 +85,10 @@ command that can energise the PROM bus while the board's pin map is provisional.
 happens before any handler is configured, it emits `MSG_ERR_NOT_SUPPORTED` carrying the **command**
 ordinal rather than the protocol ordinal, and it leaves all three operation pointers NULL. On AVR
 targets `RURP_PINMAP_PROVISIONAL` is never defined, so it compiles to nothing. Second, a
-`switch (handle->cmd)` assigns the main operation for `CMD_READ`, `CMD_WRITE` and `CMD_VERIFY`.
+`switch (handle->cmd)` assigns the main operation for `CMD_READ` and `CMD_WRITE`. The standalone
+verify and blank-check command surfaces left the firmware in `3.1.0` (v1.41 phase 204), with their
+wire ordinals (6 and 4) reserved and never reused — see `include/firestarter.h` for the
+reserved-ordinal notes.
 
 Dispatch order in `configure_memory`. This list must match `src/proms/memory.cpp` line for line:
 
@@ -451,9 +454,13 @@ uses a **positive** `test_filter` allowlist in `platformio.ini`. A suite directo
 `pio test` until its path appears in `test_filter`. Its headers are unreachable until a matching
 `-I test/native/avr/<dirname>` entry appears in `build_flags`. Update both lists.
 
-A second native environment, `[env:native_nodevtools]`, also exists. A new suite must appear in
-**both** environments' `test_filter` and `-I` lists, which is four new lines, so that it runs both
-with and without `-D DEV_TOOLS`.
+A second native environment, `[env:native_nodevtools]`, also exists. A new suite must run in
+**both** environments, with and without `-D DEV_TOOLS`. Measured cost: two new lines, not four --
+`[native_base]`'s `test_filter` and `-I` lists are each defined once in that shared base section,
+and both `[env:native]` and `[env:native_nodevtools]` extend it (`extends = native_base`), so one
+`test_filter` entry and one `-I` entry reach both environments automatically. That shared section
+is also why a new suite reaches the environment that always runs in CI (`native_nodevtools`) as
+well as the one that runs only on pull requests (`native`).
 
 **Exception: `native_params_v131`, `native_loop_v131` and `native_trace_v131`.** The instruction
 directly above does not apply to these three. Each names only its own suite in its own
