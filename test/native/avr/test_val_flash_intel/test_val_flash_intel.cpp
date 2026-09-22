@@ -54,8 +54,9 @@ void setUp(void) {
 void tearDown(void) {}
 
 /* Build a handle pre-wired for the Intel-flash write path.
- * chip_id=0 skips the chip-id branch. FLAG_SKIP_BLANK_CHECK + FLAG_SKIP_ERASE
- * prevent blank-check and erase from running against the mock. */
+ * chip_id=0 skips the chip-id branch. FLAG_SKIP_ERASE prevents erase from
+ * running against the mock; write-init performs no blank check at all any
+ * more regardless of ctrl_flags (FWBLANK-01). */
 static firestarter_handle_t make_handle(uint8_t cmd) {
     firestarter_handle_t h = {};
     h.protocol   = 0x10;
@@ -64,7 +65,7 @@ static firestarter_handle_t make_handle(uint8_t cmd) {
     h.vpp_mv     = 12000; /* matches mock voltage 12V → no VPP warn/error */
     h.chip_id    = 0;     /* skip chip-id branch */
     h.mem_size   = 131072; /* 128 KB */
-    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE;
+    h.ctrl_flags = FLAG_SKIP_ERASE;
     return h;
 }
 

@@ -70,8 +70,9 @@ void tearDown(void) {
  * Build a handle pre-wired for the Intel-flash write path.
  * - protocol=0x10 routes to configure_flash_intel → flash_intel_write_init
  * - chip_id=0 skips the chip-id branch so only the VPP check is exercised
- * - FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE prevent blank-check and erase
- *   from running against the mock and polluting response_code
+ * - FLAG_SKIP_ERASE prevents erase from running against the mock and
+ *   polluting response_code; write-init performs no blank check at all
+ *   any more regardless of ctrl_flags (FWBLANK-01)
  */
 static firestarter_handle_t make_intel_handle(uint16_t vpp_setpoint, uint32_t ctrl_flags) {
     firestarter_handle_t h = {};
@@ -79,7 +80,7 @@ static firestarter_handle_t make_intel_handle(uint16_t vpp_setpoint, uint32_t ct
     h.cmd = CMD_WRITE;
     h.response_code = RESPONSE_CODE_OK;
     h.vpp_mv = vpp_setpoint;
-    h.ctrl_flags = ctrl_flags | FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE;
+    h.ctrl_flags = ctrl_flags | FLAG_SKIP_ERASE;
     h.chip_id = 0;  /* skip chip-id branch */
     h.firestarter_set_control_register = mock_set_ctrl_reg;
     h.firestarter_get_control_register = mock_get_ctrl_reg;

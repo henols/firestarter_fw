@@ -242,8 +242,8 @@ void test_out_of_range_flags_masks_never_sets_every_flag(void) {
         "FLAG_FORCE must not be set by an out-of-range flags value");
     TEST_ASSERT_EQUAL_MESSAGE(0, h.ctrl_flags & FLAG_SKIP_ERASE,
         "FLAG_SKIP_ERASE must not be set by an out-of-range flags value");
-    TEST_ASSERT_EQUAL_MESSAGE(0, h.ctrl_flags & FLAG_SKIP_BLANK_CHECK,
-        "FLAG_SKIP_BLANK_CHECK must not be set by an out-of-range flags "
+    TEST_ASSERT_EQUAL_MESSAGE(0, h.ctrl_flags & FLAG_VPE_AS_VPP,
+        "FLAG_VPE_AS_VPP must not be set by an out-of-range flags "
         "value");
 }
 

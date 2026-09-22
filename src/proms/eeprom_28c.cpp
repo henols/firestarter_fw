@@ -378,8 +378,9 @@ void eeprom28c_write_init(firestarter_handle_t* handle) {
     // No pre-write blank check on this protocol: the silicon auto-erases per page
     // during the write, and verify_page_readback checks every page afterwards. A
     // blank check here was a false precondition that made a non-blank part
-    // un-writable without a flag. FLAG_SKIP_BLANK_CHECK is consequently UNREAD
-    // here -- do not restore the conditional because the bit looks orphaned.
+    // un-writable without a flag. As of release 3.1.0 the host owns this
+    // refusal instead -- do not restore a firmware-side conditional here; the
+    // control flag that used to gate it is retired and gone.
     // `blank` remains available as its own step.
 }
 

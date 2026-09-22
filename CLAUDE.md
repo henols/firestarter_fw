@@ -349,7 +349,9 @@ Firmware flags, from `firestarter.h`:
 - `FLAG_FORCE (0x01)` — treat an ID mismatch as a warning, not an error.
 - `FLAG_CAN_ERASE (0x02)` — the chip supports erase before write.
 - `FLAG_SKIP_ERASE (0x04)` — skip the auto-erase in write init.
-- `FLAG_SKIP_BLANK_CHECK (0x08)` — skip the blank check.
+- **Reserved.** `0x08` — the skip-blank-check control flag, retired in `3.1.0` (Phase 205). Never
+  reused: an already-shipped host still composes it, and `constants.py` carries the matching
+  record.
 - `FLAG_VPE_AS_VPP (0x10)` — legacy. Use the direct VPE path.
 
 ### Hardware Revision Documentation

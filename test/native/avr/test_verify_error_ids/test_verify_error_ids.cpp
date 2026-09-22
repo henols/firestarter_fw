@@ -182,7 +182,7 @@ static firestarter_handle_t make_eprom_write_handle(uint8_t protocol) {
     h.response_code = RESPONSE_CODE_OK;
     h.vpp_mv = 0;
     h.chip_id = 0;
-    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE;
+    h.ctrl_flags = FLAG_SKIP_ERASE;
     return h;
 }
 

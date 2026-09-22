@@ -94,7 +94,7 @@ static firestarter_handle_t make_handle(uint32_t protocol, uint8_t cmd) {
     h.vpp_mv     = 0;  /* vpp setpoint=0 matches stub voltage=0: no warn/error */
     h.chip_id    = 0;  /* skip chip-ID branch */
     h.mem_size   = 65536; /* 64 KB — keeps blank_check from NULL-ptr in mock */
-    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE;
+    h.ctrl_flags = FLAG_SKIP_ERASE;
     return h;
 }
 
@@ -313,7 +313,7 @@ static firestarter_handle_t make_write_handle(void) {
     h.response_code = RESPONSE_CODE_OK;
     h.vpp_mv = 0;
     h.chip_id = 0;
-    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE;
+    h.ctrl_flags = FLAG_SKIP_ERASE;
     return h;
 }
 
@@ -428,11 +428,11 @@ void test_shadow_seed_is_address_keyed_not_modulo_aliased(void) {
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* Region-check handle factory: unlike make_handle / make_write_handle above,
- * this clears ctrl_flags entirely so the blank-check axis is LIVE (both
- * FLAG_SKIP_BLANK_CHECK and FLAG_SKIP_ERASE clear, FLAG_CAN_ERASE clear too).
- * make_handle's FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE would make every case
- * below vacuous -- the whole point of these two cases is to drive the
- * blank-check path itself.
+ * this clears ctrl_flags entirely (FLAG_SKIP_ERASE and FLAG_CAN_ERASE both
+ * clear too). Those two factories set FLAG_SKIP_ERASE for unrelated
+ * reasons; this factory carries no equivalent flag to preserve, because
+ * write-init now performs no blank check at all regardless of ctrl_flags
+ * (FWBLANK-01) -- there is no longer a blank-check axis for a flag to gate.
  *
  * bus_config = VAL_EPROM_BUS_CONFIG_0x07 for the same reason as the shadow
  * control above: the plan text for this factory did not list bus_config,

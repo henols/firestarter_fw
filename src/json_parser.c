@@ -117,7 +117,7 @@ typedef struct {
 /*
  * FIELD_MASK -- MASK policy (bitmask fields). Refuses to saturate a bitmask
  * to its type maximum: on `ctrl_flags` that would set every control flag at
- * once, including FLAG_FORCE, FLAG_SKIP_ERASE and FLAG_SKIP_BLANK_CHECK --
+ * once, including FLAG_FORCE, FLAG_SKIP_ERASE and FLAG_VPE_AS_VPP --
  * a fail-OPEN where the required behaviour is fail-closed.
  * This preserves today's width-limited truncation for a bitmask instead,
  * and does nothing else -- it does not attempt to reject an out-of-range

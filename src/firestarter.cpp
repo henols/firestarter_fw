@@ -86,7 +86,6 @@ bool parse_json(firestarter_handle_t* handle) {
             LOG_DEBUG_ID_SUB_U8(DBG_FLAG_FORCE, is_flag_set(FLAG_FORCE));
             LOG_DEBUG_ID_SUB_U8(DBG_FLAG_CAN_ERASE, is_flag_set(FLAG_CAN_ERASE));
             LOG_DEBUG_ID_SUB_U8(DBG_FLAG_SKIP_ERASE, is_flag_set(FLAG_SKIP_ERASE));
-            LOG_DEBUG_ID_SUB_U8(DBG_FLAG_SKIP_BLANK, is_flag_set(FLAG_SKIP_BLANK_CHECK));
             LOG_DEBUG_ID_SUB_U8(DBG_FLAG_VPE_AS_VPP, is_flag_set(FLAG_VPE_AS_VPP));
             if (!op_execute_function(configure_memory, handle)) {
                 LOG_ERROR_ID(MSG_ERR_SETUP);

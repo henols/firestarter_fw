@@ -30,7 +30,19 @@ it moves here rather than being lost with the module that held it. Coverage
 11-12's RED was observed against the pre-sweep tree before this plan's
 source edits landed -- see 205-03-SUMMARY.md for the captured transcript.
 
-Requirements: FWCMD-01, FWCMD-03, FWCMD-04, FWBLANK-01, FWBLANK-02
+Phase 205 Plan 04 (task 1) extends this module once more, with the
+FWBLANK-04 absence-and-reserved-gap leg (Coverage 15 below): the
+skip-blank-check control flag itself (0x08) is retired from
+include/firestarter.h's control-flag ladder, and this leg proves neither
+its identifier survives anywhere in the scanned firmware sources nor its
+ladder gap goes unrecorded. Coverage 15's RED was observed against the
+pre-edit tree before this plan's source edits landed -- see
+205-04-SUMMARY.md for the captured transcript. This same plan also
+re-anchors Coverage 10 upward from a floor of two reserved-ordinal gaps to
+three (the two retired command ordinals plus this retired control flag) and
+renames it accordingly, per the reasoning in its own docstring below.
+
+Requirements: FWCMD-01, FWCMD-03, FWCMD-04, FWBLANK-01, FWBLANK-02, FWBLANK-04
 
 Defect class this closes: a call-site-EXISTENCE property. "Is this call
 still made, from inside this specific arm, after ordinal 6 left the file?"
@@ -86,9 +98,14 @@ Coverage:
   9. test_no_protocol_handler_configures_a_retired_ordinal -- neither
      retired command's identifier appears ANYWHERE (a whole-file scan, not
      brace-matched) in any of the five protocol configure handlers.
-  10. test_both_reserved_ordinal_gaps_carry_a_recorded_reason -- the
-      firmware header carries the reserved-ordinal marker phrase at least
-      twice, once per retired ordinal's gap in the CMD ladder.
+  10. test_all_three_reserved_gaps_carry_a_recorded_reason -- the firmware
+      header carries the reserved marker phrase at least three times: once
+      per retired command ordinal's gap in the CMD ladder, plus once for
+      the retired skip-blank-check control flag's gap in the control-flag
+      ladder (FWBLANK-04, Coverage 15 below). Re-anchored upward in Phase
+      205 Plan 04 from a floor of two, and renamed from "...both_reserved
+      ordinal_gaps..." because a floor of two guarding three records would
+      let one be deleted outright with the gate still green.
   11. test_no_write_init_body_performs_a_blank_check (FWBLANK-01) -- none
       of the three write-init bodies (eprom.cpp, flash_intel.cpp,
       flash_nor_unlock.cpp) references the whole-device or the
@@ -106,6 +123,23 @@ Coverage:
       and its body reads both the region-end member and the device-size
       member, so the fail-closed clamp cannot be silently dropped while the
       function stays defined and apparently intact.
+  14. test_the_blank_check_machinery_is_absent (FWBLANK-03) -- a five-symbol
+      probe over memory.cpp and memory_utils.h: the whole-device and
+      region-scoped blank-check functions, the saved-address cursor, the
+      chunk-size constant, and the orphaned byte-packing helper are gone
+      from both files with no caller, declaration or doc comment left
+      behind. (This item was omitted from the numbered list above when
+      Phase 205 Plan 03 task 2 added the test -- a pre-existing docstring
+      gap, corrected here while numbering item 15 alongside it.)
+  15. test_the_retired_control_flag_is_absent_and_its_gap_is_recorded
+      (FWBLANK-04, Phase 205 Plan 04 task 1) -- the skip-blank-check
+      control flag's retired identifier appears in none of the ten scanned
+      firmware sources and headers (a whole-file scan over RAW text,
+      matching Coverage 11/14's stated intent: a stray reference left in a
+      comment fails exactly as loudly as one left in a #define), and the
+      control-flag ladder's 0x08 gap, between the still-live
+      FLAG_SKIP_ERASE and FLAG_VPE_AS_VPP neighbours, carries the reserved
+      marker.
 
 Environment seams: (this repository has no central environment-variable
 inventory -- this docstring is the only place a reader can discover this
@@ -207,6 +241,13 @@ _NEEDLE_BLANK_CHECK_CURSOR = "blank_check_sa" + "ved_address"
 _NEEDLE_BLANK_CHECK_CHUNK = "BLANK_CHECK_CHU" + "NK_SIZE"
 _NEEDLE_UINT32_TO_BYTES = "uint32_to_by" + "tes"
 
+# FWBLANK-04 (Phase 205 Plan 04) -- the skip-blank-check control flag's own
+# retired identifier, concatenation-built for the same reason as the five
+# needles above: split strictly inside the identifier's own name so neither
+# fragment nor the full needle value ever appears as a contiguous run of
+# characters anywhere else in this file.
+_NEEDLE_RETIRED_FLAG = "FLAG_SKIP_BLANK_CHE" + "CK"
+
 _ALL_SELF_CHECK_NEEDLES = (
     ("the shared final-pass verify call's identifier", _NEEDLE_CALL),
     ("the plus-final enumerator's identifier (containment arm)", _NEEDLE_MODE),
@@ -219,6 +260,7 @@ _ALL_SELF_CHECK_NEEDLES = (
     ("the blank-check saved-address cursor's identifier", _NEEDLE_BLANK_CHECK_CURSOR),
     ("the blank-check chunk-size constant's identifier", _NEEDLE_BLANK_CHECK_CHUNK),
     ("the orphaned byte-packing helper's identifier", _NEEDLE_UINT32_TO_BYTES),
+    ("the retired control flag's identifier", _NEEDLE_RETIRED_FLAG),
 )
 
 _ARM_RE = re.compile(r"if\s*\(\s*verify_mode\s*==\s*" + _NEEDLE_MODE + r"\s*\)\s*\{")
@@ -254,6 +296,30 @@ _OP_END_DEF_RE = re.compile(
 )
 _OP_END_READS_REGION_END_RE = re.compile(r"handle\s*->\s*region_end\b")
 _OP_END_READS_MEM_SIZE_RE = re.compile(r"handle\s*->\s*mem_size\b")
+
+# FWBLANK-04 (Phase 205 Plan 04) -- proves the reserved marker sits AT the
+# 0x08 gap, between its still-live neighbours in the control-flag ladder,
+# rather than merely somewhere in the header.
+_FLAG_GAP_RECORD_RE = re.compile(
+    r"FLAG_SKIP_ERASE\s+0x04.*?" + _NEEDLE_RESERVED_MARKER + r".*?FLAG_VPE_AS_VPP\s+0x10",
+    re.S,
+)
+
+# The ten scan targets Coverage 15 checks for the retired flag's absence --
+# the same set test_scan_targets_are_non_vacuous (Coverage 4) enumerates as
+# its own default targets.
+_RETIRED_FLAG_TARGETS = (
+    (_EPROM_REL, _SCAN_EPROM),
+    (_PARAMS_REL, _SCAN_PARAMS),
+    (_MEMORY_REL, _SCAN_MEMORY),
+    (_DISPATCH_REL, _SCAN_DISPATCH),
+    (_HEADER_REL, _SCAN_HEADER),
+    (_FLASH_NOR_UNLOCK_REL, _SCAN_FLASH_NOR_UNLOCK),
+    (_FLASH_INTEL_REL, _SCAN_FLASH_INTEL),
+    (_FLASH_5V_PAGE_REL, _SCAN_FLASH_5V_PAGE),
+    (_EEPROM_28C_REL, _SCAN_EEPROM_28C),
+    (_MEMORY_UTILS_REL, _SCAN_MEMORY_UTILS),
+)
 
 
 def _strip_comments(text):
@@ -484,20 +550,26 @@ def test_no_protocol_handler_configures_a_retired_ordinal():
     )
 
 
-def test_both_reserved_ordinal_gaps_carry_a_recorded_reason():
-    """Coverage 10 (FWCMD-03) -- the firmware header carries a
-    reserved-ordinal record at BOTH gaps in the CMD ladder, naming the
-    release that retired the ordinal and stating the never-reuse reason --
-    the place a future author scanning the ladder for a free slot will
-    actually read. Counts occurrences of the shared marker phrase rather
-    than parsing prose, so a rewritten sentence that keeps the marker still
-    passes and a note deleted outright still fails."""
+def test_all_three_reserved_gaps_carry_a_recorded_reason():
+    """Coverage 10 (FWCMD-03, FWBLANK-04) -- the firmware header carries a
+    reserved record at ALL THREE gaps: the two retired command ordinals in
+    the CMD ladder, plus the retired skip-blank-check control flag in the
+    control-flag ladder, each naming the release that retired it and
+    stating the never-reuse reason -- the place a future author scanning
+    either ladder for a free slot will actually read. Counts occurrences of
+    the shared marker phrase rather than parsing prose, so a rewritten
+    sentence that keeps the marker still passes and a note deleted outright
+    still fails. Re-anchored upward in Phase 205 Plan 04 from a floor of
+    two: a floor of two guarding three records would let one of the three
+    be deleted outright with this gate still green, which is exactly the
+    guarantee this leg exists to provide."""
     raw = _SCAN_HEADER.read_text()
     count = raw.count(_NEEDLE_RESERVED_MARKER)
-    assert count >= 2, (
-        f"expected the reserved-ordinal marker to appear at least twice in "
-        f"{_HEADER_REL} (once per retired ordinal), found {count} -- a "
-        "reserved-ordinal record is missing at one of the two gaps."
+    assert count >= 3, (
+        f"expected the reserved marker to appear at least three times in "
+        f"{_HEADER_REL} (once per retired command ordinal, plus once for "
+        f"the retired control flag), found {count} -- a reserved record is "
+        "missing at one of the three gaps."
     )
 
 
@@ -625,6 +697,33 @@ def test_the_blank_check_machinery_is_absent():
         "memory_utils.h -- FWBLANK-03 deletes all five symbols with no "
         "caller, declaration or doc comment left anywhere.\n"
         "Got:\n" + "\n".join(hits)
+    )
+
+
+def test_the_retired_control_flag_is_absent_and_its_gap_is_recorded():
+    """Coverage 15 (FWBLANK-04) -- the skip-blank-check control flag's
+    retired identifier appears in none of the ten scanned firmware sources
+    or headers (a whole-file scan over RAW text, matching Coverage 11/14's
+    stated intent: a stray reference left in a comment fails exactly as
+    loudly as one left in a #define), and the control-flag ladder's 0x08
+    gap -- between the still-live FLAG_SKIP_ERASE and FLAG_VPE_AS_VPP
+    neighbours -- carries the reserved marker."""
+    hits = []
+    for rel, path in _RETIRED_FLAG_TARGETS:
+        raw = path.read_text()
+        if _NEEDLE_RETIRED_FLAG in raw:
+            hits.append(rel)
+    assert hits == [], (
+        "found the retired control flag's identifier surviving in a "
+        "firmware source or header -- FWBLANK-04 retires the 0x08 control "
+        "flag from the ladder with no reference left anywhere.\n"
+        "Got:\n" + "\n".join(hits)
+    )
+    raw_header = _SCAN_HEADER.read_text()
+    assert _FLAG_GAP_RECORD_RE.search(raw_header), (
+        f"expected the control-flag ladder's 0x08 gap in {_HEADER_REL} to "
+        "carry a reserved record, positioned between the still-live "
+        "FLAG_SKIP_ERASE (0x04) and FLAG_VPE_AS_VPP (0x10) neighbours."
     )
 
 
