@@ -152,6 +152,7 @@ _FLASH_NOR_UNLOCK_REL = "src/proms/flash_nor_unlock.cpp"
 _FLASH_INTEL_REL = "src/proms/flash_intel.cpp"
 _FLASH_5V_PAGE_REL = "src/proms/flash_5v_page.cpp"
 _EEPROM_28C_REL = "src/proms/eeprom_28c.cpp"
+_MEMORY_UTILS_REL = "include/memory_utils.h"
 
 # Environment seam -- binds at IMPORT time. See the module docstring's
 # "Environment seams" section above. Only this one target is overridable.
@@ -172,6 +173,7 @@ _SCAN_FLASH_NOR_UNLOCK = _REPO_ROOT / _FLASH_NOR_UNLOCK_REL
 _SCAN_FLASH_INTEL = _REPO_ROOT / _FLASH_INTEL_REL
 _SCAN_FLASH_5V_PAGE = _REPO_ROOT / _FLASH_5V_PAGE_REL
 _SCAN_EEPROM_28C = _REPO_ROOT / _EEPROM_28C_REL
+_SCAN_MEMORY_UTILS = _REPO_ROOT / _MEMORY_UTILS_REL
 
 # The five protocol configure handlers Coverage 9 scans in full.
 _PROTOCOL_RELS = (
@@ -201,6 +203,9 @@ _NEEDLE_RESERVED_MARKER = "retired in " + "3.1.0"
 # ever appears as a contiguous run of characters anywhere else in this file.
 _NEEDLE_BLANK_CHECK_FN = "mem_util_blank_c" + "heck"
 _NEEDLE_BLANK_CHECK_REGION_FN = "mem_util_blank_che" + "ck_region"
+_NEEDLE_BLANK_CHECK_CURSOR = "blank_check_sa" + "ved_address"
+_NEEDLE_BLANK_CHECK_CHUNK = "BLANK_CHECK_CHU" + "NK_SIZE"
+_NEEDLE_UINT32_TO_BYTES = "uint32_to_by" + "tes"
 
 _ALL_SELF_CHECK_NEEDLES = (
     ("the shared final-pass verify call's identifier", _NEEDLE_CALL),
@@ -211,6 +216,9 @@ _ALL_SELF_CHECK_NEEDLES = (
     ("the reserved-ordinal marker phrase", _NEEDLE_RESERVED_MARKER),
     ("the whole-device blank-check function's identifier", _NEEDLE_BLANK_CHECK_FN),
     ("the region-scoped blank-check function's identifier", _NEEDLE_BLANK_CHECK_REGION_FN),
+    ("the blank-check saved-address cursor's identifier", _NEEDLE_BLANK_CHECK_CURSOR),
+    ("the blank-check chunk-size constant's identifier", _NEEDLE_BLANK_CHECK_CHUNK),
+    ("the orphaned byte-packing helper's identifier", _NEEDLE_UINT32_TO_BYTES),
 )
 
 _ARM_RE = re.compile(r"if\s*\(\s*verify_mode\s*==\s*" + _NEEDLE_MODE + r"\s*\)\s*\{")
@@ -586,6 +594,40 @@ def test_operation_end_is_defined_exactly_once_and_reads_both_members():
     )
 
 
+def test_the_blank_check_machinery_is_absent():
+    """Coverage 14 (FWBLANK-03) -- a five-symbol probe over memory.cpp and
+    memory_utils.h: the whole-device and region-scoped blank-check
+    functions, the blank-check saved-address cursor, the blank-check
+    chunk-size constant, and the byte-packing helper orphaned by the sweep
+    (its only two callers sat inside the deleted region form's
+    RAW_DATA_PROGRESS branch) are gone from both files with no caller, no
+    declaration and no doc comment left behind. A whole-file scan over RAW
+    (not comment-stripped) text -- these absence legs exist to catch a
+    stray reference left in a comment exactly as loudly as one left in a
+    case label, so stripping comments first would defeat the point."""
+    hits = []
+    for rel, path in (
+        (_MEMORY_REL, _SCAN_MEMORY),
+        (_MEMORY_UTILS_REL, _SCAN_MEMORY_UTILS),
+    ):
+        raw = path.read_text()
+        for label, needle in (
+            ("the whole-device blank-check function", _NEEDLE_BLANK_CHECK_FN),
+            ("the region-scoped blank-check function", _NEEDLE_BLANK_CHECK_REGION_FN),
+            ("the blank-check saved-address cursor", _NEEDLE_BLANK_CHECK_CURSOR),
+            ("the blank-check chunk-size constant", _NEEDLE_BLANK_CHECK_CHUNK),
+            ("the orphaned byte-packing helper", _NEEDLE_UINT32_TO_BYTES),
+        ):
+            if needle in raw:
+                hits.append(f"{rel}: {label}")
+    assert hits == [], (
+        "found blank-check machinery surviving in memory.cpp or "
+        "memory_utils.h -- FWBLANK-03 deletes all five symbols with no "
+        "caller, declaration or doc comment left anywhere.\n"
+        "Got:\n" + "\n".join(hits)
+    )
+
+
 def test_scan_targets_are_non_vacuous():
     """Coverage 4 -- structural self-check, never reads the environment
     seam: every DEFAULT scan target (recomputed fresh from _REPO_ROOT --
@@ -606,6 +648,7 @@ def test_scan_targets_are_non_vacuous():
         (_FLASH_INTEL_REL, _REPO_ROOT / _FLASH_INTEL_REL),
         (_FLASH_5V_PAGE_REL, _REPO_ROOT / _FLASH_5V_PAGE_REL),
         (_EEPROM_28C_REL, _REPO_ROOT / _EEPROM_28C_REL),
+        (_MEMORY_UTILS_REL, _REPO_ROOT / _MEMORY_UTILS_REL),
     )
     for label, p in default_targets:
         assert p.is_file(), (

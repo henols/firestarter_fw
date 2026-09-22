@@ -58,10 +58,7 @@
 // reassigning the number would make that stale host silently drive a
 // different operation. A frame carrying ordinal 4 now falls through
 // firestarter.cpp's dispatch switch default: arm, which answers
-// MSG_ERR_UNKNOWN_CMD rather than running any handler. The region-scoped
-// blank-check machinery itself (mem_util_blank_check,
-// mem_util_blank_check_region) survives this retirement -- it is reached
-// only from write-init and erase-end now, and leaves in Phase 205.
+// MSG_ERR_UNKNOWN_CMD rather than running any handler.
 
 #define CMD_CHECK_CHIP_ID 5
 

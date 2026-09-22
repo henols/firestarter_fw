@@ -477,52 +477,13 @@ static uint32_t first_recorded_address(void) {
     return lsb | (msb << 8) | ((top & 0x07) << 16);
 }
 
-/* D-15.1: pins the multi-call chunking contract of mem_util_blank_check
- * against UNMODIFIED firmware. 0x2A is neither 0 nor a chunk boundary, so a
- * restore that merely zeroes the cursor instead of restoring it would fail
- * the final assertion -- and this is the BLANK-02 contract verbatim. */
-void test_blank_check_resumes_across_chunks_and_restores_the_cursor(void) {
-    /* Re-keyed in Phase 204 (FWCMD-01, Fork C): the standalone blank-check
-     * command's configure_eprom arm is gone, so nothing dispatches this
-     * handle's operation-main pointer to the whole-device blank-check
-     * function any more -- assign it directly instead. This test guards
-     * the chunking and cursor-restore contract (BLANK-02), which survives
-     * to Phase 205; cmd is CMD_READ, a neutral surviving ordinal, because
-     * mem_util_blank_check_region no longer reads handle->cmd at all
-     * (Phase 204 collapsed its two command-keyed branches to their
-     * direct-emit arm). */
-    firestarter_handle_t h = make_region_handle(0x07, CMD_READ, 16384);
-    configure_memory(&h);
-    configure_eprom(&h);  /* configure_memory already dispatches here for 0x07; explicit for clarity. */
-    h.firestarter_operation_main = mem_util_blank_check;
-    val_shadow_enable();
-    h.address = 0x2A;
-    clear_bus_recording();
-
-    h.firestarter_operation_main(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "call 1 must not error on a blank part");
-    TEST_ASSERT_EQUAL_UINT32_MESSAGE(8192, h.address,
-        "call 1 must advance the cursor exactly one chunk (BLANK_CHECK_CHUNK_SIZE)");
-    TEST_ASSERT_TRUE_MESSAGE(is_operation_in_progress(&h),
-        "call 1 must leave the operation in progress -- more of the part remains to scan");
-
-    h.firestarter_operation_main(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "call 2 must not error on a blank part");
-    TEST_ASSERT_EQUAL_UINT32_MESSAGE(16384, h.address,
-        "call 2 must advance the cursor to exactly the second chunk boundary");
-    TEST_ASSERT_TRUE_MESSAGE(is_operation_in_progress(&h),
-        "call 2 must still be in progress -- the completion branch fires on the NEXT call");
-
-    h.firestarter_operation_main(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "call 3 must not error");
-    TEST_ASSERT_FALSE_MESSAGE(is_operation_in_progress(&h),
-        "call 3 must complete the operation -- handle.address has reached mem_size");
-    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0x2A, h.address,
-        "call 3 must restore handle.address to its pre-call value -- this is the BLANK-02 contract verbatim");
-}
+/* FWBLANK-03 (Phase 205 Plan 03 Task 2) -- test_blank_check_resumes_across_chunks_and_restores_the_cursor
+ * used to pin here the multi-call chunking and cursor-restore contract of
+ * the firmware's whole-device blank-check function, assigning it directly
+ * to h.firestarter_operation_main. That function -- and the chunked,
+ * multi-call scan body underneath it -- is deleted by this commit, so
+ * there is no surviving function for which the same claim is interesting.
+ * DELETED, not re-keyed onto anything: see 205-03-SUMMARY.md. */
 
 /* FWBLANK-02 (Phase 205 Plan 03 Task 1) -- test_erase_end_blank_check_scans_from_zero
  * used to pin here that CMD_ERASE's blank-check completion arm
@@ -532,49 +493,33 @@ void test_blank_check_resumes_across_chunks_and_restores_the_cursor(void) {
  * test asserted no longer exists to re-key onto anything. DELETED, not
  * re-anchored: see 205-03-SUMMARY.md. */
 
-/* ═══════════════════════════════════════════════════════════════════════
- * 201-02 Task 2 -- D-16.1: the regression test whose absence is why backlog
- * 999.44 shipped. Drives eprom_write_init with the blank-check axis LIVE
- * against a part that is non-blank OUTSIDE the write's own target region.
- *
- * The positive case below is EXPECTED RED at this commit: today's
- * mem_util_blank_check always scans from address 0 across the WHOLE
- * device, so it has no notion of "the write's own region" to scope
- * against. Plan 201-03's commit greens it by teaching the blank check to
- * scope to [handle->address, handle->region_end) when region_end is
- * non-zero. The paired negative control below is GREEN both before and
- * after that fix: scoping the check is not deleting it, because a
- * programmed bit on a UV part cannot be un-programmed.
- * ═══════════════════════════════════════════════════════════════════════ */
+/* FWBLANK-01 (Phase 205 Plan 03 Task 2) -- this preamble used to introduce
+ * a D-16.1 regression pair against a LIVE, chunked blank-check axis inside
+ * write-init. That axis is gone: write-init now performs no blank check
+ * at all (see each case's own comment above), so it always completes in a
+ * single call and the recorder never approaches saturation. The two cases
+ * below are RE-KEYED / INVERTED, not new -- see each one's own comment. */
 
-/* A single call to firestarter_operation_init proves nothing here: the
- * blank check runs inside it, so is_operation_in_progress is TRUE after
- * call 1 and the seeded byte may live in a chunk the loop has not reached
- * yet (BLANK_CHECK_CHUNK_SIZE is 8192; mem_size here is 16384, i.e. two
- * chunks). Drive it to completion or to an error, with a hard cap so a
- * fixture that never converges fails loudly instead of hanging the suite.
- * unity_capped_iterations names which of the two D-16.1 cases hit the cap,
- * since both loops share this helper.
+/* unity_capped_iterations drives firestarter_operation_init to completion
+ * or to an error, with a hard cap so a fixture that never converges fails
+ * loudly instead of hanging the suite. Retained from when write-init could
+ * loop multiple times for a since-removed chunked blank check; both cases
+ * below now always converge in a single iteration, but driving through
+ * the same helper keeps the two cases structurally identical and costs
+ * nothing.
  *
- * DEVIATION, measured: clear_bus_recording() is called before EVERY
- * iteration, not just once before the loop. One BLANK_CHECK_CHUNK_SIZE
- * (8192-byte) chunk scan is 8192 * 3 = 24576 register writes -- see
- * test_erase_end_blank_check_scans_from_zero's own comment above -- which
- * blows past HOST_STUBS_MAX_RECORDING (4096) well inside a SINGLE chunk.
+ * clear_bus_recording() is called before EVERY iteration, not just once
+ * before the loop -- retained defensively from the same since-removed
+ * chunking scenario, where a large single-call scan could blow past
+ * HOST_STUBS_MAX_RECORDING (4096) well inside one iteration.
  * val_shadow's address-keyed read-back model (host_stubs.cpp) recovers the
  * current absolute address by scanning the recorder backward; once it
  * saturates, rurp_read_data_buffer() falls back to the last address it
  * recovered BEFORE saturation and repeats that byte for the rest of the
  * call, so any target address more than ~1365 entries into an uncleared
  * recording silently reads the wrong (stale) shadow slot instead of its
- * own. The negative control's target (0x2400, offset 1024 into chunk 2)
- * sits inside that 1365-entry window only if chunk 2's OWN call starts
- * from a freshly cleared recording -- otherwise chunk 1's already-saturated
- * recording is still active when chunk 2 begins, and the control silently
- * fails to catch its seeded byte at all. Clearing here, per call, keeps
- * every chunk's own address recovery valid for at least its first ~1365
- * bytes, which both D-16.1 targets (offset 16 and offset 1024) sit well
- * inside. */
+ * own. Both targets below (offset 16 and offset 0x2400) sit well inside
+ * that 1365-entry window from a freshly cleared recording. */
 static void unity_capped_iterations(firestarter_handle_t* h, const char* case_name) {
     /* do-while, deliberately: before the FIRST call, the operation has not
      * started yet, so is_operation_in_progress(h) reads false. A while-loop
@@ -703,13 +648,12 @@ int main(int argc, char** argv) {
      * modulo 16 like the legacy 16-slot model above. */
     RUN_TEST(test_shadow_seed_is_address_keyed_not_modulo_aliased);
 
-    /* 201-01 Task 2: BLANK-02 contract freeze, written before the region
-     * split in plans 201-03 / 201-04 lands, so these characterize today's
-     * behaviour rather than tomorrow's. test_erase_end_blank_check_scans_from_zero
-     * is DELETED (FWBLANK-02, Phase 205 Plan 03 Task 1) -- see the comment
-     * where its body used to be. test_blank_check_resumes_across_chunks_and_restores_the_cursor
-     * is task 2's disposition, not this task's. */
-    RUN_TEST(test_blank_check_resumes_across_chunks_and_restores_the_cursor);
+    /* 201-01 Task 2's original BLANK-02 contract freeze cases both left
+     * this suite in Phase 205 Plan 03: test_erase_end_blank_check_scans_from_zero
+     * is DELETED (FWBLANK-02, Task 1) and
+     * test_blank_check_resumes_across_chunks_and_restores_the_cursor is
+     * DELETED (FWBLANK-03, Task 2) -- see the comments where their bodies
+     * used to be. */
 
     /* FWBLANK-01 (Phase 205 Plan 03 Task 1) -- both cases RE-KEYED / INVERTED
      * from the D-16.1 pair that used to live here. See the comments above

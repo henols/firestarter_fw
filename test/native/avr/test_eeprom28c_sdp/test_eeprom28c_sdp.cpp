@@ -1322,14 +1322,16 @@ void test_case30_write_init_no_blank_check_with_flag_clear_erase01(void) {
 
     TEST_ASSERT_FALSE_MESSAGE(is_operation_in_progress(&h),
         "Case 30 (ERASE-01): is_operation_in_progress must be FALSE after exactly one "
-        "eeprom28c_write_init call with FLAG_SKIP_BLANK_CHECK clear -- mem_util_blank_check is "
-        "the only setter of this flag on the write-INIT path, so TRUE here would mean the "
-        "pre-write blank check still ran and left a multi-call INIT loop pending");
+        "eeprom28c_write_init call with FLAG_SKIP_BLANK_CHECK clear -- nothing on any "
+        "write-INIT path sets this flag any more (the region-scoped blank check that used "
+        "to left the firmware in 3.1.0), so this reads FALSE unconditionally now, not merely "
+        "on this call");
     /* The companion "must be NULL" assertion on the removed heap-allocated
-     * handle field is GONE, and so is the field itself: mem_util_blank_check
-     * no longer allocates that block (it keeps its saved address in a
-     * file-scope static in memory.cpp), so there is no allocation left to
-     * observe. This is the loss of a redundant PROBE, not of coverage --
+     * handle field is GONE, and so is the field itself: the region-scoped
+     * blank check's saved-address cursor was a file-scope static, never a
+     * heap allocation, and it left the firmware in 3.1.0 along with the
+     * rest of that machinery, so there is no allocation and no cursor left
+     * to observe. This is the loss of a redundant PROBE, not of coverage --
      * is_operation_in_progress above and the removed allocation used to be
      * unconditionally adjacent statements in the same then-branch of the
      * same if, with no intervening control flow, early return or condition,

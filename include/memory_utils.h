@@ -15,7 +15,6 @@ extern "C" {
 #define READ_FLAG 1
 
 uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t address, uint8_t read_write);
-void mem_util_blank_check(firestarter_handle_t* handle);
 /* The shared final-pass read-and-compare that eprom.cpp's
  * VERIFY_PER_PULSE_PLUS_FINAL arm calls after its per-pulse loop converges,
  * instead of carrying a byte-identical copy. Defined in
@@ -33,11 +32,6 @@ void memory_verify_execute(firestarter_handle_t* handle);
  * a function call in a plain assignment does not. Both eprom_operations.cpp
  * and eprom.cpp call it. Defined in src/proms/memory.cpp. */
 uint32_t mem_util_operation_end(const firestarter_handle_t* handle);
-/* The region-scoped blank check. mem_util_blank_check (above) is now a
- * one-line wrapper over this passing (0, handle->mem_size), so the two
- * cannot drift -- there is exactly one scan body. Defined in
- * src/proms/memory.cpp. */
-void mem_util_blank_check_region(firestarter_handle_t* handle, uint32_t start, uint32_t end);
 void mem_util_set_address(firestarter_handle_t* handle, uint32_t address);
 rurp_register_t mem_util_calculate_lsb_register(firestarter_handle_t* handle, uint32_t address);
 rurp_register_t mem_util_calculate_msb_register(firestarter_handle_t* handle, uint32_t address);

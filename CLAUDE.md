@@ -162,8 +162,10 @@ mechanism and no 27C row uses it.
 
 **Intra-block progress.** The loop emits `MSG_DATA_PROGRESS` (`0xE0`) from inside the per-byte
 loop. The emission is time-gated at `EPROM_PROGRESS_EMIT_INTERVAL_MS` (1000 ms). It is not
-byte-counted. The payload is the absolute chip address plus `handle->mem_size`, the same contract
-`mem_util_blank_check` uses. Two boundaries apply:
+byte-counted. The payload is the absolute chip address plus `handle->mem_size`. `0xE0` has exactly
+one emitter in the firmware now, defined here; its payload contract is no longer shared with a
+second site (v1.41 phase 205 retired the firmware's own blank-check machinery, which used to emit
+the same shape). Two boundaries apply:
 
 - **EPROM path only.** Flash, EEPROM (`0x0D`), SRAM and every other family keep block-granularity
   progress.

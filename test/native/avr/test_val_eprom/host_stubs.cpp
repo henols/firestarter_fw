@@ -132,10 +132,14 @@ extern "C" int val_recording_saturated() {
  * on the 16-slot model above, two of them on exact program-route counts --
  * is byte-for-byte unaffected.
  *
- * WHY 16384 BYTES: VAL_EPROM_SHADOW_SIZE is exactly two
- * BLANK_CHECK_CHUNK_SIZE chunks (8192 each, memory.cpp), enough to exercise
- * multi-chunk resumption in a native test, while staying far below anything
- * that could matter for host RAM.
+ * WHY 16384 BYTES: chosen when this fixture was authored to be exactly two
+ * chunks of the firmware's then-existing chunked, multi-call blank-check
+ * scan (8192 bytes each, memory.cpp), enough to exercise multi-chunk
+ * resumption in a native test. That machinery and its resumption test left
+ * the firmware in Phase 205; 16384 is retained regardless, because the
+ * FWBLANK-01 write-init cases in test_val_eprom.cpp still use it as their
+ * mem_size, and it stays far below anything that could matter for host RAM
+ * either way.
  *
  * REGISTER NAMES -- SUBSTITUTED FROM THE PLAN, RECORDED AS A DEVIATION: no
  * firmware symbol named TOP_ADDRESS exists anywhere in this repository.
