@@ -177,10 +177,10 @@ Microchip 27C512A DS11173G (2004), §1.6; shipped loop `eprom.cpp:449-478`,
 **Erase model:** UV light erasure for UV-EPROM variants (no electrical erase). Electrically-erasable 0x07 EE-EPROMs (W27C512, W27E512, SST27SF512) are erased via `eprom_internal_erase()` which applies VPE to A9 pin. `FLAG_CAN_ERASE` is derived from `electrical.type == "EEPROM"` (Phase 77 fix) and must be set for auto-erase-before-write.
 Citation: `datasheets/0x07-EPROM-STD/W27C512.pdf` p.9 §6.4 Erase Operation.
 
-**VPP behavior:** VPP = 12.5–13V via `CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_VPE_DROP_ENABLE` (Rev 2+ drop path). The regulator produces VPE (~2V above VPP); `CTRL_VPP_VPE_DROP_ENABLE` (0x100 on Rev 2) drops it through a resistor divider to reach the 13V VPP level. VPP is applied to the 28-pin socket via JP4 jumper routing. See INV-05 (VPP-skip-on-read in §3): VPP is NOT enabled for the read path.
+**VPP behavior:** VPP = 12.5–13V via `CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_VPE_DROP_ENABLE` (Rev 2+ drop path). The regulator produces VPE (~2V above VPP); `CTRL_VPP_VPE_DROP_ENABLE` (0x100 on Rev 2) drops it through a resistor divider to reach the 13V VPP level. VPP reaches the chip in one of two ways. A 28-pin part with VPP on pin 1 (`DIP28_2764`, `DIP28_27256`) gets it from the pin-1 VPP switch, and that switch reaches chip pin 1 (socket pin 3) only through a jumper. On Rev 0/1, JP3 at "28pin" connects it to socket pin 3. On Rev 2.x, the switch output goes through the bridged JP5 to socket pin 1, and JP4 joins socket pin 1 to socket pin 3. On Rev 2.0/2.1 that is JP4 "Closed", which comes from the schematic and is not measured. On Rev 2.2/2.3 it is the JP4 28-pin pole, which was measured on the v1.37 Phase 182 bench (2026-09-10). A part with VPP on OE (`DIP28_27512`, pin 22) gets VPP through the OE switch and needs no VPP jumper. `firestarter info` prints the jumper setting for each pin map. See INV-05 (VPP-skip-on-read in §3): VPP is NOT enabled for the read path.
 Citation: `datasheets/0x07-EPROM-STD/W27C512.pdf` p.5 §5 Pin Description (pin 1 = VPP, 28-pin).
 
-**Pin roles:** 28-pin DIP. A0–A15, D0–D7, CE (pin 20), OE/VPP (pin 22 on CMOS 27C variants — shared OE/PGM, but 0x07 is handled via the CE path). JP4 jumper required on RURP to route VPP to pin 1 for 28-pin DIP programming. Chip ID via A9 VPP (read manufacturer/device ID by raising A9 to VPP level via `CTRL_VPP_A9_ENABLE`).
+**Pin roles:** 28-pin DIP. A0–A15, D0–D7, CE (pin 20), OE/VPP (pin 22 on CMOS 27C variants — shared OE/PGM, but 0x07 is handled via the CE path). A part with VPP on pin 1 needs the jumper setting in **VPP behavior** above. A part with VPP on OE needs no VPP jumper. Chip ID via A9 VPP (read manufacturer/device ID by raising A9 to VPP level via `CTRL_VPP_A9_ENABLE`).
 
 **Host pulse-override:** The per-run pulse width can be overridden from the host via
 `firestarter write --pulse-us N` (1–65535 µs). That bound is **minipro parity** — `-o pulse=N` is a
@@ -269,8 +269,8 @@ published for the 50 ms figure — "100 x 500 µs is the classic 2716 total prog
 factually wrong: this same TI TMS 2516 datasheet states its own total programming time for all bits
 is **100 seconds**, and 50 ms is the per-location pulse width, not a total. The **value** (50000 µs)
 has a genuine primary datasheet basis; the **reason** published for it does not. Phase 146 / CLOSE-04
-reconciles the posted text; this phase records the correction without editing it. VPP pin location
-varies by chip revision — pin 21 on 2716, pin 18's A10 doubles as OE/VPP on 2732. A13 is hardwired
+reconciles the posted text; this phase records the correction without editing it. The VPP pin
+is pin 21 on the 2716 and 2532. On the 2732, VPP shares OE on pin 20 (`firestarter_app` `pinouts.json`). A13 is hardwired
 high for 24-pin socket mode (MSB register bit 5 = `ADDRESS_LINE_13`).
 Citation: TI TMS 2516 datasheet ("TMS 2516-25/35/45 JL"), December 1979 (revised May 1982), AC
 "recommended timing requirements for programming" table, parameter `t_w(PR)`, and p.138 "start
@@ -286,7 +286,7 @@ the adapter makes, and the 5 V-only guarantee that applies to these parts.
 **VPP behavior:** VPP = 12–25V via `CTRL_VPP_REGULATOR_ENABLE` ONLY — the direct-VPE rail (no drop resistor). See INV-01 (0x0B direct-VPE rail in §3): unlike 0x07/0x08, 0x0B uses `FLAG_VPE_AS_VPP` to apply VPE directly without `CTRL_VPP_VPE_DROP_ENABLE`. The RURP trimpot must be set to the target voltage before programming. NMOS variants (Intel 2716, 2732) historically required 25V — RURP is physically capable of this via the adjustable regulator; firmware warns on under-voltage and proceeds (Phase 79 operator override D-07, best-effort).
 Citation: `datasheets/0x0B-EPROM-LEGACY/2516_EPROM.pdf` p.2 §Vpp Programming Voltage.
 
-**Pin roles:** 24-pin DIP. A0–A12 (no A13 — hardwired), D0–D7, CE, OE, VPP (varies by chip; commonly pin 21 for 2716/2732 family). The RURP firmware calculates the 24-pin MSB register value specially in `mem_util_calculate_msb_register()`.
+**Pin roles:** 24-pin DIP. A0–A12 (no A13 — hardwired), D0–D7, CE, OE, VPP (pin 21 on the 2716 and 2532; pin 20, shared with OE, on the 2732). Pin 21 of a 24-pin part is socket pin 25. Only the JP4 24-pin pole on Rev 2.2/2.3 connects the pin-1 VPP switch to socket pin 25. Rev 0 to Rev 2.1 have no path from a VPP switch to socket pin 25. The RURP firmware calculates the 24-pin MSB register value specially in `mem_util_calculate_msb_register()`.
 
 **Host pulse-override:** The per-run pulse width can be overridden from the host via
 `firestarter write --pulse-us N` (1–65535 µs). That bound is **minipro parity** — `-o pulse=N` is a
@@ -543,7 +543,7 @@ anywhere under the native tree.
 | INV id | One-line behavior | Owning handler file | Planned native test function name | Suite path |
 |--------|-------------------|---------------------|----------------------------------|------------|
 | INV-01 | `PROTO_EPROM_24PIN` (0x0B) uses `FLAG_VPE_AS_VPP` direct-VPE rail (no `CTRL_VPP_VPE_DROP_ENABLE` drop) | `eprom.cpp` | `test_inv01_eprom_0x0B_direct_vpe_rail` | `test/native/avr/test_val_eprom/` |
-| INV-02 | `PROTO_EPROM_24PIN` (0x0B) shares OE/VPP pin — read operations skip VPP enable to avoid OE conflict | `eprom.cpp` | `test_inv02_eprom_0x0B_oe_vpp_read_skip` | `test/native/avr/test_val_eprom/` |
+| INV-02 | `PROTO_EPROM_24PIN` (0x0B) read operations skip VPP enable. On `DIP24_2732` VPP shares OE (pin 20), so VPP on a read would conflict with OE. On `DIP24_2716` and `DIP24_2532` VPP is on pin 21 | `eprom.cpp` | `test_inv02_eprom_0x0B_oe_vpp_read_skip` | `test/native/avr/test_val_eprom/` |
 | INV-03 | `PROTO_EPROM_32PIN` (0x08) routes VPP to socket pin 1 via `CTRL_VPP_P1_ENABLE` (not drop path) | `eprom.cpp` | `test_inv03_eprom_0x08_p1_as_vpp` | `test/native/avr/test_val_eprom/` |
 | INV-04 | `PROTO_FLASH_5V_PAGE` (0x05) 5v_page page size is data-driven from `handle->mem_size` (256B for W29C040 512KB; 128B for 128KB; 64B for 32KB) | `flash_5v_page.cpp` | `test_inv04_5v_page_256b_page_boundary` | `test/native/avr/test_val_5v_page/` |
 | INV-05 | `PROTO_EPROM_28PIN` (0x07) — VPP is NOT enabled on the read path — firmware skips VPP init at configure time for `CMD_READ` (VPP-skip-on-read) | `eprom.cpp` | `test_eprom_0x07_read_configure_only_does_not_enable_vpp` | `test/native/avr/test_val_eprom/` |
