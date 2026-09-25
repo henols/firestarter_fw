@@ -40,7 +40,10 @@ version.
 4. `pio run`.
 
 **This repository has two test trees.** `test/` holds the PlatformIO Unity suites. `tests/` holds a
-Python suite. Most Python tests scan firmware source text. Both trees run in `build.yml`. No CI job
+Python suite. Most Python tests scan firmware source text. These source scans are legacy and
+pending removal: add none, and do not count one as a guard. Refer to
+`agent-os/standards/testing/no-source-introspection.md` in the meta repository. Both trees run in
+`build.yml`. No CI job
 runs a `pio` environment other than `native` and `native_nodevtools`.
 
 ### Which channel ships dev tools
@@ -153,8 +156,8 @@ VPE path.
 **High-voltage teardown.** Each **error** exit from the write path goes through one exit wrapper.
 That wrapper disables all high-voltage routes in the control register. A **successful** block
 leaves the route on, so the next block does not pay the settle time again. `command_done()` disables
-the route at the end of the operation. Only a source contract in
-`tests/golden/eprom_params_citations.json` checks this. No test checks the behaviour.
+the route at the end of the operation. No test checks this behaviour. A legacy source contract
+(`tests/golden/eprom_params_citations.json`) scans the text. It is not a guard.
 
 **No overprogram.** No 27C row applies an overprogram pulse. No 27C row uses DQ7 polling. DQ7
 polling is a flash-family method.
@@ -173,8 +176,9 @@ Two limits apply:
   3. When that buffer is full, the next frame is lost without an error.
   4. A lost `MSG_ERR_MAX_PULSES` frame changes a program failure into a host transport timeout.
 
-  Only a source contract checks this limit, in `tests/test_progress_emission_is_leonardo_only.py`.
-  No test checks the behaviour. No native environment compiles `src/boards/uno_rurp_shield.cpp`.
+  No test checks this limit. A legacy source contract
+  (`tests/test_progress_emission_is_leonardo_only.py`) scans the text. It is not a guard. No native
+  environment compiles `src/boards/uno_rurp_shield.cpp`.
   The native capture stub has no `com_mode` gate.
 
 Per-row differences:
@@ -218,9 +222,19 @@ less than `energy_cap_us + w`. The largest possible total is 99998µs, from two 
 The preserve mask in `mem_util_calculate_top_address_register` in `memory.cpp` uses the hardware
 revision only, inside `#ifdef HARDWARE_REVISION`. `eprom.cpp` has no `handle->pins >= 32` clear.
 
-A jumper, not the firmware, routes VPP to socket pin 1 on a 32-pin part. Project documents disagree
-about that jumper, so this file names no designator and no net. Only the control-register stream
-shows the `0x08` route. No test on a real part shows it. This is not a claim that `0x08` VPP is
+The firmware turns on the pin-1 VPP switch (the Q8 collector). Jumpers, not the firmware, connect
+that switch to the socket:
+
+- Rev 0/1: JP3 connects it to socket pin 1 ("32pin") or socket pin 3 ("28pin").
+- Rev 2.x: JP5 is a solder jumper that ships bridged. It connects the switch to socket pin 1. That is
+  pin 1 of a 32-pin part, so JP4 stays open. JP4's common pad is also socket pin 1. On Rev 2.2/2.3
+  the pole toward the ZIF socket joins it to socket pin 3 (28-pin pin 1). The pole toward the board
+  edge joins it to socket pin 25 (24-pin pin 21). This was measured on a Rev 2.2 board in v1.37
+  Phase 182 (2026-09-10). The Rev 2.0/2.1 "Closed" position is inferred to reach socket pin 3. It
+  is not measured.
+
+The host table `firestarter_app/firestarter/jumper_table.py` gives the setting for each pin map.
+Only the control-register stream shows the `0x08` route. No test on a real part shows it. This is not a claim that `0x08` VPP is
 correct on silicon.
 
 **Program-VCC limit (accepted).** The four vendor algorithms raise VCC to about 6.25V during
@@ -248,9 +262,9 @@ The six writes are inline, not a `.data` table, so the erase uses 0 bytes of RAM
 exists.
 
 **Do not implement the datasheet *hardware* Chip Erase mode.** It needs **12V on OE, pin 22** of
-`DIP28_28C256`, and that voltage damages a 5V part. `scripts/check_erase_no_vpp.py` makes sure the
-mode stays absent. It scans the body of `eeprom28c_erase_execute` and fails on any control-register
-high-voltage write. Do not add that 12V path from the datasheet. For the same reason, algorithm 5
+`DIP28_28C256`, and that voltage damages a 5V part. `scripts/check_erase_no_vpp.py` scans the body
+of `eeprom28c_erase_execute` and fails on any control-register high-voltage write. That script is a
+legacy source scan, not a guard. Do not add that 12V path from the datasheet. For the same reason, algorithm 5
 never gets `FLAG_CAN_ERASE`. No firmware function implements the 12V path.
 
 `write` does **no blank check** on this protocol. Each page write erases the page internally. The
@@ -376,9 +390,9 @@ the defines, update that wiki page in the same change. Nothing checks this autom
 - `[SHARED:S5]` — the socket-empty instruction.
 
 **If one of these sections changes in either copy, change the other copy in the same change.**
-`tests/test_flash_path_record_sync.py` compares the two copies. CI checks out this repository
-alone, so the meta copy is absent and the comparison tests skip there. Run the comparison locally
-when you edit either copy. Never say that CI compared them.
+`tests/test_flash_path_record_sync.py` compares the two copies. It is a legacy text comparison, not
+a guard. CI checks out this repository alone, so the meta copy is absent and the comparison tests
+skip there. Compare the copies by hand when you edit either one. Never say that CI compared them.
 
 `FIRESTARTER_META_ROOT` sets the meta-repository root for that test. It changes the root only,
 never the marker name. `FIRESTARTER_FW_ROOT` and `FIRESTARTER_SIZE_BASELINE` are the other test

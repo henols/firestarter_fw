@@ -208,10 +208,8 @@ typedef struct firestarter_handle {
     uint32_t pulse_delay;
     uint32_t read_settling_us;   /* address-settling delay before /CE assert (µs; 0 = no settling delay) */
     uint32_t read_strobe_us;     /* /CE read-strobe pulse width (µs; 0 = use default 3µs) */
-    uint16_t ctrl_flags;         /* largest flag is 0x100 (FLAG_SKIP_SDP_UNLOCK); nine flags total,
-                                   * bidirectionally pinned at max 0x100 by
-                                   * firestarter_app/tests/test_revision_constants_parity.py, so a
-                                   * future tenth flag above 0xFFFF trips that gate first. */
+    uint16_t ctrl_flags;         /* largest flag is 0x100 (FLAG_SKIP_SDP_UNLOCK). A flag above
+                                   * 0xFFFF needs this field widened. */
     uint16_t chip_id;
     uint16_t page_size;          /* per-chip page-write size delivered by the host over the wire;
                                    * 0 = absent. Reset per command in json_parse,
