@@ -9,7 +9,7 @@ MEMORY
 {
     /* D-13 -- NAMED SEAM ONLY, ZERO LENGTH, for Phase 129 (PCB-03/FUT-N05) to cite.
      * See platform/py32f071/FLASH-PATH-AND-PCB.md §"Flash budget, as actually
-     * reserved" and, in the Firestarter meta-repo, .planning/v1.23-FLASH-PATH-DECISION.md.
+     * reserved".
      *
      * READ THIS BEFORE GIVING IT A SIZE. Unlike the CONFIG region below -- which
      * sits at the TOP of flash and can grow downward without moving anything --
