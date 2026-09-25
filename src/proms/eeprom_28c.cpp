@@ -122,10 +122,6 @@ const byte_flip_t EEPROM_SDP_DISABLE[6] = {
 //      construction. It has to be asserted on the emitted STREAM.
 //
 // The `extern` below is load-bearing for the same linkage reason as above.
-//
-// KEEP EVERY COMMENT IN THIS FILE free of brace-wrapped hex pairs and stray
-// braces: a host-side parity gate extracts these tables with a brace-depth
-// walk and a hex-pair regex, and both are comment-blind.
 extern const byte_flip_t EEPROM_SDP_ENABLE[3];
 const byte_flip_t EEPROM_SDP_ENABLE[3] = {
     {0x5555, 0xAA},
