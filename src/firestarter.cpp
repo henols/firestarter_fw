@@ -86,7 +86,6 @@ bool parse_json(firestarter_handle_t* handle) {
             LOG_DEBUG_ID_SUB_U8(DBG_FLAG_FORCE, is_flag_set(FLAG_FORCE));
             LOG_DEBUG_ID_SUB_U8(DBG_FLAG_CAN_ERASE, is_flag_set(FLAG_CAN_ERASE));
             LOG_DEBUG_ID_SUB_U8(DBG_FLAG_SKIP_ERASE, is_flag_set(FLAG_SKIP_ERASE));
-            LOG_DEBUG_ID_SUB_U8(DBG_FLAG_SKIP_BLANK, is_flag_set(FLAG_SKIP_BLANK_CHECK));
             LOG_DEBUG_ID_SUB_U8(DBG_FLAG_VPE_AS_VPP, is_flag_set(FLAG_VPE_AS_VPP));
             if (!op_execute_function(configure_memory, handle)) {
                 LOG_ERROR_ID(MSG_ERR_SETUP);
@@ -267,14 +266,8 @@ void loop() {
         case CMD_WRITE:
             finished = eprom_write(&handle);
             break;
-        case CMD_VERIFY:
-            finished = eprom_verify(&handle);
-            break;
         case CMD_ERASE:
             finished = eprom_erase(&handle);
-            break;
-        case CMD_BLANK_CHECK:
-            finished = eprom_blank_check(&handle);
             break;
         case CMD_CHECK_CHIP_ID:
             finished = eprom_check_chip_id(&handle);
@@ -301,9 +294,9 @@ void loop() {
             finished = eprom_sdp_lock(&handle);
             break;
         // CMD_LOCK_STATUS, in the same one-line shape
-        // as every other arm in this switch. eprom_lock_status is the
-        // eprom_blank_check shape with no LOG_DEBUG_ID_SUB line -- see that
-        // function's own comment for why. This sits outside every
+        // as every other arm in this switch. eprom_lock_status is
+        // eprom_check_chip_id's single-step shape with no LOG_DEBUG_ID_SUB
+        // line -- see that function's own comment for why. This sits outside every
         // preprocessor conditional, exactly like CMD_SDP_UNLOCK/CMD_SDP_LOCK
         // above.
         case CMD_LOCK_STATUS:

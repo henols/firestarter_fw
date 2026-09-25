@@ -70,9 +70,6 @@ void configure_memory(firestarter_handle_t* handle) {
         case CMD_WRITE:
             handle->firestarter_operation_main = memory_write_execute;
             break;
-        case CMD_VERIFY:
-            handle->firestarter_operation_main = memory_verify_execute;
-            break;
     }
 
     handle->firestarter_get_data = memory_get_data;
@@ -422,31 +419,6 @@ uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t
     return reorg_address;
 }
 
-/* Saved address for the multi-call blank check, held across the two dispatch
- * calls that make up one mem_util_blank_check invocation.
- *
- * A file-scope static is safe here: the firmware runs strictly one command at
- * a time -- single-threaded, no reentrancy, no nesting -- and the value is
- * written only in the first-call branch and read only in a later call's
- * completion branch, so write-before-read holds by construction.
- *
- * Do not replace it with a heap allocation. The previous 4-byte malloc was the
- * only malloc/free in the firmware and pulled in the whole 586 B avr-libc
- * allocator, for a result that was dereferenced without a NULL test on a part
- * with a few hundred bytes of shared heap-and-stack headroom. */
-static uint32_t blank_check_saved_address;
-
-/* One progress frame and one host ack round-trip are spent per chunk, so this
- * also sets how chatty a blank check is: a 512 KB part is 64 chunks here, where
- * 2048 made it 256 for no extra visible resolution. */
-#define BLANK_CHECK_CHUNK_SIZE 8192
-void uint32_to_bytes(char* buffer, int pos, uint32_t value) {
-    buffer[pos] = (value >> 24) & 0xFF;
-    buffer[pos++] = (value >> 16) & 0xFF;
-    buffer[pos++] = (value >> 8) & 0xFF;
-    buffer[pos++] = value & 0xFF;
-}
-
 /* The single resolution point for D-04's "0 = absent = whole device"
  * fallback and for the fail-closed clamp. A host or a corrupted frame
  * cannot widen a scan past the device: region_end above mem_size clamps
@@ -458,85 +430,4 @@ uint32_t mem_util_operation_end(const firestarter_handle_t* handle) {
         return handle->mem_size;
     }
     return handle->region_end;
-}
-
-/* The region-scoped scan body. mem_util_blank_check (below) is a one-line
- * wrapper over this passing (0, handle->mem_size) -- the whole-device
- * entry point six function-pointer assignments and two direct calls in
- * other protocol files target (plan 201-05's source-contract gate
- * enumerates all of them). start is read only on the first call, inside
- * the !is_operation_in_progress branch: on later calls handle->address is
- * the scan cursor and start is ignored. */
-void mem_util_blank_check_region(firestarter_handle_t* handle, uint32_t start, uint32_t end) {
-    if (!is_operation_in_progress(handle)) {
-        set_operation_in_progress(handle);
-        blank_check_saved_address = handle->address;
-        handle->address = start;
-    } else {
-        if (handle->address >= end) {
-            clear_operation_in_progress(handle);
-            handle->address = blank_check_saved_address;
-            return;
-        }
-    }
-
-    // for (uint32_t i = handle->address; i < handle->address + BLANK_CHECK_CHUNK_SIZE; i++) {
-    uint32_t end_address = handle->address + BLANK_CHECK_CHUNK_SIZE;
-    for (uint32_t i = handle->address; i < end_address && i < end; i++) {
-        uint8_t val = handle->firestarter_get_data(handle, i);
-        if (val != 0xFF) {
-            uint8_t _b[4] = {
-                (uint8_t)((i >> 16) & 0xFF),
-                (uint8_t)((i >> 8) & 0xFF),
-                (uint8_t)(i & 0xFF),
-                (uint8_t)val,
-            };
-            // On the Uno, rurp_log_id is com_mode-gated and this function runs in
-            // programmer mode, so a direct emit here is silently dropped. For the
-            // standalone blank-check command, stash the offset+value and let
-            // _single_step_operation_callback emit MSG_ERR_NOT_BLANK in communication
-            // mode. Other callers (write-init / erase-end) keep the direct emit.
-            // (#transport-protocol-verify)
-            if (handle->cmd == CMD_BLANK_CHECK) {
-                handle->data_buffer[0] = (char)_b[0];
-                handle->data_buffer[1] = (char)_b[1];
-                handle->data_buffer[2] = (char)_b[2];
-                handle->data_buffer[3] = (char)_b[3];
-                handle->data_size = 4;
-            } else {
-                LOG_ERROR_ID_BYTES(MSG_ERR_NOT_BLANK, _b, 4);
-            }
-            handle->response_code = RESPONSE_CODE_ERROR;
-            return;
-        }
-    }
-    handle->address += BLANK_CHECK_CHUNK_SIZE;
-// #define RAW_DATA_PROGRESS
-#ifdef RAW_DATA_PROGRESS
-    handle->response_code = RESPONSE_CODE_DATA;
-    uint32_to_bytes(handle->data_buffer, 0, handle->address);
-    uint32_to_bytes(handle->data_buffer, 4, end);
-    handle->data_size = 8;
-#else
-    if (handle->address > end) {
-        handle->address = end;
-    }
-    // Send progress back to the client. For the standalone blank-check command the
-    // emit is deferred to _single_step_operation_callback (communication mode): this
-    // function runs in programmer mode where the Uno's com_mode-gated rurp_log_id
-    // drops frames. Other callers (write-init / erase-end) keep the direct emit.
-    // (#transport-protocol-verify)
-    if (handle->cmd != CMD_BLANK_CHECK) {
-        LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, handle->address, end);
-    }
-#endif
-}
-
-/* Whole-device entry point. Six function-pointer assignments and two direct
- * calls in other protocol files (flash_intel.cpp, flash_nor_unlock.cpp)
- * target this wrapper -- plan 201-05's source-contract gate enumerates all
- * of them. It cannot drift from the region form: it is the region form,
- * called with the whole device as its region. */
-void mem_util_blank_check(firestarter_handle_t* handle) {
-    mem_util_blank_check_region(handle, 0, handle->mem_size);
 }

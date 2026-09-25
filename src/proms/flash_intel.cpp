@@ -58,9 +58,6 @@ void configure_flash_intel(firestarter_handle_t* handle) {
         case CMD_ERASE:
             handle->firestarter_operation_main = flash_intel_erase_execute;
             break;
-        case CMD_BLANK_CHECK:
-            handle->firestarter_operation_main = mem_util_blank_check;
-            break;
         case CMD_CHECK_CHIP_ID:
             handle->firestarter_operation_init = NULL;
             handle->firestarter_operation_end = NULL;
@@ -90,9 +87,6 @@ void flash_intel_write_init(firestarter_handle_t* handle) {
     }
     if (is_flag_set(FLAG_CAN_ERASE) && !is_flag_set(FLAG_SKIP_ERASE)) {
         flash_intel_erase_execute(handle);
-    }
-    if (!is_flag_set(FLAG_SKIP_BLANK_CHECK)) {
-        mem_util_blank_check(handle);
     }
 }
 

@@ -73,7 +73,7 @@ static firestarter_handle_t make_sdp_handle(const sdp_bus_config_row_t& row) {
     h.chip_id = 0;
     h.mem_size = row.mem_size;
     h.bus_config = row.bus_config;
-    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK;
+    h.ctrl_flags = 0;
     return h;
 }
 
@@ -411,7 +411,7 @@ static firestarter_handle_t make_identity_handle(uint16_t expected_chip_id, uint
     h.mem_size = 32768; /* AT28C256 -- mfr_addr = mem_size - 64 = 0x7FC0 */
     h.response_code = RESPONSE_CODE_OK;
     h.chip_id = expected_chip_id;
-    h.ctrl_flags = ctrl_flags | FLAG_SKIP_BLANK_CHECK;
+    h.ctrl_flags = ctrl_flags;
     return h;
 }
 

@@ -49,9 +49,28 @@
 #define CMD_READ 1
 #define CMD_WRITE 2
 #define CMD_ERASE 3
-#define CMD_BLANK_CHECK 4
+
+// Ordinal 4 -- the standalone blank-check command -- retired in 3.1.0
+// (Phase 204). The host side -- firestarter_app/firestarter/constants.py's
+// COMMAND_BLANK_CHECK and its COMMAND_NAMES row -- was retired in the same
+// commit pair. This ordinal must NEVER be reused for any new command, flag
+// or reserved meaning: an already-shipped host still composes it, and
+// reassigning the number would make that stale host silently drive a
+// different operation. A frame carrying ordinal 4 now falls through
+// firestarter.cpp's dispatch switch default: arm, which answers
+// MSG_ERR_UNKNOWN_CMD rather than running any handler.
+
 #define CMD_CHECK_CHIP_ID 5
-#define CMD_VERIFY 6
+
+// Ordinal 6 -- the verify command -- retired in 3.1.0 (Phase 204). The host
+// side -- firestarter_app/firestarter/constants.py's COMMAND_VERIFY and its
+// COMMAND_NAMES row -- was retired in the same commit pair. This ordinal
+// must NEVER be reused for any new command, flag or reserved meaning: an
+// already-shipped host still composes it, and reassigning the number would
+// make that stale host silently drive a different operation. A frame
+// carrying ordinal 6 now falls through firestarter.cpp's dispatch switch
+// default: arm, which answers MSG_ERR_UNKNOWN_CMD rather than running any
+// handler.
 
 #if DEV_TOOLS
 #define CMD_DEV_ADDRESS 7
@@ -101,8 +120,11 @@
 // than re-listing the set.
 //
 // Hard constraints:
-//  - NO preprocessor conditional of any kind in this function's body. All nine
-//    named macros are unconditionally defined. A source-scan gate checks this.
+//  - NO preprocessor conditional of any kind in this function's body. All seven
+//    named macros are unconditionally defined. There is no source-scan gate
+//    that checks this -- a tree-wide search finds none -- and the only
+//    consumer of this predicate outside this header is
+//    test/native/avr/test_cmd_admission/test_cmd_admission.cpp's truth table.
 //  - static inline, IN THIS HEADER. [env:native]'s build_src_filter compiles
 //    only src/proms/, rurp_serial_utils.cpp and json_parser.c, so a definition
 //    elsewhere would not link into the native test binary.
@@ -114,9 +136,7 @@ static inline bool is_memory_cmd(uint8_t cmd) {
         case CMD_READ:
         case CMD_WRITE:
         case CMD_ERASE:
-        case CMD_BLANK_CHECK:
         case CMD_CHECK_CHIP_ID:
-        case CMD_VERIFY:
         case CMD_SDP_UNLOCK:
         case CMD_SDP_LOCK:
         case CMD_LOCK_STATUS:
@@ -135,7 +155,17 @@ static inline bool is_memory_cmd(uint8_t cmd) {
 #define FLAG_FORCE 0x01
 #define FLAG_CAN_ERASE 0x02
 #define FLAG_SKIP_ERASE 0x04
-#define FLAG_SKIP_BLANK_CHECK 0x08
+
+// The skip-blank-check control flag, 0x08 -- retired in 3.1.0 (Phase 205).
+// The host side -- firestarter_app/firestarter/constants.py's flag block --
+// was retired in the same commit pair. This value must NEVER be reused for
+// any new control flag: an already-shipped host still composes 0x08 on
+// every `write -b` and on `dev test`'s masked UV slot writes, and
+// reassigning the bit would make that stale host silently turn on whatever
+// new behaviour took the number. While it existed, the flag selected
+// whether write-init's blank check ran; that check itself left the
+// firmware in the same phase (FWBLANK-01..03).
+
 #define FLAG_VPE_AS_VPP 0x10
 
 #define FLAG_OUTPUT_ENABLE 0x20

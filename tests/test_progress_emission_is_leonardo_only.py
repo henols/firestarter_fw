@@ -101,11 +101,12 @@ Coverage:
      ABSOLUTE quantity, equal to handle->mem_size whenever no region was
      supplied -- D-06); the forbidden block-relative payload alternative
      (concatenation-built -- see the Naming note below) does not appear
-     inside the emit's own block. D-04/D-06: 0xE0 must keep exactly one
-     payload meaning across its two emitters (this one and
-     mem_util_blank_check's pre-existing one in memory.cpp) -- after D-06
-     that meaning is "the end of the operation's range", not merely "the
-     device size".
+     inside the emit's own block. D-04/D-06: 0xE0 must keep one payload
+     meaning for its one emitter -- after D-06 that meaning is "the end of
+     the operation's range", not merely "the device size". (Phase 205:
+     0xE0 used to have a second emitter in memory.cpp's blank-check
+     machinery, which retired in that phase; this coverage item's own
+     assertions were always scoped to this one emitter and are unaffected.)
   7. test_serial_on_io_is_defined_on_exactly_the_uno_class_envs -- the
      Uno-class build flag's exact compiler-invocation spelling
      (concatenation-built -- see the Naming note below) is present in
@@ -586,9 +587,10 @@ def test_the_emit_uses_the_named_interval_constant():
 
 
 def test_the_payload_keeps_one_contract_for_the_id():
-    """Coverage 6 -- D-04/D-06: 0xE0 must keep exactly one payload meaning
-    across its two emitters (this one and mem_util_blank_check's
-    pre-existing one in memory.cpp). After D-06, that meaning is "the end
+    """Coverage 6 -- D-04/D-06: 0xE0 must keep one payload meaning for its
+    one emitter (Phase 205 retired the second emitter this coverage item
+    used to guard against drifting apart from -- memory.cpp's blank-check
+    machinery). After D-06, that meaning is "the end
     of the operation's range" -- op_end, resolved once per write-execute
     call from mem_util_operation_end(handle), equal to the device size for
     a whole-device operation and to the region end for a bounded one. This
@@ -633,8 +635,8 @@ def test_the_payload_keeps_one_contract_for_the_id():
         "found the forbidden block-relative payload alternative inside "
         "the emit's OWN block (not merely elsewhere in the function, "
         "where it legitimately appears as the per-byte loop's own bound) "
-        "-- D-06: 0xE0 must keep exactly one payload meaning across its "
-        "two emitters.\n"
+        "-- D-06: 0xE0 must keep exactly one payload meaning for its one "
+        "emitter.\n"
         f"Emit block (comment-stripped):\n{emit_block_text}"
     )
 

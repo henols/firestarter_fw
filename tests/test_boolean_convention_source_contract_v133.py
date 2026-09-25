@@ -10,7 +10,7 @@ non-vacuous source-scan gate.
 
 Requirements: DEDUP-04
 
-Defect class this closes: src/eprom_operations.cpp -- the nine eprom_*
+Defect class this closes: src/eprom_operations.cpp -- the seven eprom_*
 command wrappers whose leading `!` Plan 05 removed -- compiles in NO
 native environment. [env:native] and [env:native_nodevtools] both share
 a build_src_filter that names src/proms/, two board-support translation
@@ -18,11 +18,17 @@ units, json_parser.c and src/operation_utils.cpp explicitly, and excludes
 every other top-level src/*.cpp file by omission -- eprom_operations.cpp
 among them. src/operation_utils.cpp (the six flipped engine return sites)
 IS in that filter and is covered by Cases 24 and 25 of
-test_eeprom28c_sdp.cpp; the nine wrapper call sites have no native and no
+test_eeprom28c_sdp.cpp; the seven wrapper call sites have no native and no
 bench coverage at all -- only this source contract and Plan 05's
 size-identity build. This module is a SOURCE CONTRACT: it proves the
 shipped text says what Plan 05 claims, never what the compiled code does
 at runtime.
+
+Census note (Phase 204): Plan 05 landed with nine wrappers. Phase 204
+Plan 01 retired eprom_verify (the verify command's own ordinal), taking
+the census to eight; Phase 204 Plan 03 retires eprom_blank_check (the
+blank-check command's own ordinal) in the same phase, taking it to
+seven -- the current, live count.
 
 Coverage:
   1. test_wrapper_negated_return_is_absent -- zero occurrences of the
@@ -41,10 +47,10 @@ Coverage:
      in eprom_operations.cpp) keeps its own opposite convention. A count
      of zero here would mean the surviving negation was wrongly removed;
      a count above one would mean a NEW negation crept in.
-  3. test_the_nine_forwarding_calls_are_present -- the positive
+  3. test_the_seven_forwarding_calls_are_present -- the positive
      counterpart to Coverage 1: op_execute_stateful_operation and
      op_execute_simple_operation, each reached via a bare `return`,
-     together occur exactly _EXPECTED_FORWARD_TOTAL (9) times in the
+     together occur exactly _EXPECTED_FORWARD_TOTAL (7) times in the
      comment-and-literal-stripped wrapper file. A deleted, emptied or
      truncated wrapper file satisfies Coverage 1 vacuously; this leg is
      what catches that.
@@ -149,7 +155,7 @@ _SCAN_ENGINE = _REPO_ROOT / _ENGINE_REL
 _NEEDLE_INVERTED_CALL = "return" + " !" + "op_execute_"
 _FORWARD_STATEFUL = "return " + "op_execute_stateful_operation"
 _FORWARD_SIMPLE = "return " + "op_execute_simple_operation"
-_EXPECTED_FORWARD_TOTAL = 9
+_EXPECTED_FORWARD_TOTAL = 7
 
 _ALL_SELF_CHECK_NEEDLES = (
     ("the negated wrapper return form", _NEEDLE_INVERTED_CALL),
@@ -309,13 +315,16 @@ def test_engine_retains_exactly_one_negated_call():
     )
 
 
-def test_the_nine_forwarding_calls_are_present():
+def test_the_seven_forwarding_calls_are_present():
     """Coverage 3 -- the positive counterpart to Coverage 1: a deleted,
     emptied or truncated wrapper file would satisfy the absence leg above
     vacuously. This leg requires the two permitted forwarding calls --
     op_execute_stateful_operation and op_execute_simple_operation, each
     reached via a bare `return` -- to together occur exactly
-    _EXPECTED_FORWARD_TOTAL (9) times."""
+    _EXPECTED_FORWARD_TOTAL (7) times. Phase 204 retired eprom_verify
+    (CMD_VERIFY, ordinal 6) first, taking the census from Plan 05's
+    original nine to eight, then eprom_blank_check (the blank-check
+    command's own ordinal) in the same phase, taking it to seven."""
     stripped = _strip_comments(_SCAN_WRAPPERS.read_text())
     stateful = _FORWARD_STATEFUL_RE.findall(stripped)
     simple = _FORWARD_SIMPLE_RE.findall(stripped)

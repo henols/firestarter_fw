@@ -43,17 +43,18 @@ void tearDown(void) {}
 
 /* Fresh handle per case (Pitfall 4) -- json_parse never resets pulse_delay,
  * protocol, mem_size, vpp_mv or pins, so a stale global handle would leak
- * state between cases. FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE keeps a
- * CMD_WRITE dispatch from wanting a blank-check/erase path this suite never
- * drives (configure_eprom only sets up function pointers and the pulse_delay
- * fallback for CMD_WRITE; neither pointer is ever invoked here). */
+ * state between cases. FLAG_SKIP_ERASE keeps a CMD_WRITE dispatch from
+ * wanting an erase path this suite never drives (configure_eprom only sets
+ * up function pointers and the pulse_delay fallback for CMD_WRITE; neither
+ * pointer is ever invoked here; write-init itself performs no blank check
+ * at all any more, regardless of ctrl_flags). */
 static firestarter_handle_t make_handle(uint32_t protocol, uint32_t pulse_delay_us) {
     firestarter_handle_t h = {};
     h.protocol = protocol;
     h.cmd = CMD_WRITE;
     h.response_code = RESPONSE_CODE_OK;
     h.mem_size = 2048;
-    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK | FLAG_SKIP_ERASE;
+    h.ctrl_flags = FLAG_SKIP_ERASE;
     h.pulse_delay = pulse_delay_us;
     return h;
 }

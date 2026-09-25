@@ -178,8 +178,8 @@ _DEF_SEARCH_DIRS = ("src", "platform", "lib")
 
 _C14_CONSUMER_SITES = (
     ("src/firestarter.cpp", 38, "rurp_load_config"),
-    ("src/firestarter.cpp", 102, "rurp_get_config"),
-    ("src/firestarter.cpp", 108, "rurp_save_config"),
+    ("src/firestarter.cpp", 101, "rurp_get_config"),
+    ("src/firestarter.cpp", 107, "rurp_save_config"),
     ("src/boards/rurp_common.cpp", 53, "rurp_get_config"),
     ("include/rurp_hw_rev_utils.h", 93, "rurp_get_config"),
     ("include/rurp_hw_rev_utils.h", 99, "rurp_get_config"),

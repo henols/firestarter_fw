@@ -74,7 +74,7 @@ _HERE = Path(__file__).resolve().parent
 _FW_REPO_ROOT = _HERE.parent
 _FW_DOC = _FW_REPO_ROOT / "platform" / "py32f071" / "FLASH-PATH-AND-PCB.md"
 
-_META_DOC_REL = "v1.23-FLASH-PATH-DECISION.md"
+_META_DOC_REL = "milestones/v1.23-FLASH-PATH-DECISION.md"
 _LINKER = _FW_REPO_ROOT / "platform" / "py32f071" / "linker" / "PY32F071xB_FLASH.ld"
 _SEED_REL = "seeds/py32f071-no-external-tool-fw-install.md"
 
@@ -1074,8 +1074,8 @@ class TestFlashPathRecordSync:
         trigger_condition, planted_date, status in that order; assert the
         status value, lowercased and stripped, is not
         _SEED_FORBIDDEN_STATUS; assert the body contains the relative
-        markdown link target '../v1.23-FLASH-PATH-DECISION.md'; assert the
-        body contains 'FUT-N05'."""
+        markdown link target '../milestones/v1.23-FLASH-PATH-DECISION.md';
+        assert the body contains 'FUT-N05'."""
         text = _seed_text()
         fm = _frontmatter(text)
         expected_keys = ["title", "trigger_condition", "planted_date", "status"]
@@ -1089,9 +1089,9 @@ class TestFlashPathRecordSync:
             f"seed status is still {status!r} -- D-17 requires it be "
             "updated to reflect that the trigger fired."
         )
-        assert "../v1.23-FLASH-PATH-DECISION.md" in text, (
+        assert "../milestones/v1.23-FLASH-PATH-DECISION.md" in text, (
             "seed body does not link the new record via the relative "
-            "markdown link target '../v1.23-FLASH-PATH-DECISION.md'"
+            "markdown link target '../milestones/v1.23-FLASH-PATH-DECISION.md'"
         )
         assert "FUT-N05" in text, "seed body does not name FUT-N05"
 

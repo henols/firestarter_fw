@@ -165,15 +165,14 @@ void test_eeprom28c_write_configure_no_vpp(void) {
         "configure_eeprom28c CMD_WRITE must NOT set any VPP-enable CTL bit");
 }
 
-/* configure-only: CMD_BLANK_CHECK must record zero VPP-enable bits */
-void test_eeprom28c_blank_check_configure_no_vpp(void) {
-    firestarter_handle_t h = make_handle(CMD_BLANK_CHECK);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on 0x0D CMD_BLANK_CHECK");
-    assert_no_vpp_in_recording(
-        "configure_eeprom28c CMD_BLANK_CHECK must NOT set any VPP-enable CTL bit");
-}
+/* Phase 204 (FWCMD-01, Fork D): the CMD_BLANK_CHECK no-VPP case that used
+ * to live here is deleted, not re-keyed. It asserted that configuring the
+ * standalone blank-check command engaged no VPP; after this release that
+ * ordinal reaches no configure handler at all (the arm is gone from
+ * configure_eeprom28c's switch), so the same claim would be true for a
+ * reason unrelated to what this case was written to check. The other
+ * cases above already cover configure-only no-VPP for this handler's
+ * surviving ordinals. */
 
 void test_eeprom28c_erase_configure_no_vpp(void) {
     firestarter_handle_t h = make_handle(CMD_ERASE);
@@ -362,7 +361,6 @@ int main(int argc, char** argv) {
     /* 5V-only proof: no VPP-enable CTL bit for any command in the configure phase */
     RUN_TEST(test_eeprom28c_read_configure_no_vpp);
     RUN_TEST(test_eeprom28c_write_configure_no_vpp);
-    RUN_TEST(test_eeprom28c_blank_check_configure_no_vpp);
     RUN_TEST(test_eeprom28c_erase_configure_no_vpp);
 
     RUN_TEST(test_fix06_planted_partial_write_fails_fixed_path_and_passes_legacy_poll);

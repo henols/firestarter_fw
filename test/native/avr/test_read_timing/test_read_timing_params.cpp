@@ -242,8 +242,8 @@ void test_out_of_range_flags_masks_never_sets_every_flag(void) {
         "FLAG_FORCE must not be set by an out-of-range flags value");
     TEST_ASSERT_EQUAL_MESSAGE(0, h.ctrl_flags & FLAG_SKIP_ERASE,
         "FLAG_SKIP_ERASE must not be set by an out-of-range flags value");
-    TEST_ASSERT_EQUAL_MESSAGE(0, h.ctrl_flags & FLAG_SKIP_BLANK_CHECK,
-        "FLAG_SKIP_BLANK_CHECK must not be set by an out-of-range flags "
+    TEST_ASSERT_EQUAL_MESSAGE(0, h.ctrl_flags & FLAG_VPE_AS_VPP,
+        "FLAG_VPE_AS_VPP must not be set by an out-of-range flags "
         "value");
 }
 
@@ -452,6 +452,65 @@ void test_pin_count_round_trips_through_the_field_table(void) {
         "pin-count's row must not write into page_size");
 }
 
+/* T7: a wire `address` beginning with '-' must be REFUSED, not silently
+ * clamped to 0. `simple_strtoul` consumes only `[0-9]`, so a leading '-'
+ * makes its loop body never run and the address arrives as 0 --
+ * indistinguishable from a legitimate address-0 frame. json_parse must
+ * return -1 for this frame and leave handle->address at the 0 its own
+ * init block set (json_parse:269), never at a value simple_strtoul
+ * converted from the digits after the sign. */
+void test_negative_address_is_refused_not_clamped_to_zero(void) {
+    const char* json = "{\"cmd\":2,\"address\":-256}";
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    h.address = 0xDEADBEEF; /* poison value: a real store would overwrite this */
+    int rc = parse_json(json, &h);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-1, rc,
+        "json_parse must refuse a frame whose address value begins with '-' "
+        "-- the wire cannot represent a negative address, so the frame is "
+        "malformed, not zero");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, h.address,
+        "the handle's address member must be left at the 0 json_parse's own "
+        "init block sets, never written with a value simple_strtoul "
+        "converted from the digits following the sign");
+}
+
+/* T8: a positive address must still parse to exactly that value -- the
+ * refusal above must not become a blanket rejection of the address field. */
+void test_positive_address_still_parses_to_its_value(void) {
+    const char* json = "{\"cmd\":2,\"address\":4096}";
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    int rc = parse_json(json, &h);
+    TEST_ASSERT_EQUAL_INT(0, rc);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(4096, h.address,
+        "a positive address must parse unchanged -- the negative-address "
+        "refusal above is scoped to values that begin with '-', not to the "
+        "address field wholesale");
+}
+
+/* T9 (scope guard, OQ-3): a negative value on a NON-address numeric field
+ * must parse EXACTLY as it does today -- unchanged, not refused. This case
+ * must be GREEN from the start: it asserts behaviour this plan does not
+ * change, and its value is to go RED if a later author widens the refusal
+ * past the address field. `pulse-delay` shares simple_strtoul's conversion
+ * with every other numeric field; a leading '-' makes the loop body never
+ * run here exactly as it did for address before this fix, so today's
+ * (unchanged) behaviour is "parses to 0", not a refusal. */
+void test_negative_value_on_a_non_address_field_is_unchanged(void) {
+    const char* json = "{\"cmd\":1,\"pulse-delay\":-500}";
+    firestarter_handle_t h = make_handle(CMD_READ);
+    int rc = parse_json(json, &h);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, rc,
+        "OQ-3 scope guard: a negative value on pulse-delay (a non-address "
+        "field) must NOT be refused -- only the address field's policy bit "
+        "is set, so json_parse must still return 0 for this frame");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, h.pulse_delay,
+        "OQ-3 scope guard: simple_strtoul's leading-'-' behaviour on a "
+        "non-address field is unchanged by this fix -- the loop body never "
+        "runs for a leading '-', so the field parses to 0 exactly as it "
+        "did before this plan, and this case must go RED if a later "
+        "author widens the refusal beyond the address field");
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -477,5 +536,8 @@ int main(int argc, char** argv) {
     RUN_TEST(test_chip_id_round_trips_through_the_field_table);
     RUN_TEST(test_vpp_mv_round_trips_through_the_field_table);
     RUN_TEST(test_pin_count_round_trips_through_the_field_table);
+    RUN_TEST(test_negative_address_is_refused_not_clamped_to_zero);
+    RUN_TEST(test_positive_address_still_parses_to_its_value);
+    RUN_TEST(test_negative_value_on_a_non_address_field_is_unchanged);
     return UNITY_END();
 }

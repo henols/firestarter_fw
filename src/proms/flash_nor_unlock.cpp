@@ -38,10 +38,6 @@ void configure_flash_nor_unlock(firestarter_handle_t* handle) {
         break;
     case CMD_ERASE:
         handle->firestarter_operation_main = flash_nor_unlock_erase_execute;
-        // handle->firestarter_operation_end = memory_blank_check;
-        break;
-    case CMD_BLANK_CHECK:
-        handle->firestarter_operation_main = mem_util_blank_check;
         break;
     case CMD_CHECK_CHIP_ID:
         handle->firestarter_operation_init = NULL;
@@ -71,17 +67,14 @@ void flash_nor_unlock_generic_init(firestarter_handle_t* handle) {
 
 
 void flash_nor_unlock_write_init(firestarter_handle_t* handle) {
-    // Gate one-time init (chip-ID + erase + erase-settle delay) behind
-    // is_operation_in_progress so it runs exactly ONCE per write command.
-    // Without this guard the INIT-phase state machine re-invokes
-    // flash_nor_unlock_write_init for every 2KB chunk of the stateful blank-check
-    // (mem_util_blank_check progresses 2KB per call). For a 512KB chip
-    // that is 256 re-runs of: chip-ID check + chip-erase command + 105ms
-    // settle delay. Each chip-erase command starts an internal erase that
-    // takes ~100ms; sending another erase command before the chip
-    // completes the previous one leaves it in an undefined state. The
-    // accumulated 27+ seconds of pointless settle delay also stalls INIT
-    // dramatically. Matches the flash_5v_page_write_init pattern.
+    // One-time init (chip-ID + erase + erase-settle delay), gated behind
+    // is_operation_in_progress so a future multi-call operation could run
+    // it exactly ONCE across repeated re-invocations of this function.
+    // The last operation that needed this guard was the region-scoped
+    // blank check; it left the firmware in 3.1.0 and nothing sets the
+    // flag anymore, so this guard currently always reads true. Retained
+    // as defence against a future multi-call operation, at zero flash
+    // cost either way.
     if (!is_operation_in_progress(handle)) {
         if (handle->chip_id > 0) {
             flash_nor_unlock_check_chip_id_execute(handle);
@@ -100,9 +93,6 @@ void flash_nor_unlock_write_init(firestarter_handle_t* handle) {
                 LOG_INFO_ID(MSG_INFO_SKIPPING_ERASE_MEM);
             }
         }
-    }
-    if (!is_flag_set(FLAG_SKIP_BLANK_CHECK)) {
-        mem_util_blank_check(handle);
     }
 }
 

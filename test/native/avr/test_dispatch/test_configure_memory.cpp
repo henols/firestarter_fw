@@ -190,10 +190,13 @@ static const protocol_family_row_t kAllProtocolFamilies[] = {
 static const size_t kAllProtocolFamiliesCount = sizeof(kAllProtocolFamilies) / sizeof(kAllProtocolFamilies[0]);
 
 void test_case_group1_read_write_verify_never_null_main_for_any_protocol(void) {
-    static const uint8_t cmds[] = {CMD_READ, CMD_WRITE, CMD_VERIFY};
-    static const char* cmd_names[] = {"CMD_READ", "CMD_WRITE", "CMD_VERIFY"};
+    /* CMD_VERIFY was retired in Phase 204 (ordinal 6, dropped from both arrays
+     * and the loop bound below) -- it never reaches configure_memory() any
+     * more, so this group is CMD_READ / CMD_WRITE only now. */
+    static const uint8_t cmds[] = {CMD_READ, CMD_WRITE};
+    static const char* cmd_names[] = {"CMD_READ", "CMD_WRITE"};
     for (size_t i = 0; i < kAllProtocolFamiliesCount; i++) {
-        for (size_t c = 0; c < 3; c++) {
+        for (size_t c = 0; c < 2; c++) {
             firestarter_handle_t h = make_handle(kAllProtocolFamilies[i].protocol, 0, cmds[c]);
             configure_memory(&h);
             char msg[224];
@@ -299,12 +302,21 @@ void test_case_group4b_0x0d_chip_id_null_main_devtest01(void) {
 }
 
 /* Case group 5 — the newly-refused non-0x0D cells, enumerated: the SRAM
- * group's CMD_ERASE, CMD_BLANK_CHECK and CMD_CHECK_CHIP_ID. configure_sram's
- * body is literally just a debug log, which is why these were silent OKs
- * before this task. Tested per-id (not one representative) since
- * configure_sram is the one handler with zero per-command logic to diverge
- * on. */
-void test_case_group5_sram_erase_blank_check_chip_id_null_main(void) {
+ * group's CMD_ERASE and CMD_CHECK_CHIP_ID. configure_sram's body is
+ * literally just a debug log, which is why these were silent OKs before
+ * this task. Tested per-id (not one representative) since configure_sram
+ * is the one handler with zero per-command logic to diverge on.
+ *
+ * Phase 204 (Fork B): this group's third case, the standalone blank-check
+ * command's assertion that SRAM's configure handler leaves
+ * firestarter_operation_main NULL for it, is DELETED here, not re-keyed.
+ * Its own message recorded a Phase 120 disposition of KEEP that rested on
+ * a firmware command surface which no longer exists -- after this
+ * release that ordinal reaches no configure handler at all, so the same
+ * claim is true for a reason that has nothing to do with what the case
+ * was written to check. A vacuous assertion carrying a stale KEEP
+ * rationale is worse than no assertion, because a reader trusts it. */
+void test_case_group5_sram_erase_chip_id_null_main(void) {
     static const uint32_t sram_protocols[] = {0x0E, 0x27, 0x28, 0x29};
     for (size_t i = 0; i < 4; i++) {
         uint32_t protocol = sram_protocols[i];
@@ -317,18 +329,6 @@ void test_case_group5_sram_erase_blank_check_chip_id_null_main(void) {
             "NULL -- configure_sram's body is literally just a debug log",
             (unsigned)protocol);
         TEST_ASSERT_NULL_MESSAGE(h_erase.firestarter_operation_main, msg);
-
-        firestarter_handle_t h_blank = make_handle(protocol, 0, CMD_BLANK_CHECK);
-        configure_memory(&h_blank);
-        snprintf(msg, sizeof(msg),
-            "Case group 5: CMD_BLANK_CHECK on SRAM protocol 0x%02X must leave "
-            "firestarter_operation_main NULL at THIS guard -- the host's _SRAM_PROTO_IDS workaround "
-            "in eprom_operations.py short-circuits check_eprom_blank BEFORE any firmware command is "
-            "issued, so this guard is not reachable from that call path; it does NOT become dead "
-            "code (it fires earlier and gives a materially better message) -- correct Phase 120 "
-            "disposition is KEEP, not deleted, not touched here",
-            (unsigned)protocol);
-        TEST_ASSERT_NULL_MESSAGE(h_blank.firestarter_operation_main, msg);
 
         firestarter_handle_t h_chip_id = make_handle(protocol, 0, CMD_CHECK_CHIP_ID);
         configure_memory(&h_chip_id);
@@ -389,7 +389,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_case_group3_sdp_cmds_dispatch_on_0x0d_with_null_init_end);
     RUN_TEST(test_case_group4a_0x0d_erase_dispatches_to_a_real_op_erase03);
     RUN_TEST(test_case_group4b_0x0d_chip_id_null_main_devtest01);
-    RUN_TEST(test_case_group5_sram_erase_blank_check_chip_id_null_main);
+    RUN_TEST(test_case_group5_sram_erase_chip_id_null_main);
     RUN_TEST(test_case_group6_not_implemented_protocol_unchanged_no_double_error);
 
     return UNITY_END();

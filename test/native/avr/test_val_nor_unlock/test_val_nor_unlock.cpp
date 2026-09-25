@@ -127,15 +127,14 @@ void test_nor_unlock_erase_configure_no_vpp(void) {
         "configure_flash_nor_unlock CMD_ERASE must NOT set any VPP-enable CTL bit");
 }
 
-/* configure-only: CMD_BLANK_CHECK must record zero VPP-enable bits */
-void test_nor_unlock_blank_check_configure_no_vpp(void) {
-    firestarter_handle_t h = make_handle(CMD_BLANK_CHECK);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on 0x06 CMD_BLANK_CHECK");
-    assert_no_vpp_in_recording(
-        "configure_flash_nor_unlock CMD_BLANK_CHECK must NOT set any VPP-enable CTL bit");
-}
+/* Phase 204 (FWCMD-01, Fork D): the CMD_BLANK_CHECK no-VPP case that used
+ * to live here is deleted, not re-keyed. It asserted that configuring the
+ * standalone blank-check command engaged no VPP; after this release that
+ * ordinal reaches no configure handler at all (the arm is gone from
+ * configure_flash_nor_unlock's switch), so the same claim would be true
+ * for a reason unrelated to what this case was written to check. The
+ * other three cases above already cover configure-only no-VPP for this
+ * handler's surviving ordinals. */
 
 /* Leg 1 (Dispatch): CMD_LOCK_STATUS must wire firestarter_operation_main to
  * flash_nor_unlock_read_protection_execute and null firestarter_operation_init
@@ -275,7 +274,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_nor_unlock_read_configure_no_vpp);
     RUN_TEST(test_nor_unlock_write_configure_no_vpp);
     RUN_TEST(test_nor_unlock_erase_configure_no_vpp);
-    RUN_TEST(test_nor_unlock_blank_check_configure_no_vpp);
 
     RUN_TEST(test_nor_unlock_lock_status_dispatch);
     RUN_TEST(test_nor_unlock_lock_status_pinned_sequence);

@@ -223,32 +223,20 @@ static inline int _execute_operation_house_keeping_func(void (*callback)(firesta
 
 static inline bool _single_step_operation_callback(firestarter_handle_t* handle) {
     int res = _execute_operation(handle->firestarter_operation_main, handle);
-    // Frames must be emitted HERE, not inside the callback: _execute_operation
-    // runs it in programmer mode, and on the Uno rurp_log_id is com_mode-gated,
-    // so anything logged in there is silently dropped and the host times out.
-    // mem_util_blank_check leaves the not-blank offset+value in data_buffer
-    // (data_size==4) and handle->address as the progress counter.
-    if (handle->cmd == CMD_BLANK_CHECK) {
-        if (res == ERROR && handle->data_size == 4) {
-            LOG_ERROR_ID_BYTES(MSG_ERR_NOT_BLANK, (const uint8_t*)handle->data_buffer, 4);
-        } else if (res != ERROR && is_operation_in_progress(handle)) {
-            LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, handle->address, handle->mem_size);
-            // The host's MAIN-phase handler acks every DATA frame
-            // unconditionally, as every other data-emitting path here expects
-            // (eprom_read's _process_outgoing_data always op_wait_for_ack()s
-            // after each DATA emit). This loop used to emit without ever
-            // consuming that ack, running unthrottled for the whole operation
-            // without touching the incoming byte stream; left unread long
-            // enough that desynced handle->cmd back to CMD_IDLE outside
-            // command_done(), surfacing as a reused MSG_ERR_EMPTY_INPUT once
-            // the idle branch tried to decode the backlog. Consume it here to
-            // keep the 1:1 balance. One frame per chunk is one ack per chunk,
-            // so the chunk size is what bounds the round-trip count.
-            if (!op_wait_for_ack(handle)) {
-                return false;
-            }
-        }
-    }
+    // This function used to carry a block here, keyed on the standalone
+    // blank-check command's ordinal: frames had to be emitted in THIS
+    // function, not inside the callback, because _execute_operation runs the
+    // callback in programmer mode and on the Uno rurp_log_id is
+    // com_mode-gated, so anything logged there was silently dropped. That
+    // block deferred the standalone blank-check command's not-blank error
+    // frame and progress frame out of programmer mode, and consumed the one
+    // host ack each deferred DATA frame needed to keep a 1:1 frame/ack
+    // balance -- a real defect once meant this loop emitted without ever
+    // consuming that ack, desyncing the port (surfaced as a reused
+    // MSG_ERR_EMPTY_INPUT; see git history for the fix). That command's wire
+    // ordinal was retired in 3.1.0, and the operations that remain on this
+    // path do their own acknowledgement waiting, so no replacement block is
+    // needed here.
     if (res == ERROR) {
         return false;
     }

@@ -27,10 +27,10 @@ Coverage:
      src/proms/eprom.cpp equals the recorded `sites` array positionally on
      (line, predicate, keyed_on, tier); the assertion names the FIRST
      divergence.
-  3. test_exactly_three_protocol_keyed_sites_at_the_pinned_lines -- the
-     live re-parse yields exactly three tier-"protocol" sites, at lines
-     71, 145 and 218.
-  4. test_inventory_is_non_vacuous -- the recorded inventory has >= 24
+  3. test_exactly_one_protocol_keyed_site_at_the_pinned_line -- the live
+     re-parse yields exactly one tier-"protocol" site, currently at line
+     64 (Phase 205 Plan 03 Task 1).
+  4. test_inventory_is_non_vacuous -- the recorded inventory has >= 21
      sites, every one carries a non-empty predicate and reason, both scan
      targets exist and are non-empty, and the live re-parse of eprom.cpp
      returns a non-zero predicate count.
@@ -442,27 +442,42 @@ def test_exactly_one_protocol_keyed_site_at_the_pinned_line():
     """Phase 142 Plan 04 (D-05): the eprom_hv_route_mask resolver collapsed
     the two duplicated protocol-keyed VPP-route forks (formerly tier-1
     sites at :190 and :340) into a single call site apiece, leaving only
-    line 70's pulse-fallback switch as a protocol-keyed branch. This
-    locator is now STRICTLY STRONGER than its three-site predecessor: with
-    only one legitimate tier-1 site, ANY second protocol-keyed branch is a
-    violation, where before three were permitted."""
+    the pulse-fallback switch as a protocol-keyed branch. This locator is
+    now STRICTLY STRONGER than its three-site predecessor: with only one
+    legitimate tier-1 site, ANY second protocol-keyed branch is a
+    violation, where before three were permitted.
+
+    Phase 204 Plan 03 (FWCMD-01): the pinned line moved from 70 to 67 --
+    configure_eprom's `case CMD_BLANK_CHECK:` arm (three lines, no
+    predicate of its own) was deleted above the pulse-fallback switch when
+    the standalone blank-check command's wire ordinal was retired in
+    3.1.0. The switch itself is untouched; only its line number shifted.
+
+    Phase 205 Plan 03 Task 1 (FWBLANK-01/FWBLANK-02): the pinned line moved
+    from 67 to 64 -- two more sites above the pulse-fallback switch were
+    deleted (the CMD_ERASE arm's blank-check assignment and the write-init
+    body's own guard), moving the switch up by three lines. The switch
+    itself is untouched; only its line number shifted again.
+    A number is a measurement of the live source, not a constant to be
+    carried forward by habit -- re-derive it with the extractor at commit
+    time if this file's diff ever grows again."""
     live = _extract_predicates(_SCAN_EPROM.read_text())
     protocol_lines = sorted(s["line"] for s in live if s["tier"] == "protocol")
-    assert protocol_lines == [70], (
-        "expected exactly one tier-protocol site, at line [70], found "
-        f"{protocol_lines} instead. More than [70] means a SECOND "
+    assert protocol_lines == [64], (
+        "expected exactly one tier-protocol site, at line [64], found "
+        f"{protocol_lines} instead. More than [64] means a SECOND "
         "protocol-keyed branch has appeared -- a second algorithm selector "
         "and a TABLE-05 violation, to be fixed in src/proms/eprom.cpp, "
-        "never here. An empty list means line 70's own pulse-fallback "
-        "switch was removed without updating this inventory."
+        "never here. An empty list means the pulse-fallback switch was "
+        "removed without updating this inventory."
     )
 
 
 def test_inventory_is_non_vacuous():
     inventory = _load_inventory()
     sites = inventory["sites"]
-    assert len(sites) >= 21, (
-        f"non-vacuous guard: expected >= 21 recorded sites, got "
+    assert len(sites) >= 20, (
+        f"non-vacuous guard: expected >= 20 recorded sites, got "
         f"{len(sites)} -- an empty or truncated inventory must FAIL, not "
         "silently pass."
     )

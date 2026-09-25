@@ -49,12 +49,6 @@ void configure_eprom(firestarter_handle_t* handle) {
             break;
         case CMD_ERASE:
             handle->firestarter_operation_main = eprom_erase_execute;
-            if (!is_flag_set(FLAG_SKIP_BLANK_CHECK)) {
-                handle->firestarter_operation_end = mem_util_blank_check;
-            }
-            break;
-        case CMD_BLANK_CHECK:
-            handle->firestarter_operation_main = mem_util_blank_check;
             break;
         case CMD_CHECK_CHIP_ID:
             handle->firestarter_operation_init = eprom_check_chip_id_init;
@@ -140,9 +134,6 @@ static void eprom_internal_write_init_body(firestarter_handle_t* handle) {
                 LOG_INFO_ID(MSG_INFO_SKIPPING_ERASE);
             }
         }
-    }
-    if (!is_flag_set(FLAG_SKIP_BLANK_CHECK)) {
-        mem_util_blank_check_region(handle, handle->address, mem_util_operation_end(handle));
     }
 }
 
@@ -393,10 +384,10 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
          *
          * Payload is (absolute chip address, op_end), where op_end is the
          * operation's end -- equal to mem_size for a whole-device operation
-         * and to the region end for a bounded one (D-06). This is the same
-         * shape mem_util_blank_check emits, so 0xE0 keeps exactly one
-         * payload meaning: "the end of the operation's range", not merely
-         * "the device size".
+         * and to the region end for a bounded one (D-06). 0xE0 now has
+         * exactly one emitter, this one, and this comment is the sole
+         * definition of its payload contract: "the end of the operation's
+         * range", not merely "the device size".
          *
          * Placed BEFORE the skips below so the cadence is independent of how many
          * bytes are skipped. The unsigned-difference form means a millis() rollover

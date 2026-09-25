@@ -5,11 +5,11 @@
       "src/proms/eprom_params.cpp"
     ],
     "blob_shas": {
-      "src/proms/eprom.cpp": "e3b53d9d2f7bf7925d1c1fc16bc4a0aaee17884b",
+      "src/proms/eprom.cpp": "ebf013f45feefb4fd24cb406f39b3d8750d4efca",
       "src/proms/eprom_params.cpp": "b1e7188660ca0c3435ce871e4898b3697fd16057"
     },
-    "recorded_at_head": "01db51b79a77255e13f2fc201635ad0cf48b0f77",
-    "recorded_by": "Phase 142 Plan 04 -- because L-2 requires this golden and the eprom.cpp source change to land in the SAME commit (the one-commit property that keeps the D-18 gate RED once, for one reason), recorded_at_head necessarily names this commit's PARENT rather than the commit that actually carries this file. Do not read that as a mistake: it is the deliberate one-commit offset this plan's own objective documents. Phase 143 Plan 05 -- the same one-commit property, under D-23's name this phase: this file's blob_shas['src/proms/eprom.cpp'] is the SHA of the working-tree file as it will read once committed (git hash-object src/proms/eprom.cpp, run before staging), and recorded_at_head is this commit's PARENT (a5a39d92128edbdb97f425e1538227a85a257e57, the tip of plan 143-03) rather than the commit that actually carries this file -- deliberate, for the identical structural reason Phase 142 recorded above, not a second mistake. Debug session w27c512-program-fail-byte0 (Phase 145 Gate 2 root-cause fix) -- re-derived a THIRD time, under the identical one-commit property: blob_shas['src/proms/eprom.cpp'] is `git hash-object src/proms/eprom.cpp` run on the working tree before staging, and recorded_at_head names this commit's PARENT (a594173d2bbbabe74e6a470b4751528435246326). The fix adds one file-static helper, eprom_internal_program_pulse, which asserts the program-voltage route around each program pulse -- the assert Phase 141 dropped when it deleted the old block-mismatch reporter, and whose absence made every 27C write fail at its first non-0xFF byte. That helper contains NO conditional at all, so this re-derivation moved ONLY line numbers: all 26 sites keep their predicate, keyed_on and tier byte-identically (machine-checked, not asserted by hand), counts stay 26 / 1 / 25, and the single tier-1 protocol-keyed site remains configure_eprom's pulse-fallback switch, now at line 70 (was 70). 15 of 26 sites shifted; every shifted site sits below the inserted helper, and every site above it is line-identical. Debug session w27c512-devtest-all-bad -- re-derived a FOURTH time, under the identical one-commit property: blob_shas['src/proms/eprom.cpp'] is `git hash-object src/proms/eprom.cpp` run on the working tree before staging, and recorded_at_head names this commit's PARENT (88d204a5a023bcad6f708b33150502ba90fdec2b). The fix changes ONE expression -- eprom_internal_erase's CE pulse width goes from handle->pulse_delay (the per-byte PROGRAM width, ~100 us) to EPROM_ERASE_PULSE_US (100 ms, the W27C512 datasheet T_PWE) -- plus the comment that explains it. It adds NO conditional and NO function, so this re-derivation moved ONLY line numbers: all 26 sites keep their predicate, keyed_on and tier verbatim, and the 5 sites below eprom_internal_erase's pulse shift by exactly 11 lines 649->660, 652->663, 653->664, 660->671, 677->688. RE-RECORDED by debug session w27c512-write-slow-3x (2026-08-22), which replaced eprom.cpp's per-BYTE program loop with a pass-batched one (a scan pass alternating with a pulse pass) to fix a measured 3.2x write-speed regression on protocol 0x07 -- 105.89 s -> 33.51 s for a 64 KiB W27C512 on a leonardo, byte-exact. WHAT MOVED AND WHY, per this gate's own how_to_update: total_sites 26 -> 23 and other_sites 25 -> 22. Three branch sites were REMOVED and none was added: two `i < handle->data_size` loop conditions became `i < block_len` (a hoisted uint16_t block length, which also saved AVR flash) and the final full-block verify pass, which was a byte-identical inline copy of memory_verify_execute, became a CALL to it -- taking its `firestarter_get_data(...) == expected` predicate out of this file. Every remaining predicate's spelling, keyed_on and tier are unchanged; only line numbers shifted. THE INVARIANT THIS GATE EXISTS FOR IS INTACT AND WAS RE-CHECKED, NOT ASSUMED: protocol_keyed_sites is still exactly 1, still `switch (handle->protocol)` at line 70 (configure_eprom's pulse-fallback switch), so TABLE-05's 'no second algorithm selector' holds -- the pass-batched loop reads no handle->protocol at all, and the one new build-time switch it did add (EPROM_OVERPROGRAM_SUPPORTED, a leonardo-only flash-funding guard) is a preprocessor conditional keyed on a target, never on a protocol. src/proms/eprom_params.cpp is byte-unchanged and its blob SHA is untouched. Re-derived, never hand-edited: sites and counts come from this gate module's OWN _extract_predicates() run against the live file, and blob_shas from `git hash-object` on the working tree before staging. DEVIATION FROM THE ONE-COMMIT PROPERTY, stated rather than hidden: the earlier re-records landed the source change and this golden in the SAME commit so the gate went RED once, for one reason. That was not possible here -- the eprom.cpp change landed at 071d505/5882548 and was PUSHED to an open pull request (#55) before this gate's failure was discovered, so folding this record into those commits would mean rewriting published history under a live PR. recorded_at_head therefore names the actual HEAD at recording time (273eedb), NOT this commit's parent, and the gate was legitimately RED in between. Also note the stale clause earlier in this field asserting a 'byte-unchanged guarantee for src/proms/eprom.cpp' (D-10, Phase 140): that guarantee was already void long before this session -- Phases 141/142/143 and 145 all edited this file -- and the assertion message that repeats it is inherited text, not a live claim. Phase 156 Plan 03 (DEDUP-01) -- re-derived a FIFTH time, under the identical one-commit property: blob_shas['src/proms/eprom.cpp'] is `git hash-object src/proms/eprom.cpp` run on the working tree before staging, and recorded_at_head names this commit's PARENT (3d0b73d). The change replaces eprom_check_vpp's over-voltage arm's inline eight-assignment VPP-mismatch packing block with a call to the new shared helper mem_util_report_voltage (src/proms/memory.cpp); the arm's `if (is_flag_set(FLAG_FORCE))` branch, which selected between MSG_WARN_VPP_HIGH/RESPONSE_CODE_WARNING and MSG_ERR_VPP_HIGH/RESPONSE_CODE_ERROR, becomes a `bool force = is_flag_set(FLAG_FORCE);` assignment feeding two parallel ternaries passed as call arguments -- this is a GENUINE branch removal, not a relocation: the fork survives as a call-site parameter pair rather than as a source-level `if`, and this gate's own extractor correctly does not count a plain assignment statement as a branch predicate. WHAT MOVED AND WHY, per this gate's own how_to_update: total_sites 23 -> 22 and other_sites 22 -> 21; protocol_keyed_sites stays exactly 1, still `switch (handle->protocol)` at line 70. No site was added and no surviving site was re-keyed or re-tiered: all 22 surviving entries were machine-compared field by field against the prior 23-site inventory (predicate, keyed_on, tier) and found byte-identical apart from `line`, which is the only field this re-derivation touched -- five sites below the edited region shifted up (736->718, 787->753, 790->756, 791->757, 798->764, 815->781; six listed, one of which, 736->718, sits just below the edited block and the rest sit inside or after the eprom_check_chip_id arm further down the file). The second FLAG_FORCE-keyed site in this file (the chip-ID mismatch ternary, now at line 757) is UNCHANGED and belongs to DEDUP-02 (Phase 156 Plan 04), which will re-derive this golden a SIXTH time in its own commit when it removes that site. src/proms/eprom_params.cpp is byte-unchanged and its blob SHA is untouched. Re-derived, never hand-edited: sites and counts come from this gate module's own _extract_predicates() run against the live file, and blob_shas from `git hash-object` on the working tree before staging. Phase 156 Plan 04 (DEDUP-02) -- re-derived a SIXTH time, under the identical one-commit property: blob_shas['src/proms/eprom.cpp'] is `git hash-object src/proms/eprom.cpp` run on the working tree before staging, and recorded_at_head names this commit's PARENT (6bc3ed3). The change replaces eprom_internal_check_chip_id's inline chip-ID-mismatch guard-plus-four-byte-payload block with a call to the new shared helper mem_util_report_chip_id (src/proms/memory.cpp); the removed predicate -- `if (chip_id != handle->chip_id)` -- did NOT disappear: it was RELOCATED into mem_util_report_chip_id's early return in src/proms/memory.cpp, a file this gate does not scan. This is a relocation, not a deletion of a chip_id safety branch from eprom.cpp -- the same relocation pattern tests/test_hv_routing_source_contract_v142.py exists to catch, which is why it is named rather than glossed. The surviving `is_flag_set(FLAG_FORCE)` ternary at line 757 is a DIFFERENT site -- eprom_generic_init's own caller-policy decision, feeding mem_util_report_chip_id's warn_only parameter -- and is untouched; folding it into the helper is exactly what this plan's own prohibitions forbid, because eprom_check_chip_id_execute (the standalone CMD_CHECK_CHIP_ID path) keeps passing an unconditional RESPONSE_CODE_ERROR regardless of FLAG_FORCE. WHAT MOVED AND WHY, per this gate's own how_to_update: total_sites 22 -> 21 and other_sites 21 -> 20; protocol_keyed_sites stays exactly 1, still `switch (handle->protocol)` at line 70. No site was added and no surviving site was re-keyed or re-tiered: all 20 surviving `other`-tier entries plus the one `protocol`-tier entry were machine-compared field by field (predicate, keyed_on, tier), positionally aligned against the prior 22-site inventory, and found byte-identical apart from `line`, which is the only field this re-derivation touched -- one site shifted, 781 -> 775 (the using_p1_as_vpp pin-routing fork, which sits below the edited region). Positional alignment (not a predicate-text dict lookup) was required because three sites share the identical predicate/keyed_on/tier signature `if (handle->response_code == RESPONSE_CODE_ERROR)` / [response_code] / other (lines 146, 177, 676) -- a naive dict keyed on that signature would collapse them and lose their distinct class/reason metadata; each was matched to its live counterpart by ascending line order instead. This closes the phase's two-commit sequence begun by Plan 03: DEDUP-01 removed one site (23 -> 22) and DEDUP-02 removes this one (22 -> 21), so the gate reads GREEN at every commit boundary. Divergence from research's own predicted final survivor shifts, stated rather than forced into agreement: research (cited in 156-04-PLAN.md) predicted :787/:790/:791/:815 landing at :758/:761/:762/:773; the machine-derived result instead lands the equivalent surviving sites at 753/756/757/775 -- the prediction was a sanity check, not a substitute for live extraction, and this re-derivation used the live extraction. src/proms/eprom_params.cpp is byte-unchanged and its blob SHA is untouched. Re-derived, never hand-edited: sites and counts come from this gate module's own _extract_predicates() run against the live file, and blob_shas from `git hash-object` on the working tree before staging. Phase 199 Plan 03 -- re-derived a SEVENTH time, under the identical one-commit property, with a stated deviation: blob_shas['src/proms/eprom.cpp'] is `git hash-object src/proms/eprom.cpp` run on the working tree before staging, and recorded_at_head names this commit's PARENT (bdefe388f536536bb1df0b4493dd520022c648b3, the tip of this plan's own Task 2 commit). D-21/D-22 (the operator's 2026-09-19 reversal) added a second comparison to eprom_hv_route_mask -- `if (handle->vpp_mv > RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV)`, immediately after the existing row->vpp_path check -- and this file's own doc-correction pass (the same commit, correcting the resolution-order comment above the function to describe the new fourth step) together account for the full line-number shift. WHAT MOVED AND WHY: total_sites 21 -> 22, other_sites 20 -> 21, protocol_keyed_sites stays exactly 1 (still `switch (handle->protocol)` at line 70). ONE new site was added -- the ceiling comparison at line 257, class vpp_route, keyed on vpp_mv -- and no site was removed. The FLAG_VPE_AS_VPP site shifted 241 -> 247 (doc-comment growth above the function, not a code move) and every site from the old :266 onward shifted by +9 (the code insertion plus the doc growth, combined). All shifted sites keep their predicate, keyed_on and tier byte-identical to the prior record; only `line` changed for them. DEVIATION FROM THE ONE-COMMIT PROPERTY, stated rather than hidden: the source change that first broke this gate landed in this plan's Task 1 commit (b031ec2), two commits before this golden fix, because Task 1's own <verify> block does not run the tests/ suite -- only Task 3's does, per this plan's own structure. The gate was legitimately RED in between, exactly as an earlier deviation in this same field records for a different session. src/proms/eprom_params.cpp is byte-unchanged and its blob SHA is untouched. Re-derived, never hand-edited: sites and counts come from this gate module's own _extract_predicates() run against the live file, and blob_shas from `git hash-object` on the working tree before staging. Phase 201 Plan 03 (BLANK-01 / D-09 / D-10 / RESEARCH Open Question 1) -- re-derived a further time: eprom.cpp:145's whole-device mem_util_blank_check(handle) call became mem_util_blank_check_region(handle, handle->address, mem_util_operation_end(handle)), a function-call replacement inside an existing statement, adding no new conditional and no new branch predicate to this file -- the 0 = absent fallback and the fail-closed clamp both resolve inside mem_util_operation_end, defined in src/proms/memory.cpp, precisely so this golden gains no ternary row. This re-derivation also corrects a pre-existing counts/sites drift, unrelated to this plan's own edit: total_sites and other_sites read 21/20 while sites already held 22 entries (one more site than either counter reported, silently, because no test reads the counts block). They now read 22/21, matching len(sites) exactly. blob_shas['src/proms/eprom.cpp'] is git hash-object src/proms/eprom.cpp run on the working tree before staging, and recorded_at_head names this commit's PARENT (af47bf464a24c005e556cf3d7308679064feca5e, plan 201-02's tip) rather than the commit that actually carries this file -- the same deliberate one-commit offset every prior re-derivation in this history records. protocol_lines stays [70]; no line was inserted above eprom.cpp:70. Plan 201-04 Task 2 -- the phase's SECOND re-derivation (the first was plan 201-03's Task 1, commit 76fd3c7): the write-init call site (201-03) and the write-loop denominator (this commit) landed in separate commits, each carrying its own re-derivation -- the honest form, per Phase 199 Plan 03's precedent of stating a deviation rather than hiding one. This re-derivation moved only line numbers (8 of 22 sites shift, all below the op_end insertion point): the new op_end local (hoisted before the per-byte loop, inside the existing #ifndef SERIAL_ON_IO guard alongside last_emit_ms) is a plain function-call assignment, not a ternary, so it adds zero new predicate rows -- all 22 sites are unchanged in predicate, keyed_on, tier, class and reason; only 8 line numbers moved, verified by a positional (not predicate-keyed) field-by-field diff against the parent commit. This re-derivation matched old sites to live sites BY POSITION, not by a (predicate, keyed_on, tier) dict key: that key collides for two site pairs sharing identical predicate text (FLAG_SKIP_BLANK_CHECK/ctrl_flags and RESPONSE_CODE_ERROR/response_code, the exact collision plan 201-03's 76fd3c7 hit and 0c2eac7 repaired), and a plain dict comprehension keeps only the last-inserted value per colliding key -- positional matching was verified safe first (zero (predicate, keyed_on, tier) mismatches between old[i] and live[i] for all i, confirming no site was added, removed or reordered) before being used to carry class/reason forward.",
+    "recorded_at_head": "a4e002f2da0b44e7545ab43180951538e64022c1",
+    "recorded_by": "Phase 142 Plan 04 -- because L-2 requires this golden and the eprom.cpp source change to land in the SAME commit (the one-commit property that keeps the D-18 gate RED once, for one reason), recorded_at_head necessarily names this commit's PARENT rather than the commit that actually carries this file. Do not read that as a mistake: it is the deliberate one-commit offset this plan's own objective documents. Phase 143 Plan 05 -- the same one-commit property, under D-23's name this phase: this file's blob_shas['src/proms/eprom.cpp'] is the SHA of the working-tree file as it will read once committed (git hash-object src/proms/eprom.cpp, run before staging), and recorded_at_head is this commit's PARENT (a5a39d92128edbdb97f425e1538227a85a257e57, the tip of plan 143-03) rather than the commit that actually carries this file -- deliberate, for the identical structural reason Phase 142 recorded above, not a second mistake. Debug session w27c512-program-fail-byte0 (Phase 145 Gate 2 root-cause fix) -- re-derived a THIRD time, under the identical one-commit property: blob_shas['src/proms/eprom.cpp'] is `git hash-object src/proms/eprom.cpp` run on the working tree before staging, and recorded_at_head names this commit's PARENT (a594173d2bbbabe74e6a470b4751528435246326). The fix adds one file-static helper, eprom_internal_program_pulse, which asserts the program-voltage route around each program pulse -- the assert Phase 141 dropped when it deleted the old block-mismatch reporter, and whose absence made every 27C write fail at its first non-0xFF byte. That helper contains NO conditional at all, so this re-derivation moved ONLY line numbers: all 26 sites keep their predicate, keyed_on and tier byte-identically (machine-checked, not asserted by hand), counts stay 26 / 1 / 25, and the single tier-1 protocol-keyed site remains configure_eprom's pulse-fallback switch, now at line 70 (was 70). 15 of 26 sites shifted; every shifted site sits below the inserted helper, and every site above it is line-identical. Debug session w27c512-devtest-all-bad -- re-derived a FOURTH time, under the identical one-commit property: blob_shas['src/proms/eprom.cpp'] is `git hash-object src/proms/eprom.cpp` run on the working tree before staging, and recorded_at_head names this commit's PARENT (88d204a5a023bcad6f708b33150502ba90fdec2b). The fix changes ONE expression -- eprom_internal_erase's CE pulse width goes from handle->pulse_delay (the per-byte PROGRAM width, ~100 us) to EPROM_ERASE_PULSE_US (100 ms, the W27C512 datasheet T_PWE) -- plus the comment that explains it. It adds NO conditional and NO function, so this re-derivation moved ONLY line numbers: all 26 sites keep their predicate, keyed_on and tier verbatim, and the 5 sites below eprom_internal_erase's pulse shift by exactly 11 lines 649->660, 652->663, 653->664, 660->671, 677->688. RE-RECORDED by debug session w27c512-write-slow-3x (2026-08-22), which replaced eprom.cpp's per-BYTE program loop with a pass-batched one (a scan pass alternating with a pulse pass) to fix a measured 3.2x write-speed regression on protocol 0x07 -- 105.89 s -> 33.51 s for a 64 KiB W27C512 on a leonardo, byte-exact. WHAT MOVED AND WHY, per this gate's own how_to_update: total_sites 26 -> 23 and other_sites 25 -> 22. Three branch sites were REMOVED and none was added: two `i < handle->data_size` loop conditions became `i < block_len` (a hoisted uint16_t block length, which also saved AVR flash) and the final full-block verify pass, which was a byte-identical inline copy of memory_verify_execute, became a CALL to it -- taking its `firestarter_get_data(...) == expected` predicate out of this file. Every remaining predicate's spelling, keyed_on and tier are unchanged; only line numbers shifted. THE INVARIANT THIS GATE EXISTS FOR IS INTACT AND WAS RE-CHECKED, NOT ASSUMED: protocol_keyed_sites is still exactly 1, still `switch (handle->protocol)` at line 70 (configure_eprom's pulse-fallback switch), so TABLE-05's 'no second algorithm selector' holds -- the pass-batched loop reads no handle->protocol at all, and the one new build-time switch it did add (EPROM_OVERPROGRAM_SUPPORTED, a leonardo-only flash-funding guard) is a preprocessor conditional keyed on a target, never on a protocol. src/proms/eprom_params.cpp is byte-unchanged and its blob SHA is untouched. Re-derived, never hand-edited: sites and counts come from this gate module's OWN _extract_predicates() run against the live file, and blob_shas from `git hash-object` on the working tree before staging. DEVIATION FROM THE ONE-COMMIT PROPERTY, stated rather than hidden: the earlier re-records landed the source change and this golden in the SAME commit so the gate went RED once, for one reason. That was not possible here -- the eprom.cpp change landed at 071d505/5882548 and was PUSHED to an open pull request (#55) before this gate's failure was discovered, so folding this record into those commits would mean rewriting published history under a live PR. recorded_at_head therefore names the actual HEAD at recording time (273eedb), NOT this commit's parent, and the gate was legitimately RED in between. Also note the stale clause earlier in this field asserting a 'byte-unchanged guarantee for src/proms/eprom.cpp' (D-10, Phase 140): that guarantee was already void long before this session -- Phases 141/142/143 and 145 all edited this file -- and the assertion message that repeats it is inherited text, not a live claim. Phase 156 Plan 03 (DEDUP-01) -- re-derived a FIFTH time, under the identical one-commit property: blob_shas['src/proms/eprom.cpp'] is `git hash-object src/proms/eprom.cpp` run on the working tree before staging, and recorded_at_head names this commit's PARENT (3d0b73d). The change replaces eprom_check_vpp's over-voltage arm's inline eight-assignment VPP-mismatch packing block with a call to the new shared helper mem_util_report_voltage (src/proms/memory.cpp); the arm's `if (is_flag_set(FLAG_FORCE))` branch, which selected between MSG_WARN_VPP_HIGH/RESPONSE_CODE_WARNING and MSG_ERR_VPP_HIGH/RESPONSE_CODE_ERROR, becomes a `bool force = is_flag_set(FLAG_FORCE);` assignment feeding two parallel ternaries passed as call arguments -- this is a GENUINE branch removal, not a relocation: the fork survives as a call-site parameter pair rather than as a source-level `if`, and this gate's own extractor correctly does not count a plain assignment statement as a branch predicate. WHAT MOVED AND WHY, per this gate's own how_to_update: total_sites 23 -> 22 and other_sites 22 -> 21; protocol_keyed_sites stays exactly 1, still `switch (handle->protocol)` at line 70. No site was added and no surviving site was re-keyed or re-tiered: all 22 surviving entries were machine-compared field by field against the prior 23-site inventory (predicate, keyed_on, tier) and found byte-identical apart from `line`, which is the only field this re-derivation touched -- five sites below the edited region shifted up (736->718, 787->753, 790->756, 791->757, 798->764, 815->781; six listed, one of which, 736->718, sits just below the edited block and the rest sit inside or after the eprom_check_chip_id arm further down the file). The second FLAG_FORCE-keyed site in this file (the chip-ID mismatch ternary, now at line 757) is UNCHANGED and belongs to DEDUP-02 (Phase 156 Plan 04), which will re-derive this golden a SIXTH time in its own commit when it removes that site. src/proms/eprom_params.cpp is byte-unchanged and its blob SHA is untouched. Re-derived, never hand-edited: sites and counts come from this gate module's own _extract_predicates() run against the live file, and blob_shas from `git hash-object` on the working tree before staging. Phase 156 Plan 04 (DEDUP-02) -- re-derived a SIXTH time, under the identical one-commit property: blob_shas['src/proms/eprom.cpp'] is `git hash-object src/proms/eprom.cpp` run on the working tree before staging, and recorded_at_head names this commit's PARENT (6bc3ed3). The change replaces eprom_internal_check_chip_id's inline chip-ID-mismatch guard-plus-four-byte-payload block with a call to the new shared helper mem_util_report_chip_id (src/proms/memory.cpp); the removed predicate -- `if (chip_id != handle->chip_id)` -- did NOT disappear: it was RELOCATED into mem_util_report_chip_id's early return in src/proms/memory.cpp, a file this gate does not scan. This is a relocation, not a deletion of a chip_id safety branch from eprom.cpp -- the same relocation pattern tests/test_hv_routing_source_contract_v142.py exists to catch, which is why it is named rather than glossed. The surviving `is_flag_set(FLAG_FORCE)` ternary at line 757 is a DIFFERENT site -- eprom_generic_init's own caller-policy decision, feeding mem_util_report_chip_id's warn_only parameter -- and is untouched; folding it into the helper is exactly what this plan's own prohibitions forbid, because eprom_check_chip_id_execute (the standalone CMD_CHECK_CHIP_ID path) keeps passing an unconditional RESPONSE_CODE_ERROR regardless of FLAG_FORCE. WHAT MOVED AND WHY, per this gate's own how_to_update: total_sites 22 -> 21 and other_sites 21 -> 20; protocol_keyed_sites stays exactly 1, still `switch (handle->protocol)` at line 70. No site was added and no surviving site was re-keyed or re-tiered: all 20 surviving `other`-tier entries plus the one `protocol`-tier entry were machine-compared field by field (predicate, keyed_on, tier), positionally aligned against the prior 22-site inventory, and found byte-identical apart from `line`, which is the only field this re-derivation touched -- one site shifted, 781 -> 775 (the using_p1_as_vpp pin-routing fork, which sits below the edited region). Positional alignment (not a predicate-text dict lookup) was required because three sites share the identical predicate/keyed_on/tier signature `if (handle->response_code == RESPONSE_CODE_ERROR)` / [response_code] / other (lines 146, 177, 676) -- a naive dict keyed on that signature would collapse them and lose their distinct class/reason metadata; each was matched to its live counterpart by ascending line order instead. This closes the phase's two-commit sequence begun by Plan 03: DEDUP-01 removed one site (23 -> 22) and DEDUP-02 removes this one (22 -> 21), so the gate reads GREEN at every commit boundary. Divergence from research's own predicted final survivor shifts, stated rather than forced into agreement: research (cited in 156-04-PLAN.md) predicted :787/:790/:791/:815 landing at :758/:761/:762/:773; the machine-derived result instead lands the equivalent surviving sites at 753/756/757/775 -- the prediction was a sanity check, not a substitute for live extraction, and this re-derivation used the live extraction. src/proms/eprom_params.cpp is byte-unchanged and its blob SHA is untouched. Re-derived, never hand-edited: sites and counts come from this gate module's own _extract_predicates() run against the live file, and blob_shas from `git hash-object` on the working tree before staging. Phase 199 Plan 03 -- re-derived a SEVENTH time, under the identical one-commit property, with a stated deviation: blob_shas['src/proms/eprom.cpp'] is `git hash-object src/proms/eprom.cpp` run on the working tree before staging, and recorded_at_head names this commit's PARENT (bdefe388f536536bb1df0b4493dd520022c648b3, the tip of this plan's own Task 2 commit). D-21/D-22 (the operator's 2026-09-19 reversal) added a second comparison to eprom_hv_route_mask -- `if (handle->vpp_mv > RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV)`, immediately after the existing row->vpp_path check -- and this file's own doc-correction pass (the same commit, correcting the resolution-order comment above the function to describe the new fourth step) together account for the full line-number shift. WHAT MOVED AND WHY: total_sites 21 -> 22, other_sites 20 -> 21, protocol_keyed_sites stays exactly 1 (still `switch (handle->protocol)` at line 70). ONE new site was added -- the ceiling comparison at line 257, class vpp_route, keyed on vpp_mv -- and no site was removed. The FLAG_VPE_AS_VPP site shifted 241 -> 247 (doc-comment growth above the function, not a code move) and every site from the old :266 onward shifted by +9 (the code insertion plus the doc growth, combined). All shifted sites keep their predicate, keyed_on and tier byte-identical to the prior record; only `line` changed for them. DEVIATION FROM THE ONE-COMMIT PROPERTY, stated rather than hidden: the source change that first broke this gate landed in this plan's Task 1 commit (b031ec2), two commits before this golden fix, because Task 1's own <verify> block does not run the tests/ suite -- only Task 3's does, per this plan's own structure. The gate was legitimately RED in between, exactly as an earlier deviation in this same field records for a different session. src/proms/eprom_params.cpp is byte-unchanged and its blob SHA is untouched. Re-derived, never hand-edited: sites and counts come from this gate module's own _extract_predicates() run against the live file, and blob_shas from `git hash-object` on the working tree before staging. Phase 201 Plan 03 (BLANK-01 / D-09 / D-10 / RESEARCH Open Question 1) -- re-derived a further time: eprom.cpp:145's whole-device mem_util_blank_check(handle) call became mem_util_blank_check_region(handle, handle->address, mem_util_operation_end(handle)), a function-call replacement inside an existing statement, adding no new conditional and no new branch predicate to this file -- the 0 = absent fallback and the fail-closed clamp both resolve inside mem_util_operation_end, defined in src/proms/memory.cpp, precisely so this golden gains no ternary row. This re-derivation also corrects a pre-existing counts/sites drift, unrelated to this plan's own edit: total_sites and other_sites read 21/20 while sites already held 22 entries (one more site than either counter reported, silently, because no test reads the counts block). They now read 22/21, matching len(sites) exactly. blob_shas['src/proms/eprom.cpp'] is git hash-object src/proms/eprom.cpp run on the working tree before staging, and recorded_at_head names this commit's PARENT (af47bf464a24c005e556cf3d7308679064feca5e, plan 201-02's tip) rather than the commit that actually carries this file -- the same deliberate one-commit offset every prior re-derivation in this history records. protocol_lines stays [70]; no line was inserted above eprom.cpp:70. Plan 201-04 Task 2 -- the phase's SECOND re-derivation (the first was plan 201-03's Task 1, commit 76fd3c7): the write-init call site (201-03) and the write-loop denominator (this commit) landed in separate commits, each carrying its own re-derivation -- the honest form, per Phase 199 Plan 03's precedent of stating a deviation rather than hiding one. This re-derivation moved only line numbers (8 of 22 sites shift, all below the op_end insertion point): the new op_end local (hoisted before the per-byte loop, inside the existing #ifndef SERIAL_ON_IO guard alongside last_emit_ms) is a plain function-call assignment, not a ternary, so it adds zero new predicate rows -- all 22 sites are unchanged in predicate, keyed_on, tier, class and reason; only 8 line numbers moved, verified by a positional (not predicate-keyed) field-by-field diff against the parent commit. This re-derivation matched old sites to live sites BY POSITION, not by a (predicate, keyed_on, tier) dict key: that key collides for two site pairs sharing identical predicate text (FLAG_SKIP_BLANK_CHECK/ctrl_flags and RESPONSE_CODE_ERROR/response_code, the exact collision plan 201-03's 76fd3c7 hit and 0c2eac7 repaired), and a plain dict comprehension keeps only the last-inserted value per colliding key -- positional matching was verified safe first (zero (predicate, keyed_on, tier) mismatches between old[i] and live[i] for all i, confirming no site was added, removed or reordered) before being used to carry class/reason forward. Phase 204 Plan 03 (FWCMD-01) -- re-derived an EIGHTH time, under the identical one-commit property: blob_shas['src/proms/eprom.cpp'] is `git hash-object src/proms/eprom.cpp` run on the working tree before staging, and recorded_at_head names this commit's PARENT (29daf42e2da252bf68a7f11082a9e61094e3e4d8, the tip of this plan's Task 1 commit). The change deletes configure_eprom's `case CMD_BLANK_CHECK:` arm -- a case label, one function-pointer assignment and a break, three lines total -- as part of retiring the standalone blank-check command's wire ordinal in 3.1.0. That arm contained no conditional and no branch predicate this gate tracks (a `switch (handle->cmd)` case label is not itself a predicate this extractor records; only the pre-existing `switch (handle->cmd)` line at :45 is), so this re-derivation moved ONLY line numbers: 20 of 22 sites shift by exactly -3, and the two sites above the deleted arm (the command-dispatch switch at :45 and the FLAG_SKIP_BLANK_CHECK check at :52) are line-identical. Every site's predicate, keyed_on, tier, class and reason is byte-identical to the prior record -- machine-checked, not asserted by hand, via a positional field-by-field diff before this file was written. counts stays 22 / 1 / 21; the single tier-protocol site (configure_eprom's pulse-fallback switch) shifts with the rest, from line 70 to line 67. src/proms/eprom_params.cpp is byte-unchanged and its blob SHA is untouched. Re-derived, never hand-edited: sites and counts come from this gate module's own _extract_predicates() run against the live file, and blob_shas from `git hash-object` on the working tree before staging. Phase 205 Plan 03 Task 1 (FWBLANK-01/FWBLANK-02) -- re-derived a NINTH time, under the identical one-commit property: blob_shas['src/proms/eprom.cpp'] is `git hash-object src/proms/eprom.cpp` run on the working tree before staging, and recorded_at_head names this commit's PARENT (a4e002f2da0b44e7545ab43180951538e64022c1, the tip of plan 205-02's fix commit). The change deletes TWO sites: configure_eprom's CMD_ERASE-arm blank-check assignment (formerly line 52) and the write-init body's blank-check region call (formerly line 141) -- both retire the wire-protocol's device-side blank-check pre-flight per FWBLANK-01/FWBLANK-02, moving the refusal to the host. WHAT MOVED AND WHY, per this gate's own how_to_update: total_sites 22 -> 20, other_sites 21 -> 19; protocol_keyed_sites stays exactly 1, still `switch (handle->protocol)`, shifting from line 67 to line 64 with the rest. These two deleted sites share an IDENTICAL (predicate, keyed_on, tier) signature -- both were `if (!is_flag_set(FLAG_SKIP_BLANK_CHECK))` / [ctrl_flags] / other -- exactly the collision this gate's own recorded_by history has hit before (see plan 201-04's entry above). A predicate-keyed dict comparison would have silently collapsed both onto one entry and lost one class/reason pair; this re-derivation matched old sites to live sites BY POSITION instead, first deleting the two known-removed entries from the OLD list (by line number, not by predicate text), then zipping old[i]<->live[i] and verifying all 20 pairs identical on (predicate, keyed_on, tier) before carrying class and reason forward onto the new line values -- 0 mismatches across all 20 pairs, machine-checked, not asserted by hand. Every surviving site's predicate, keyed_on, tier, class and reason is byte-identical to the prior record; only `line` changed. src/proms/eprom_params.cpp is byte-unchanged and its blob SHA is untouched. Re-derived, never hand-edited: sites and counts come from this gate module's own _extract_predicates() run against the live file, and blob_shas from `git hash-object` on the working tree before staging.",
     "requirement": "TABLE-05",
     "decision": "D-12, D-13",
     "why_two_checks": "A blob-SHA match alone cannot distinguish 'unchanged' from 'a branch deleted together with the code that consumed it' -- both leave the file's other bytes identical to some other prior state's bytes, so the live re-parsed site-by-site inventory (predicate text + keyed_on + tier, compared positionally) is what makes a deletion, or a new insertion, visible even when nothing else about the blob changed.",
@@ -30,17 +30,7 @@
       "class": "command_dispatch"
     },
     {
-      "line": 52,
-      "predicate": "if (!is_flag_set(FLAG_SKIP_BLANK_CHECK))",
-      "keyed_on": [
-        "ctrl_flags"
-      ],
-      "tier": "other",
-      "reason": "Reads the caller-supplied FLAG_SKIP_BLANK_CHECK ctrl_flags bit to decide whether a post-erase blank-check callback is attached; a per-call opt-out flag, independent of which protocol/algorithm is in effect.",
-      "class": "operation_flag"
-    },
-    {
-      "line": 69,
+      "line": 63,
       "predicate": "if (handle->pulse_delay == 0)",
       "keyed_on": [
         "pulse_delay"
@@ -50,7 +40,7 @@
       "class": "data_compare"
     },
     {
-      "line": 70,
+      "line": 64,
       "predicate": "switch (handle->protocol)",
       "keyed_on": [
         "protocol"
@@ -60,7 +50,7 @@
       "class": "algorithm_selector"
     },
     {
-      "line": 101,
+      "line": 95,
       "predicate": "if (energy_cap_us > 0 && handle->pulse_delay > energy_cap_us)",
       "keyed_on": [
         "pulse_delay"
@@ -70,7 +60,7 @@
       "class": "budget_refusal"
     },
     {
-      "line": 130,
+      "line": 124,
       "predicate": "if (!is_operation_in_progress(handle))",
       "keyed_on": [
         "operation_state"
@@ -80,7 +70,7 @@
       "class": "status_check"
     },
     {
-      "line": 132,
+      "line": 126,
       "predicate": "if (handle->response_code == RESPONSE_CODE_ERROR)",
       "keyed_on": [
         "response_code"
@@ -90,7 +80,7 @@
       "class": "status_check"
     },
     {
-      "line": 136,
+      "line": 130,
       "predicate": "if (is_flag_set(FLAG_CAN_ERASE))",
       "keyed_on": [
         "ctrl_flags"
@@ -100,7 +90,7 @@
       "class": "operation_flag"
     },
     {
-      "line": 137,
+      "line": 131,
       "predicate": "if (!is_flag_set(FLAG_SKIP_ERASE))",
       "keyed_on": [
         "ctrl_flags"
@@ -110,17 +100,7 @@
       "class": "operation_flag"
     },
     {
-      "line": 144,
-      "predicate": "if (!is_flag_set(FLAG_SKIP_BLANK_CHECK))",
-      "keyed_on": [
-        "ctrl_flags"
-      ],
-      "tier": "other",
-      "reason": "Reads the caller-supplied FLAG_SKIP_BLANK_CHECK ctrl_flags bit to decide whether a blank-check runs before write; independent of the programming algorithm.",
-      "class": "operation_flag"
-    },
-    {
-      "line": 158,
+      "line": 149,
       "predicate": "if (handle->response_code == RESPONSE_CODE_ERROR)",
       "keyed_on": [
         "response_code"
@@ -130,7 +110,7 @@
       "class": "hv_disable_gate"
     },
     {
-      "line": 247,
+      "line": 238,
       "predicate": "if (is_flag_set(FLAG_VPE_AS_VPP))",
       "keyed_on": [
         "ctrl_flags"
@@ -140,7 +120,7 @@
       "class": "vpp_route"
     },
     {
-      "line": 257,
+      "line": 248,
       "predicate": "if (handle->vpp_mv > RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV)",
       "keyed_on": [
         "vpp_mv"
@@ -150,7 +130,7 @@
       "class": "vpp_route"
     },
     {
-      "line": 275,
+      "line": 266,
       "predicate": "if (handle->firestarter_get_control_register(handle, CTRL_VPP_REGULATOR_ENABLE) == 0)",
       "keyed_on": [
         "firestarter_get_control_register"
@@ -160,7 +140,7 @@
       "class": "status_check"
     },
     {
-      "line": 424,
+      "line": 415,
       "predicate": "if (handle->firestarter_get_data(handle, addr) == expected)",
       "keyed_on": [
         "firestarter_get_data"
@@ -170,7 +150,7 @@
       "class": "skip_check"
     },
     {
-      "line": 519,
+      "line": 510,
       "predicate": "if (handle->response_code == RESPONSE_CODE_ERROR)",
       "keyed_on": [
         "response_code"
@@ -180,7 +160,7 @@
       "class": "hv_disable_gate"
     },
     {
-      "line": 556,
+      "line": 547,
       "predicate": "if (vpp_mv > (uint32_t)handle->vpp_mv + 500)",
       "keyed_on": [
         "vpp_mv"
@@ -190,7 +170,7 @@
       "class": "data_compare"
     },
     {
-      "line": 561,
+      "line": 552,
       "predicate": "if (vpp_mv < (uint32_t)handle->vpp_mv * 95 / 100)",
       "keyed_on": [
         "vpp_mv"
@@ -200,7 +180,7 @@
       "class": "data_compare"
     },
     {
-      "line": 591,
+      "line": 582,
       "predicate": "if (handle->response_code == RESPONSE_CODE_ERROR)",
       "keyed_on": [
         "response_code"
@@ -210,7 +190,7 @@
       "class": "status_check"
     },
     {
-      "line": 594,
+      "line": 585,
       "predicate": "if (handle->chip_id > 0)",
       "keyed_on": [
         "chip_id"
@@ -220,7 +200,7 @@
       "class": "operation_flag"
     },
     {
-      "line": 595,
+      "line": 586,
       "predicate": "is_flag_set(FLAG_FORCE)",
       "keyed_on": [
         "ctrl_flags"
@@ -230,7 +210,7 @@
       "class": "operation_flag"
     },
     {
-      "line": 610,
+      "line": 601,
       "predicate": "if (bit & CTRL_VPE_ENABLE && using_p1_as_vpp(handle))",
       "keyed_on": [
         "pins+bus_config.vpp_line"
@@ -241,9 +221,9 @@
     }
   ],
   "counts": {
-    "total_sites": 22,
+    "total_sites": 20,
     "protocol_keyed_sites": 1,
-    "other_sites": 21
+    "other_sites": 19
   },
   "params_table": {
     "keys": [

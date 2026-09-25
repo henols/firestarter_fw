@@ -192,19 +192,20 @@ static firestarter_handle_t make_write_handle_with_data(void) {
     h.address    = 0;
     h.data_size  = 256;
     /* data_buffer is zero-initialized by {} */
-    /* ctrl_flags = 0: no FLAG_CAN_ERASE, no FLAG_SKIP_BLANK_CHECK —
-     * flash_5v_page_write_init would call blank-check, but we bypass init and call
-     * operation_main directly. */
+    /* ctrl_flags = 0: no FLAG_CAN_ERASE, and write-init performs no blank
+     * check at all any more regardless of ctrl_flags -- we bypass init and
+     * call operation_main directly here anyway. */
     return h;
 }
 
 /* Drives flash_5v_page_write_init through the dispatched pointer, with
- * FLAG_CAN_ERASE and FLAG_SKIP_BLANK_CHECK both clear (ctrl_flags = 0):
- * is_flag_set(FLAG_SKIP_BLANK_CHECK) is false so the deleted conditional's
- * guard would have been satisfied. mem_size is a small 2048 --
- * BLANK_CHECK_CHUNK_SIZE -- because mem_util_blank_check sets
- * is_operation_in_progress on its FIRST call regardless of mem_size, so the
- * oracle below does not depend on how large mem_size is. */
+ * FLAG_CAN_ERASE clear (ctrl_flags = 0): the blank-check conditional this
+ * fixture used to gate is deleted outright now, so write-init performs no
+ * blank check regardless of ctrl_flags. mem_size is a small 2048, a value kept
+ * from when this fixture needed to be smaller than the firmware's
+ * then-existing blank-check chunk size; that machinery left the firmware
+ * in 3.1.0, but the small mem_size is harmless to retain since the oracle
+ * below never depended on how large mem_size is. */
 static firestarter_handle_t make_write_init_handle_blank_check_enabled(void) {
     firestarter_handle_t h = {};
     h.protocol   = 0x05;
@@ -214,8 +215,9 @@ static firestarter_handle_t make_write_init_handle_blank_check_enabled(void) {
     h.mem_size   = 2048;
     h.address    = 0;
     h.data_size  = 0;
-    /* ctrl_flags = 0: FLAG_CAN_ERASE clear, FLAG_SKIP_BLANK_CHECK clear
-     * (the blank-check axis is live). */
+    /* ctrl_flags = 0: FLAG_CAN_ERASE clear. The blank-check axis this
+     * comment used to describe as "live" no longer exists in write-init at
+     * all -- see the factory's own doc comment above. */
     return h;
 }
 
@@ -795,15 +797,16 @@ void test_5v_page_write_init_no_blank_check_erase02(void) {
 
     TEST_ASSERT_FALSE_MESSAGE(is_operation_in_progress(&h),
         "ERASE-02: is_operation_in_progress must be FALSE after exactly one "
-        "flash_5v_page_write_init call with FLAG_SKIP_BLANK_CHECK clear -- "
-        "mem_util_blank_check is the only setter of this flag on the write-INIT "
-        "path, so TRUE here would mean the pre-write blank check still ran and "
-        "left a multi-call INIT loop pending");
+        "flash_5v_page_write_init call -- write-init assigns no operation-end "
+        "at all any more (the region-scoped blank check that used to gate it "
+        "left the firmware in 3.1.0), so this reads FALSE unconditionally "
+        "now, not merely on this call");
     /* The companion "must be NULL" assertion on the removed heap-allocated
-     * handle field is GONE, and so is the field itself: mem_util_blank_check
-     * no longer allocates that block (it keeps its saved address in a
-     * file-scope static), so there is no allocation left to observe. This
-     * is the loss of a redundant PROBE, not of coverage -- is_operation_in_progress
+     * handle field is GONE, and so is the field itself: the region-scoped
+     * blank check's saved-address cursor was a file-scope static, never a
+     * heap allocation, and it left the firmware in 3.1.0 along with the
+     * rest of that machinery, so there is no allocation and no cursor left
+     * to observe. This is the loss of a redundant PROBE, not of coverage -- is_operation_in_progress
      * above and the removed allocation used to be unconditionally adjacent
      * statements in the same then-branch of the same if, with no
      * intervening control flow, early return or condition, so a FALSE
@@ -814,8 +817,9 @@ void test_5v_page_write_init_no_blank_check_erase02(void) {
         "ERASE-02: the removed blank check can no longer fail a write on a "
         "non-blank part");
     assert_no_vpp_in_recording(
-        "ERASE-02: on this blank-check-live configuration (FLAG_SKIP_BLANK_CHECK "
-        "clear), flash_5v_page_write_init must energise no VPP rail");
+        "ERASE-02: with FLAG_CAN_ERASE clear and no blank check left in "
+        "write-init at all, flash_5v_page_write_init must energise no VPP "
+        "rail");
 }
 
 void test_5v_page_write_init_no_vpp_with_flag_can_erase_set(void) {

@@ -138,17 +138,16 @@ void configure_eeprom28c(firestarter_handle_t* handle) {
     // AT28C page write timing requires fast consecutive writes; no pulse delay needed
     handle->pulse_delay = 0;
     // Do NOT add a default: arm here. configure_memory pre-sets the generic
-    // main for CMD_READ/CMD_WRITE/CMD_VERIFY before calling this, so a blanket
-    // default would overwrite it and refuse read and verify on every 0x0D
-    // chip. Unsupported commands are refused generically by the operation
+    // main for CMD_READ/CMD_WRITE before calling this, so a blanket default
+    // would overwrite it and refuse read on every 0x0D chip. (This comment
+    // used to also name the verify command's wire ordinal here, retired in
+    // 3.1.0; configure_memory's switch pre-sets only CMD_READ and CMD_WRITE
+    // now.) Unsupported commands are refused generically by the operation
     // layer's NULL-main guard instead.
     switch (handle->cmd) {
         case CMD_WRITE:
             handle->firestarter_operation_init = eeprom28c_write_init;
             handle->firestarter_operation_main = eeprom28c_write_execute;
-            break;
-        case CMD_BLANK_CHECK:
-            handle->firestarter_operation_main = mem_util_blank_check;
             break;
         case CMD_ERASE:
             handle->firestarter_operation_main = eeprom28c_erase_execute;
@@ -379,8 +378,9 @@ void eeprom28c_write_init(firestarter_handle_t* handle) {
     // No pre-write blank check on this protocol: the silicon auto-erases per page
     // during the write, and verify_page_readback checks every page afterwards. A
     // blank check here was a false precondition that made a non-blank part
-    // un-writable without a flag. FLAG_SKIP_BLANK_CHECK is consequently UNREAD
-    // here -- do not restore the conditional because the bit looks orphaned.
+    // un-writable without a flag. As of release 3.1.0 the host owns this
+    // refusal instead -- do not restore a firmware-side conditional here; the
+    // control flag that used to gate it is retired and gone.
     // `blank` remains available as its own step.
 }
 

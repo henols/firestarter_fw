@@ -43,9 +43,6 @@ void configure_flash_5v_page(firestarter_handle_t* handle) {
             handle->firestarter_operation_init = flash_5v_page_write_init;
             handle->firestarter_operation_main = flash_5v_page_write_execute;
             break;
-        case CMD_BLANK_CHECK:
-            handle->firestarter_operation_main = mem_util_blank_check;
-            break;
         case CMD_CHECK_CHIP_ID:
             handle->firestarter_operation_init = NULL;
             handle->firestarter_operation_main = flash_5v_page_check_chip_id_execute;
@@ -72,9 +69,10 @@ void flash_5v_page_write_init(firestarter_handle_t* handle) {
         }
     }
     // No pre-write blank check: flash4 auto-erases per page during the write loop,
-    // so it was a false precondition, not a safety net. FLAG_SKIP_BLANK_CHECK is
-    // consequently unread on this protocol -- do not restore the conditional
-    // because the bit looks orphaned.
+    // so it was a false precondition, not a safety net. As of release 3.1.0 the
+    // host owns this refusal instead -- do not restore a firmware-side
+    // conditional here; the control flag that used to gate it is retired and
+    // gone.
 }
 
 void flash_5v_page_write_execute(firestarter_handle_t* handle) {

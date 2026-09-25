@@ -26,12 +26,6 @@ bool eprom_write(firestarter_handle_t* handle) {
     return op_execute_stateful_operation(_process_incoming_data, handle);
 }
 
-// Return true if the operation is done, otherwise false
-bool eprom_verify(firestarter_handle_t* handle) {
-    LOG_DEBUG_ID_SUB(DBG_VERIFY_PROM);
-    return op_execute_stateful_operation(_process_incoming_data, handle);
-}
-
 bool eprom_erase(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_ERASE_PROM);
     if (!is_flag_set(FLAG_CAN_ERASE)) {
@@ -47,11 +41,6 @@ bool eprom_check_chip_id(firestarter_handle_t* handle) {
         LOG_ERROR_ID(MSG_ERR_NO_CHIP_ID);
         return true;
     }
-    return op_execute_simple_operation(handle);
-}
-
-bool eprom_blank_check(firestarter_handle_t* handle) {
-    LOG_DEBUG_ID_SUB(DBG_BLANK_CHECK_PROM);
     return op_execute_simple_operation(handle);
 }
 
@@ -71,7 +60,7 @@ bool eprom_sdp_lock(firestarter_handle_t* handle) {
     return op_execute_simple_operation(handle);
 }
 
-// CMD_LOCK_STATUS entry point, in eprom_blank_check's
+// CMD_LOCK_STATUS entry point, in eprom_check_chip_id's
 // single-step shape above -- but deliberately WITHOUT a LOG_DEBUG_ID_SUB
 // line. CMD_LOCK_STATUS (16) is numerically greater
 // than CMD_READ_VPP (11), so it falls outside the second, independent
@@ -87,11 +76,12 @@ bool eprom_lock_status(firestarter_handle_t* handle) {
 static inline bool _process_incoming_data(firestarter_handle_t* handle) {
     // op_end is the operation's end, not the device's end: it equals
     // handle->mem_size whenever no region was supplied (D-04's
-    // absent-semantics), and the same local bounds both eprom_write and
-    // eprom_verify because they share this function (D-07). Under D-05
-    // host and firmware agree on the region by construction, so the
-    // out-of-range refusal below becomes a fail-closed guard against a
-    // host/file mismatch rather than a live path.
+    // absent-semantics). eprom_write is this function's only caller now --
+    // the verify wrapper that used to share it was retired in 3.1.0 (Phase
+    // 204), along with its command surface. Under D-05 host and firmware
+    // agree on the region by construction, so the out-of-range refusal
+    // below becomes a fail-closed guard against a host/file mismatch
+    // rather than a live path.
     const uint32_t op_end = mem_util_operation_end(handle);
 
     // The operation is "pull" based. The firmware requests a data chunk when it's ready.

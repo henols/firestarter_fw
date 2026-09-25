@@ -47,9 +47,7 @@ void test_admission_truth_table_over_every_cmd_value(void) {
             case 1:
             case 2:
             case 3:
-            case 4:
             case 5:
-            case 6:
             case 9:
             case 10:
             case 16:
@@ -65,15 +63,18 @@ void test_admission_truth_table_over_every_cmd_value(void) {
     }
 }
 
-void test_admission_count_is_exactly_nine(void) {
+void test_admission_count_is_exactly_seven(void) {
     int count = 0;
     for (int c = 0; c <= 255; c++) {
         if (is_memory_cmd((uint8_t)c)) {
             count++;
         }
     }
-    TEST_ASSERT_EQUAL_MESSAGE(9, count,
-        "is_memory_cmd() must admit exactly nine of the 256 possible uint8_t values (Phase 151, LOCK-02)");
+    TEST_ASSERT_EQUAL_MESSAGE(7, count,
+        "is_memory_cmd() must admit exactly seven of the 256 possible uint8_t values "
+        "(Phase 151, LOCK-02, established the original nine; Phase 204 retires two of "
+        "them -- the verify command's own ordinal in plan 01, the blank-check "
+        "command's own ordinal here in plan 03)");
 }
 
 /* Case 2 — cmd 7 and 8 (CMD_DEV_ADDRESS / CMD_DEV_REGISTER) are excluded.
@@ -121,7 +122,7 @@ int main(int argc, char** argv) {
     UNITY_BEGIN();
 
     RUN_TEST(test_admission_truth_table_over_every_cmd_value);
-    RUN_TEST(test_admission_count_is_exactly_nine);
+    RUN_TEST(test_admission_count_is_exactly_seven);
     RUN_TEST(test_admission_rejects_dev_tool_ordinals_7_and_8);
     RUN_TEST(test_admission_boundary_around_cmd_lock_status);
     RUN_TEST(test_admission_rejects_cmd_idle_zero);

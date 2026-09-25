@@ -96,10 +96,27 @@ typedef struct {
 /*
  * width's low nibble (FIELD_WIDTH_MASK) is the byte width derived from the
  * member. Bit 7 (FIELD_POLICY_MASK), when set, selects MASK semantics for
- * an out-of-range value instead of SATURATE.
+ * an out-of-range value instead of SATURATE. Bit 6 (FIELD_POLICY_REJECT_NEGATIVE),
+ * when set, refuses the whole frame -- see that macro's own comment below.
  */
 #define FIELD_WIDTH_MASK  0x0F
 #define FIELD_POLICY_MASK 0x80
+
+/*
+ * FIELD_POLICY_REJECT_NEGATIVE -- a third row policy, set on exactly one
+ * row (key_address). simple_strtoul consumes only `[0-9]`, so a leading
+ * '-' makes its loop body never run and the value converts to 0 -- a
+ * fail-open inside a parser whose other policies (FIELD_MASK above) are
+ * fail-closed: `-256` on the wire is today indistinguishable from a
+ * legitimate address-0 frame. The scope is the address field alone,
+ * because the same simple_strtoul converter serves ctrl_flags, bus-config
+ * address lines and static-high lines, and widening the refusal to those
+ * would change wire behaviour for six fields no requirement names. The
+ * host already refuses a negative start address before the wire
+ * (write_blank_guard.require_non_negative_address, Phase 203); this bit is
+ * defence-in-depth against a non-firestarter host or a corrupted frame.
+ */
+#define FIELD_POLICY_REJECT_NEGATIVE 0x40
 
 /*
  * FIELD -- SATURATE policy (ordinal fields). `offset` and `width` are both
@@ -117,7 +134,7 @@ typedef struct {
 /*
  * FIELD_MASK -- MASK policy (bitmask fields). Refuses to saturate a bitmask
  * to its type maximum: on `ctrl_flags` that would set every control flag at
- * once, including FLAG_FORCE, FLAG_SKIP_ERASE and FLAG_SKIP_BLANK_CHECK --
+ * once, including FLAG_FORCE, FLAG_SKIP_ERASE and FLAG_VPE_AS_VPP --
  * a fail-OPEN where the required behaviour is fail-closed.
  * This preserves today's width-limited truncation for a bitmask instead,
  * and does nothing else -- it does not attempt to reject an out-of-range
@@ -128,11 +145,22 @@ typedef struct {
     { (k), (uint16_t)0, (uint8_t)offsetof(firestarter_handle_t, member),     \
       (uint8_t)(sizeof(((firestarter_handle_t*)0)->member) | FIELD_POLICY_MASK) }
 
+/*
+ * FIELD_REJECT_NEGATIVE -- SATURATE policy (same as FIELD above), plus the
+ * dispatch loop's sign check ORs in FIELD_POLICY_REJECT_NEGATIVE. Applied
+ * to the key_address row only -- see that macro's own comment above.
+ */
+#define FIELD_REJECT_NEGATIVE(k, member, cl)                                \
+    { (k), (uint16_t)(cl), (uint8_t)offsetof(firestarter_handle_t, member), \
+      (uint8_t)(sizeof(((firestarter_handle_t*)0)->member) | FIELD_POLICY_REJECT_NEGATIVE) }
+
 static const field_desc_t key_parsers[] PROGMEM = {
     /* memory-size -> handle->mem_size */
     FIELD(key_mem_size, mem_size, 0),
-    /* address -> handle->address */
-    FIELD(key_address, address, 0),
+    /* address -> handle->address. REJECT_NEGATIVE policy: see that
+     * macro's own comment above for why this row alone refuses a leading
+     * '-' instead of silently converting to 0. */
+    FIELD_REJECT_NEGATIVE(key_address, address, 0),
     /* flags -> handle->ctrl_flags. MASK policy: see FIELD_MASK's own
      * comment above for why this row never saturates. */
     FIELD_MASK(key_flags, ctrl_flags),
@@ -320,7 +348,12 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
         for (size_t j = 0; j < sizeof(key_parsers) / sizeof(key_parsers[0]); j++) {
             PGM_P key = (PGM_P)pgm_read_ptr(&key_parsers[j].key);
             if (jsoneq_(json, key_token, key) == 0) {
-                store_field(handle, &key_parsers[j], simple_strtoul(json + tokens[token_idx + 1].start));
+                const char* value_str = json + tokens[token_idx + 1].start;
+                uint8_t width_raw = pgm_read_byte(&key_parsers[j].width);
+                if ((width_raw & FIELD_POLICY_REJECT_NEGATIVE) != 0 && *value_str == '-') {
+                    return -1; // Refused: this row's value cannot represent a negative number
+                }
+                store_field(handle, &key_parsers[j], simple_strtoul(value_str));
                 token_idx += 2; // Skip key and simple value
                 found = true;
                 break;

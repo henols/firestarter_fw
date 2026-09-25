@@ -205,7 +205,7 @@ static firestarter_handle_t make_sdp_handle(const sdp_bus_config_row_t& row, uin
     h.chip_id = 0; /* skip chip-id branch for cases 1-5 */
     h.mem_size = row.mem_size;
     h.bus_config = row.bus_config;
-    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK | extra_flags;
+    h.ctrl_flags = extra_flags;
     return h;
 }
 
@@ -229,7 +229,7 @@ static firestarter_handle_t make_identity_handle(uint16_t expected_chip_id, uint
     h.response_code = RESPONSE_CODE_OK;
     h.chip_id = expected_chip_id;
     h.bus_config = SDP_BUS_CONFIGS[0].bus_config;
-    h.ctrl_flags = ctrl_flags | FLAG_SKIP_BLANK_CHECK;
+    h.ctrl_flags = ctrl_flags;
     return h;
 }
 
@@ -1148,7 +1148,7 @@ static firestarter_handle_t make_page_load_handle(uint32_t address, uint32_t dat
     h.chip_id = 0;
     h.mem_size = SDP_BUS_CONFIGS[0].mem_size;
     h.bus_config = SDP_BUS_CONFIGS[0].bus_config;
-    h.ctrl_flags = FLAG_SKIP_BLANK_CHECK;
+    h.ctrl_flags = 0;
     h.address = address;
     h.data_size = data_size;
     for (uint32_t k = 0; k < data_size; k++) {
@@ -1322,14 +1322,16 @@ void test_case30_write_init_no_blank_check_with_flag_clear_erase01(void) {
 
     TEST_ASSERT_FALSE_MESSAGE(is_operation_in_progress(&h),
         "Case 30 (ERASE-01): is_operation_in_progress must be FALSE after exactly one "
-        "eeprom28c_write_init call with FLAG_SKIP_BLANK_CHECK clear -- mem_util_blank_check is "
-        "the only setter of this flag on the write-INIT path, so TRUE here would mean the "
-        "pre-write blank check still ran and left a multi-call INIT loop pending");
+        "eeprom28c_write_init call -- write-init assigns no operation-end at all any "
+        "more (the region-scoped blank check that used to gate it left the firmware "
+        "in 3.1.0), so this reads FALSE unconditionally now, not merely "
+        "on this call");
     /* The companion "must be NULL" assertion on the removed heap-allocated
-     * handle field is GONE, and so is the field itself: mem_util_blank_check
-     * no longer allocates that block (it keeps its saved address in a
-     * file-scope static in memory.cpp), so there is no allocation left to
-     * observe. This is the loss of a redundant PROBE, not of coverage --
+     * handle field is GONE, and so is the field itself: the region-scoped
+     * blank check's saved-address cursor was a file-scope static, never a
+     * heap allocation, and it left the firmware in 3.1.0 along with the
+     * rest of that machinery, so there is no allocation and no cursor left
+     * to observe. This is the loss of a redundant PROBE, not of coverage --
      * is_operation_in_progress above and the removed allocation used to be
      * unconditionally adjacent statements in the same then-branch of the
      * same if, with no intervening control flow, early return or condition,
@@ -1337,10 +1339,10 @@ void test_case30_write_init_no_blank_check_with_flag_clear_erase01(void) {
      * the allocation -- never executed. The behaviour under test is still
      * pinned by the assertion above. */
     sdp_assert_stream_equals(SDP_FIXED_DIP28_28C256, SDP_FIXED_DIP28_28C256_LEN,
-        "Case 30 (ERASE-01): with FLAG_SKIP_BLANK_CHECK clear, the AT28C256/DIP28_28C256 stream "
-        "must now be byte-identical to the golden captured with the flag SET -- the D-07 policy "
-        "expressed as a stream identity: a pre-write blank check contributes zero strobes "
-        "whether or not the caller asks to skip it");
+        "Case 30 (ERASE-01): with the skip-blank-check control flag now retired, the "
+        "AT28C256/DIP28_28C256 stream must still be byte-identical to the golden -- the "
+        "D-07 policy expressed as a stream identity: a pre-write blank check contributes "
+        "zero strobes regardless");
 }
 
 /* Case 31 -- the erase stream's HEAD is the SDP-disable prefix, positionally,
