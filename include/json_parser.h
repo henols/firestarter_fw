@@ -15,6 +15,8 @@
 extern "C" {
 #endif
 #define NUMBER_JSNM_TOKENS 64
+// json_parse_config result: a "rev" value outside REVISION_0..REVISION_2_3 and 0xFF.
+#define JSON_CONFIG_INVALID_REV (-2)
 
     uint8_t json_get_cmd(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle);
     int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle);

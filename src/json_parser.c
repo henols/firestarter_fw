@@ -23,7 +23,9 @@ bool get_vpp_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handl
 
 bool get_r1(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
 bool get_r2(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
-bool get_rev(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
+#ifdef HARDWARE_REVISION
+static int get_rev(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
+#endif
 
 static int jsoneq_(const char* json, jsmntok_t* tok, const char* s);
 
@@ -381,6 +383,9 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
 
 int json_parse_config(const char* json, jsmntok_t* tokens, int token_count, rurp_configuration_t* config, firestarter_handle_t* handle) {
     int res = 0;
+#ifdef HARDWARE_REVISION
+    int rev_res;
+#endif
     for (int i = 1; i < token_count; i++) {
         if (get_cmd(json, tokens, i) != 0xFF) {
             i++;
@@ -388,7 +393,10 @@ int json_parse_config(const char* json, jsmntok_t* tokens, int token_count, rurp
             i++;
         }
 #ifdef HARDWARE_REVISION
-        else if (get_rev(json, tokens, i, config)) {
+        else if ((rev_res = get_rev(json, tokens, i, config)) != 0) {
+            if (rev_res < 0) {
+                return JSON_CONFIG_INVALID_REV;
+            }
             i++;
             res = 1;
         }
@@ -553,6 +561,34 @@ bool get_r2(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* 
     extract_long("r2", config->r2);
 }
 
-bool get_rev(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
-    extract_int("rev", config->hardware_revision);
+#ifdef HARDWARE_REVISION
+/*
+ * Strict parse, not extract_int: the override goes to EEPROM, and
+ * simple_strtoul would coerce "-1" to 0 (Rev 0) and 260 to 4 (Rev 2.2) after
+ * the uint8_t store. Only REVISION_0..REVISION_2_3 and 0xFF (no override) are
+ * stored. Returns 1 when stored, 0 when the key is not "rev", -1 when refused.
+ */
+static int get_rev(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
+    if (jsoneq(json, &tokens[pos], "rev") != 0) {
+        return 0;
+    }
+    const jsmntok_t* tok = &tokens[pos + 1];
+    int len = tok->end - tok->start;
+    if (tok->type != JSMN_PRIMITIVE || len < 1 || len > 3) {
+        return -1;
+    }
+    unsigned int value = 0;
+    for (int k = 0; k < len; k++) {
+        char c = json[tok->start + k];
+        if (c < '0' || c > '9') {
+            return -1;
+        }
+        value = value * 10 + (unsigned int)(c - '0');
+    }
+    if (value > REVISION_2_3 && value != 0xFF) {
+        return -1;
+    }
+    config->hardware_revision = (uint8_t)value;
+    return 1;
 }
+#endif

@@ -99,11 +99,18 @@ bool parse_json(firestarter_handle_t* handle) {
         }
     } else if (handle->cmd == CMD_CONFIG) {
         rurp_configuration_t* config = rurp_get_config();
-        int res = json_parse_config(handle->data_buffer, tokens, token_count, config, handle);
-        if (res < 0) {
+        // Parse into a copy. A refused field leaves the live config unchanged,
+        // in RAM and in EEPROM, also for the fields parsed before it.
+        rurp_configuration_t candidate = *config;
+        int res = json_parse_config(handle->data_buffer, tokens, token_count, &candidate, handle);
+        if (res == JSON_CONFIG_INVALID_REV) {
+            LOG_ERROR_ID(MSG_ERR_INVALID_REV);
+            return false;
+        } else if (res < 0) {
             LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
             return false;
         } else if (res == 1) {
+            *config = candidate;
             rurp_save_config(config);
         }
     }
