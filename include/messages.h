@@ -12,7 +12,7 @@
  * then synced here. Edit the catalog there and re-sync.
  *
  * Catalog version: 1
- * Total messages: 82
+ * Total messages: 83
  */
 
 #ifndef __MESSAGES_H__
@@ -76,6 +76,7 @@ extern "C" {
 #define MSG_WARN_SDP_UNLOCK_SKIPPED       0x86
 #define MSG_WARN_SDP_TBLC_EXCEEDED        0x87
 #define MSG_WARN_VCC_IMPLAUSIBLE          0x88
+#define MSG_WARN_NOT_CALIBRATED           0x89
 #define MSG_ERR_BAD_JSON                  0xA0
 #define MSG_ERR_NO_CMD                    0xA1
 #define MSG_ERR_SETUP                     0xA2

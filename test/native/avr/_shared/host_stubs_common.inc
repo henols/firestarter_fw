@@ -277,8 +277,18 @@ extern "C" {
 #include "rurp_voltage_math.h"
 }
 
-static rurp_configuration_t s_host_config = {CONFIG_VERSION, VALUE_R1, VALUE_R2, 0,
-                                             (uint16_t)RURP_BANDGAP_NOMINAL_MV};
+// A CALIBRATED board: bandgap_mv deliberately differs from the nominal.
+//
+// At the nominal, mem_util_warn_if_uncalibrated fires on every voltage-gated
+// operation and sets RESPONSE_CODE_WARNING by itself -- which made every
+// "this voltage warns" assertion pass even with the VPP window check entirely
+// removed. Proven by planting exactly that break: all nine cases in
+// test_flash_intel_vpp still passed. Modelling a calibrated board puts the
+// response code back under the control of the thing being tested.
+//
+// 1019 is the leonardo's real measured reference (v1.43 bench), not a number
+// picked to be different.
+static rurp_configuration_t s_host_config = {CONFIG_VERSION, VALUE_R1, VALUE_R2, 0, 1019};
 extern "C" rurp_configuration_t* rurp_get_config() {
     return &s_host_config;
 }

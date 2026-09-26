@@ -81,6 +81,23 @@ void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
  */
 bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle);
 
+/*
+ * Apply the VPP acceptance window to a measured reading, emitting the right
+ * message and response code. One implementation for both call sites: this
+ * logic used to sit byte-for-byte identical in eprom.cpp and flash_intel.cpp,
+ * so a change to one silently left the other on the old policy.
+ */
+void mem_util_check_vpp_window(firestarter_handle_t* handle, uint16_t vpp_mv);
+
+/*
+ * Warn, once per voltage-gated operation, when this board has never been
+ * calibrated. Its readings then carry the full per-die bandgap spread, up to
+ * 10 %, which is three times the acceptance window -- so the verdict that
+ * follows is not trustworthy in either direction. A warning, never a refusal:
+ * it reports a limit on what the firmware knows, not a hardware fault.
+ */
+void mem_util_warn_if_uncalibrated(firestarter_handle_t* handle);
+
 void mem_util_report_chip_id(firestarter_handle_t* handle, uint16_t actual, bool warn_only);
 
 static inline bool using_p1_as_vpp(const firestarter_handle_t* handle) {

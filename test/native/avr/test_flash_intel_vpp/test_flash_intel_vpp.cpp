@@ -71,6 +71,7 @@ void setUp(void) {
     /* Restore the shipped calibration: the refusal cases below mutate it. */
     rurp_get_config()->r1 = VALUE_R1;
     rurp_get_config()->r2 = VALUE_R2;
+    rurp_get_config()->bandgap_mv = 1019;  // calibrated; see host_stubs_common.inc
 }
 
 void tearDown(void) {
@@ -235,6 +236,86 @@ void test_flash_intel_accepts_divider_sum_at_bound_and_asserts_hv(void) {
     TEST_ASSERT_GREATER_THAN_UINT(0, s_ctrl_writes_asserting_hv);
 }
 
+
+/*
+ * v1.43 Task 6 -- the retuned VPP acceptance window.
+ *
+ * HIGH was a flat +500 mV. That is +4.2 % at a 12000 mV target but only
+ * +2.0 % at 25000, which is tighter than this instrument's measured
+ * post-calibration worst case of 3.3 % -- so it could refuse a correctly set
+ * rail on measurement error alone, on exactly the 30 database rows at
+ * 18000 mV and above. It is now a 3 % headroom with a 500 mV floor, which
+ * leaves all 716 rows below 18000 mV on the identical threshold.
+ *
+ * Every boundary below is asserted as a PAIR: the value that must pass and
+ * the adjacent value that must not.
+ */
+
+static uint8_t run_at(uint16_t target, uint16_t measured, uint32_t flags) {
+    set_mock_vpp_mv(measured);
+    firestarter_handle_t h = make_intel_handle(target, flags);
+    configure_memory(&h);
+    h.firestarter_set_control_register = mock_set_ctrl_reg;
+    h.firestarter_operation_init(&h);
+    return h.response_code;
+}
+
+void test_window_floor_applies_below_the_crossover(void) {
+    // 12000 target: 3 % is 360, below the 500 floor, so the ceiling is 12500 --
+    // byte-identical to the pre-v1.43 threshold. 561 database rows sit here.
+    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, run_at(12000, 12500, 0));
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, run_at(12000, 12501, 0));
+}
+
+void test_window_percentage_applies_above_the_crossover(void) {
+    // 25000 target: 3 % is 750, above the floor, so the ceiling is 25750.
+    // Under the old flat +500 the ceiling was 25500, inside the instrument's
+    // own worst-case error.
+    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, run_at(25000, 25750, 0));
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, run_at(25000, 25751, 0));
+    // The case the retune exists for: a reading the OLD threshold refused and
+    // the new one accepts, because 25501 is inside the measurement error.
+    TEST_ASSERT_EQUAL_UINT16(25500, 25000 + 500);
+    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, run_at(25000, 25501, 0));
+}
+
+void test_the_crossover_is_where_the_arithmetic_puts_it(void) {
+    // 3 % of 18000 is 540, so 18000 is the first target that leaves the floor.
+    // 18500 was refused before and is accepted now; 18541 is still refused.
+    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, run_at(18000, 18540, 0));
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, run_at(18000, 18541, 0));
+    // One target below the crossover still uses the floor, not 3 %.
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, run_at(13000, 13501, 0));
+    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, run_at(13000, 13500, 0));
+}
+
+void test_low_side_is_unchanged_at_five_percent(void) {
+    // 5 % is comfortably outside the 3.3 % worst case, so it raises no false
+    // warning -- and it stays a WARNING, never an error.
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, run_at(12000, 11400, 0));
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_WARNING, run_at(12000, 11399, 0));
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_WARNING, run_at(25000, 23749, 0));
+}
+
+void test_force_downgrades_high_but_not_the_threshold(void) {
+    // FLAG_FORCE changes the SEVERITY of a high reading, never where the
+    // threshold sits.
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_WARNING, run_at(12000, 12501, FLAG_FORCE));
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, run_at(12000, 12500, FLAG_FORCE));
+}
+
+void test_an_uncalibrated_board_says_so(void) {
+    // The verdict is only as good as the instrument. At the nominal reference
+    // the reading carries the full per-die bandgap spread, up to 10 %, against
+    // a 3-5 % window -- so the operation warns, without refusing.
+    rurp_get_config()->bandgap_mv = (uint16_t)RURP_BANDGAP_NOMINAL_MV;
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_WARNING, run_at(12000, 12000, 0));
+    // Non-vacuity: the SAME in-band reading on a calibrated board is silent.
+    // Without this pair the warning could fire unconditionally and pass.
+    rurp_get_config()->bandgap_mv = 1019;
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, run_at(12000, 12000, 0));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_flash_intel_vpp_nominal_proceeds);
@@ -246,5 +327,11 @@ int main(int, char**) {
     RUN_TEST(test_flash_intel_refuses_r2_zero_before_asserting_hv);
     RUN_TEST(test_flash_intel_refuses_divider_sum_over_bound);
     RUN_TEST(test_flash_intel_accepts_divider_sum_at_bound_and_asserts_hv);
+    RUN_TEST(test_window_floor_applies_below_the_crossover);
+    RUN_TEST(test_window_percentage_applies_above_the_crossover);
+    RUN_TEST(test_the_crossover_is_where_the_arithmetic_puts_it);
+    RUN_TEST(test_low_side_is_unchanged_at_five_percent);
+    RUN_TEST(test_force_downgrades_high_but_not_the_threshold);
+    RUN_TEST(test_an_uncalibrated_board_says_so);
     return UNITY_END();
 }

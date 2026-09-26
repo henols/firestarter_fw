@@ -36,14 +36,7 @@ static void flash_intel_check_vpp(firestarter_handle_t* handle) {
     // and delayed 500ms; do not toggle the regulator here.
     uint16_t vpp_mv = rurp_read_voltage_mv();
     LOG_DEBUG_ID_SUB_U16(DBG_CHECKING_VPP_VOLTAGE, vpp_mv);
-    if (vpp_mv > (uint32_t)handle->vpp_mv + 500) {
-        bool force = is_flag_set(FLAG_FORCE);
-        mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv,
-                                 force ? MSG_WARN_VPP_HIGH : MSG_ERR_VPP_HIGH,
-                                 force ? RESPONSE_CODE_WARNING : RESPONSE_CODE_ERROR);
-    } else if (vpp_mv < (uint32_t)handle->vpp_mv * 95 / 100) {
-        mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv, MSG_WARN_VPP_LOW, RESPONSE_CODE_WARNING);
-    }
+    mem_util_check_vpp_window(handle, vpp_mv);
     // NO regulator clear — caller continues to use CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE through the write pulse.
 }
 
@@ -74,6 +67,7 @@ void flash_intel_write_init(firestarter_handle_t* handle) {
     if (mem_util_refuse_bad_calibration(handle)) {
         return;
     }
+    mem_util_warn_if_uncalibrated(handle);  // see eprom_check_vpp for why
     handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE, 1);
     delay(500);
     flash_intel_check_vpp(handle);
