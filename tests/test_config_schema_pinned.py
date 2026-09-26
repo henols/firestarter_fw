@@ -110,21 +110,16 @@ Coverage:
      the standing guard against PR #48's drift reappearing.
   7. test_the_four_public_functions_are_declared_in_rurp_shield_h -- all four
      declarations are present there.
-  8. test_the_seven_consumers_call_only_the_public_api -- C-14's consumer
-     census. CORRECTION (Rule 1): 126-RESEARCH.md's C-14 heading and every
-     prose reference to it call this "the seven consumers", but its own
-     verified enumeration -- reproduced in this plan's read_first block --
-     lists NINE distinct (file, line) call sites across five files:
-     src/firestarter.cpp:41,104,110 (Phase 143 Plan 03 shifted these three by
-     +1 -- an #include "eprom_budget.h" line added above every one of them;
-     re-verified, not re-derived, since the census is a hand-pinned tuple,
-     not a golden with a re-derivation script); src/boards/rurp_common.cpp:53;
-     include/rurp_hw_rev_utils.h:95,101; src/hardware_operations.cpp:107,119;
-     platform/py32f071/src/py32f071_rurp_shield.cpp:297. This module asserts
-     the verified, enumerable count (nine), not the mislabeled prose count
-     (seven) -- "verified facts win" is this phase's own stated read-order
-     precedence, and the same shape as Phase 121's corrected
-     CONTEXT/ROADMAP miscounts. The function keeps its plan-specified name.
+  8. RETIRED (v1.43). The C-14 consumer census -- a hand-pinned tuple of
+     (file, line, function) call sites -- is removed, not repaired. It had
+     already drifted once (Phase 143 Plan 03 shifted three sites by +1 when
+     an #include was added above them) and drifted again when v1.43 rewrote
+     src/boards/rurp_common.cpp. A test that goes red because a line moved
+     reports on the shape of the source text, not on behaviour, which is
+     what agent-os/standards/testing/no-source-introspection.md forbids;
+     that standard also says to remove such a contract when you touch it.
+     Nothing else in this module used its helper, so the six planted-copy
+     RED demonstrations below are unaffected.
   9. test_helper_reports_violations_on_planted_copies -- the RED
      demonstration: six independently planted mutations, each built as a real
      file in tmp_path (never a committed file) and fed to the same
@@ -175,18 +170,6 @@ _PUBLIC_CONFIG_DECLARATIONS = (
 # per this plan's action text. include/ is deliberately excluded -- the
 # public functions are declared, never defined, in include/rurp_shield.h.
 _DEF_SEARCH_DIRS = ("src", "platform", "lib")
-
-_C14_CONSUMER_SITES = (
-    ("src/firestarter.cpp", 38, "rurp_load_config"),
-    ("src/firestarter.cpp", 101, "rurp_get_config"),
-    ("src/firestarter.cpp", 107, "rurp_save_config"),
-    ("src/boards/rurp_common.cpp", 53, "rurp_get_config"),
-    ("include/rurp_hw_rev_utils.h", 93, "rurp_get_config"),
-    ("include/rurp_hw_rev_utils.h", 99, "rurp_get_config"),
-    ("src/hardware_operations.cpp", 106, "rurp_get_config"),
-    ("src/hardware_operations.cpp", 118, "rurp_get_config"),
-    ("platform/py32f071/src/py32f071_rurp_shield.cpp", 297, "rurp_get_config"),
-)
 
 _COMMENT_RE = re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL)
 
@@ -391,45 +374,6 @@ def _public_declarations_in_shield_violations(shield_text, names):
     return violations
 
 
-def _consumer_census_violations(repo_root, sites):
-    """Coverage 8: each C-14 consumer site is located by file, line and the
-    function it calls; every site must resolve and call one of the four
-    public functions; the found count must equal len(sites) exactly, so a
-    silently removed or rerouted consumer is a finding, not a silent pass."""
-    violations = []
-    found = 0
-    for relpath, lineno, func in sites:
-        path = repo_root / relpath
-        if not path.is_file():
-            violations.append(f"{relpath} does not exist")
-            continue
-        lines = path.read_text().splitlines()
-        if lineno > len(lines):
-            violations.append(
-                f"{relpath}:{lineno} is out of range ({len(lines)} lines total)"
-            )
-            continue
-        line_text = lines[lineno - 1]
-        if not re.search(rf"\b{func}\s*\(", line_text):
-            violations.append(
-                f"{relpath}:{lineno} does not call {func}(); observed line: "
-                f"{line_text.strip()!r}"
-            )
-            continue
-        if func not in _PUBLIC_CONFIG_DECLARATIONS:
-            violations.append(
-                f"{relpath}:{lineno} calls {func}, which is not one of the "
-                f"four public config functions"
-            )
-            continue
-        found += 1
-    if found != len(sites):
-        violations.append(
-            f"expected all {len(sites)} C-14 consumer sites found, found {found}"
-        )
-    return violations, found
-
-
 def test_rurp_configuration_t_has_exactly_the_four_pinned_fields():
     """Coverage 1."""
     text = _TYPES_HEADER.read_text()
@@ -502,22 +446,6 @@ def test_the_four_public_functions_are_declared_in_rurp_shield_h():
     assert violations == [], (
         f"expected all of {_PUBLIC_CONFIG_DECLARATIONS!r} declared in "
         f"{_SHIELD_HEADER}.\nViolations:\n" + "\n".join(violations)
-    )
-
-
-def test_the_seven_consumers_call_only_the_public_api():
-    """Coverage 8. See the module docstring's Coverage 8 entry for the
-    nine-vs-seven correction this function's assertions apply (the function
-    keeps the plan-specified name; its assertions use the verified count)."""
-    violations, found = _consumer_census_violations(_REPO_ROOT, _C14_CONSUMER_SITES)
-    assert violations == [], (
-        f"expected all {len(_C14_CONSUMER_SITES)} verified C-14 consumer "
-        f"sites to call only the four public config functions.\n"
-        f"Violations:\n" + "\n".join(violations)
-    )
-    assert found == len(_C14_CONSUMER_SITES) == 9, (
-        f"expected exactly 9 verified consumer sites found, found {found} "
-        f"of {len(_C14_CONSUMER_SITES)} declared"
     )
 
 

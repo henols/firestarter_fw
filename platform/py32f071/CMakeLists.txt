@@ -47,6 +47,7 @@ set(LINKER_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/linker/PY32F071xB_FLASH.ld")
 # PY32_EXCLUDED: src/boards/rurp_common.cpp -- AVR-specific common
 # PY32_EXCLUDED: src/dev_tools.cpp -- no ARM dev-tools TU; DEV_TOOLS resolves to 0 by the shared default (MERGE-08, D-02)
 # PY32_EXCLUDED: src/boards/rurp_config_storage_eeprom.cpp -- AVR EEPROM backend, no ARM analogue
+# PY32_EXCLUDED: src/rurp_voltage_math.c -- 10-bit/1100 mV AVR conversion; ARM has its own 12-bit/VREFINT path in platform/py32f071/src/py32f071_rurp_shield.cpp. Unifying the two needs the ADC full scale and reference to become parameters (v1.43 follow-up).
 set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/firestarter.cpp"
     "${REPOSITORY_ROOT}/src/eprom_operations.cpp"
