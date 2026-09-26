@@ -15,73 +15,29 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
-#include <avr/pgmspace.h>
+#include "rurp_platform_compat.h"
 #include "rurp_types.h"
+#include "rurp_pinout.h"
 
-#define VOLTAGE_MEASURE_PIN A2
-
-    // CONTROL REGISTER
-#ifndef HARDWARE_REVISION
-#define VPE_TO_VPP      0x01
-#define ADDRESS_LINE_16             VPE_TO_VPP
-#define A9_VPP_ENABLE   0x02
-#define VPE_ENABLE      0x04
-#define P1_VPP_ENABLE   0x08
-#define ADDRESS_LINE_17             0x10
-#define ADDRESS_LINE_18             0x20
-#define READ_WRITE      0x40
-#define REGULATOR       0x80
-
-#else
-#define HARDWARE_REVISION_PIN A3
+#ifdef HARDWARE_REVISION
+// Hardware-revision enum values (out of the alias-migration scope —
+// these are revision identifiers, not RURP-signal aliases).
 #define REVISION_0 0
 #define REVISION_1 1
 #define REVISION_2_0 2
 #define REVISION_2_1 3
 #define REVISION_2_2 4
-
-#define ADDRESS_LINE_16             0x01
-#define A9_VPP_ENABLE   0x02
-#define VPE_ENABLE      0x04
-#define P1_VPP_ENABLE   0x08
-#define ADDRESS_LINE_17             0x10
-#define ADDRESS_LINE_18             0x20
-#define READ_WRITE      0x40
-#define REGULATOR       0x80
-#define VPE_TO_VPP      0x100
-
+#define REVISION_2_3 5
+#define REVISION_UNKNOWN 0xFE  // ADC band-gap fall-through; 0xFF reserved for EEPROM-override-absent sentinel
 #endif
 
-#define ADDRESS_LINE_13             0x20
-
+// VPP DIP-bus magic constants. Set by the Python host in bus_config.vpp_line;
+// firmware's using_p1_as_vpp() (memory_utils.h) detects 24/28/32-pin chips
+// whose physical VPP pin is socket pin 1 (after bodge wire / Rev 2.2 JP4) and
+// redirects CTRL_VPE_ENABLE → CTRL_VPP_P1_ENABLE in eprom.cpp.
 #define VPP_P1_32_DIP               0x15
 #define VPP_P1_28_DIP               0x0F
-
-#ifdef HARDWARE_REVISION
-// REV 1
-#define REV_1_VPE_TO_VPP      0x01
-#define REV_1_A9_VPP_ENABLE   0x02
-#define REV_1_VPE_ENABLE      0x04
-#define REV_1_P1_VPP_ENABLE   0x08
-#define REV_1_RW              0x40
-#define REV_1_REGULATOR       0x80
-
-#define REV_1_ADDRESS_LINE_16             REV_1_VPE_TO_VPP
-#define REV_1_ADDRESS_LINE_17             0x10
-#define REV_1_ADDRESS_LINE_18             0x20
-
-// REV 2
-#define REV_2_VPE_TO_VPP      0x01
-#define REV_2_A9_VPP_ENABLE   0x02
-#define REV_2_VPE_ENABLE      0x04
-#define REV_2_P1_VPP_ENABLE   0x08
-#define REV_2_ADDRESS_LINE_17             0x10
-#define REV_2_ADDRESS_LINE_16             0x20
-#define REV_2_RW              0x40
-#define REV_2_REGULATOR       0x80
-
-#define REV_2_ADDRESS_LINE_18             P1_VPP_ENABLE
-#endif
+#define VPP_P21_24_DIP              0x0B
 
 
 // Constants
@@ -107,8 +63,14 @@ extern "C" {
     void rurp_set_programmer_mode();
     void rurp_set_communication_mode();
 #else
-#define rurp_set_programmer_mode() ((void)0)
-#define rurp_set_communication_mode() ((void)0)
+    /* Dedicated USB/UART targets do not need to disconnect communication
+     * from the PROM data bus. Keep typed no-op functions instead of macros so
+     * call sites are checked consistently on AVR, RP2040 and native builds. */
+    static inline void rurp_set_programmer_mode(void) {
+    }
+
+    static inline void rurp_set_communication_mode(void) {
+    }
 #endif
 
     int rurp_communication_available();
@@ -116,25 +78,55 @@ extern "C" {
     int rurp_communication_peak();
     size_t rurp_communication_write(const char* buffer, size_t size);
     size_t rurp_communication_read_bytes(char* buffer, size_t length);
-    int rurp_communication_read_data(char* buffer);
-    
+    int rurp_communication_read_data(char* buffer, size_t cap);
 
-    void rurp_log(PGM_P type, const char* msg);
-    void rurp_log_P(PGM_P type, PGM_P msg);
+
+    // ID-encoded wire frame emit -- the sole log surface.
+    void rurp_log_id(uint8_t id, const uint8_t* params, uint8_t param_count);
+
+    // Fixed-shape packers — wrap the byte-array pack + rurp_log_id call so
+    // each LOG_*_ID_U{8,16,24,32} macro invocation collapses to a single
+    // CALL instruction at the call site. MSB-first wire encoding per
+    // MSB-first parameter encoding.
+    void rurp_log_id_u8(uint8_t id, uint8_t v);
+    void rurp_log_id_u16(uint8_t id, uint16_t v);
+    void rurp_log_id_u24(uint8_t id, uint32_t v);
+    void rurp_log_id_u32(uint8_t id, uint32_t v);
+
+    // Wide variant for MSG_DATA_CHUNK payloads > 255 bytes.
+    // param_count is uint16_t to avoid overflow for 512 / 1024-byte chunks.
+    void rurp_log_id_wide(uint8_t id, const uint8_t* params, uint16_t param_count);
 
     void rurp_set_data_output();
     void rurp_set_data_input();
-
-#define rurp_chip_enable() rurp_set_chip_enable(0)  // CE (chip enable) on, enable chip
-#define rurp_chip_disable() rurp_set_chip_enable(1) // CE (chip enable) off, disable chip
-#define rurp_chip_output() rurp_set_chip_output(0)  // OE (output enable) on, enable output
-#define rurp_chip_input() rurp_set_chip_output(1)   // OE (output enable) off, enable input
-
-
-#define rurp_set_chip_enable(state) rurp_set_control_pin(CHIP_ENABLE, state)
-#define rurp_set_chip_output(state) rurp_set_control_pin(OUTPUT_ENABLE, state)
-
     void rurp_set_control_pin(uint8_t pin, uint8_t state);
+
+    /* Logical control helpers are typed inline functions rather than
+     * function-like macros. This preserves zero-overhead call sites while
+     * avoiding repeated argument evaluation and improving portability. */
+    static inline void rurp_set_chip_enable(uint8_t state) {
+        rurp_set_control_pin(CHIP_ENABLE, state);
+    }
+
+    static inline void rurp_set_chip_output(uint8_t state) {
+        rurp_set_control_pin(OUTPUT_ENABLE, state);
+    }
+
+    static inline void rurp_chip_enable(void) {
+        rurp_set_chip_enable(0);  // CE active low: enable chip
+    }
+
+    static inline void rurp_chip_disable(void) {
+        rurp_set_chip_enable(1);  // CE active low: disable chip
+    }
+
+    static inline void rurp_chip_output(void) {
+        rurp_set_chip_output(0);  // OE active low: enable chip output
+    }
+
+    static inline void rurp_chip_input(void) {
+        rurp_set_chip_output(1);  // OE active low: disable chip output
+    }
 
     void rurp_write_to_register(uint8_t reg, rurp_register_t data);
     rurp_register_t rurp_read_from_register(uint8_t reg);

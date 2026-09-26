@@ -1,0 +1,86 @@
+Processing uno328pb (platform: atmelavr; board: ATmega328PB; framework: arduino)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+CONFIGURATION: https://docs.platformio.org/page/boards/atmelavr/ATmega328PB.html
+PLATFORM: Atmel AVR (5.2.0) > ATmega328PB
+HARDWARE: ATMEGA328PB 16MHz, 2KB RAM, 32KB Flash
+PACKAGES: 
+ - framework-arduino-avr-minicore @ 3.1.2 
+ - toolchain-atmelavr @ 1.70300.191015 (7.3.0)
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 9 compatible libraries
+Scanning dependencies...
+Dependency Graph
+|-- EEPROM @ 2.0
+|-- jsmn
+Building in release mode
+Compiling .pio/build/uno328pb/src/boards/leonardo_rurp_shield.cpp.o
+Compiling .pio/build/uno328pb/src/boards/rurp_common.cpp.o
+Compiling .pio/build/uno328pb/src/boards/rurp_config_storage_eeprom.cpp.o
+Compiling .pio/build/uno328pb/src/boards/rurp_serial_utils.cpp.o
+Compiling .pio/build/uno328pb/src/boards/uno_rurp_shield.cpp.o
+Compiling .pio/build/uno328pb/src/dev_tools.cpp.o
+Compiling .pio/build/uno328pb/src/eprom_operations.cpp.o
+Compiling .pio/build/uno328pb/src/firestarter.cpp.o
+Compiling .pio/build/uno328pb/src/hardware_operations.cpp.o
+Compiling .pio/build/uno328pb/src/json_parser.c.o
+Compiling .pio/build/uno328pb/src/operation_utils.cpp.o
+Compiling .pio/build/uno328pb/src/proms/eeprom_28c.cpp.o
+Compiling .pio/build/uno328pb/src/proms/eprom.cpp.o
+Compiling .pio/build/uno328pb/src/proms/eprom_budget.cpp.o
+Compiling .pio/build/uno328pb/src/proms/eprom_params.cpp.o
+Compiling .pio/build/uno328pb/src/proms/flash_5v_page.cpp.o
+Compiling .pio/build/uno328pb/src/proms/flash_intel.cpp.o
+Compiling .pio/build/uno328pb/src/proms/flash_nor_unlock.cpp.o
+Compiling .pio/build/uno328pb/src/proms/flash_utils.cpp.o
+Compiling .pio/build/uno328pb/src/proms/memory.cpp.o
+Compiling .pio/build/uno328pb/src/proms/not_implemented.cpp.o
+Compiling .pio/build/uno328pb/src/proms/sram.cpp.o
+Compiling .pio/build/uno328pb/src/rurp_config_utils.cpp.o
+Compiling .pio/build/uno328pb/src/rurp_vpp.cpp.o
+Compiling .pio/build/uno328pb/lib5fe/jsmn/jsmn.c.o
+Archiving .pio/build/uno328pb/libFrameworkArduinoVariant.a
+Compiling .pio/build/uno328pb/FrameworkArduino/CDC.cpp.o
+Indexing .pio/build/uno328pb/libFrameworkArduinoVariant.a
+Compiling .pio/build/uno328pb/FrameworkArduino/HardwareSerial.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/HardwareSerial0.cpp.o
+Archiving .pio/build/uno328pb/lib5fe/libjsmn.a
+Compiling .pio/build/uno328pb/FrameworkArduino/HardwareSerial1.cpp.o
+Indexing .pio/build/uno328pb/lib5fe/libjsmn.a
+Compiling .pio/build/uno328pb/FrameworkArduino/HardwareSerial2.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/HardwareSerial3.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/IPAddress.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/PluggableUSB.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/Print.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/Stream.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/Tone.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/USBCore.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/WInterrupts.c.o
+Compiling .pio/build/uno328pb/FrameworkArduino/WMath.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/WString.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/abi.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/hooks.c.o
+Compiling .pio/build/uno328pb/FrameworkArduino/main.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/new.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/wiring.c.o
+Compiling .pio/build/uno328pb/FrameworkArduino/wiring_analog.c.o
+Compiling .pio/build/uno328pb/FrameworkArduino/wiring_digital.c.o
+Compiling .pio/build/uno328pb/FrameworkArduino/wiring_extras.cpp.o
+Compiling .pio/build/uno328pb/FrameworkArduino/wiring_pulse.S.o
+Compiling .pio/build/uno328pb/FrameworkArduino/wiring_pulse.c.o
+Compiling .pio/build/uno328pb/FrameworkArduino/wiring_shift.c.o
+Archiving .pio/build/uno328pb/libFrameworkArduino.a
+Indexing .pio/build/uno328pb/libFrameworkArduino.a
+Linking .pio/build/uno328pb/firestarter_uno328pb.elf
+Checking size .pio/build/uno328pb/firestarter_uno328pb.elf
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [========  ]  77.2% (used 1581 bytes from 2048 bytes)
+Flash: [========  ]  78.1% (used 25598 bytes from 32768 bytes)
+Building .pio/build/uno328pb/firestarter_uno328pb.hex
+========================= [SUCCESS] Took 2.43 seconds =========================
+
+Environment    Status    Duration
+-------------  --------  ------------
+uno328pb       SUCCESS   00:00:02.426
+========================= 1 succeeded in 00:00:02.426 =========================

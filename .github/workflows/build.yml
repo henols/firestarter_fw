@@ -1,8 +1,37 @@
 name: Firestarter CI
+# Build + gates run on EVERY branch; only `main` publishes.
+#
+# This workflow used to trigger on main only, which meant a push to a
+# milestone or fix branch compiled nothing at all and a PR targeting `beta`
+# got no AVR CI whatsoever -- the branch was proven only when it reached
+# main, long after review. The trigger is now unrestricted.
+#
+# That reversal matters because three steps at the bottom of this job MUTATE
+# the repository or publish: the version bump, the git-auto-commit that
+# pushes it back to the branch, and the release upload with make_latest.
+# Their safety used to be implied entirely by the trigger. It is now explicit
+# -- each carries an `if:` naming push-to-main. Removing the branch filter
+# without those guards would auto-commit a version bump onto every feature
+# branch and publish a spurious "latest" stable release from it.
 on:
   push:
-    branches:
-    - main
+    # '**' matches every BRANCH but no tags. A bare `push:` would also fire
+    # on tag pushes, and this project pushes tags across all three repos at
+    # milestone close expecting zero CI from them.
+    #
+    # '!beta' keeps THIS workflow -- the STABLE publisher, the one holding the
+    # make_latest release -- off the beta branch entirely. beta has its own
+    # publisher in beta-build.yml, which builds the same targets and cuts the
+    # pre-release. Letting both fire on a beta push rebuilt everything twice
+    # and, worse, put the stable-release workflow on a branch that must never
+    # produce a stable release: the make_latest step is guarded by an `if:`,
+    # but a workflow that cannot run there cannot be one guard-edit away from
+    # publishing there either. Structural exclusion beats a conditional.
+    #
+    # This does NOT weaken PR coverage: `pull_request` below carries no branch
+    # filter, so a PR targeting beta still runs this workflow in full. Only the
+    # direct push to beta is excluded, and beta-build.yml covers that.
+    branches: ['**', '!beta']
     paths-ignore:
     - '**.md'
     - '**.sh'
@@ -11,10 +40,32 @@ on:
     - 'documents/**'
     - 'test/**'
     - 'images/**'
+    # Keep .github/** here. Without it a workflow- or template-only push to
+    # main starts the STABLE publisher, which carries make_latest. main has
+    # always ignored it; beta never did, so a beta->main promotion silently
+    # drops it unless it is restored like this.
     - '.github/**'
     - '.vscode/**'
     - '.editorconfig/**'
     - 'tools/**'
+  pull_request:
+    paths-ignore:
+    - '**.md'
+    - '**.sh'
+    - '.gitignore'
+    - 'docs/**'
+    - 'documents/**'
+    - 'images/**'
+    - '.vscode/**'
+    - '.editorconfig/**'
+
+# Broadening the trigger multiplies queued runs, and a same-repo PR branch now
+# matches both `push` and `pull_request`. Supersede stale runs per ref so the
+# queue does not starve -- but NEVER cancel on a publishing branch, where a
+# half-finished run could leave a tag without its assets.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/beta' }}
 
 jobs:
   build:
@@ -23,7 +74,23 @@ jobs:
       contents: write
 
     steps:
+      # fetch-depth: 0 is REQUIRED, not hygiene. `pytest tests/ -v` below runs
+      # the Phase-123/129 history gates (check_landing_range, the flash-geometry
+      # ordering pair, the PR-45 ancestry pair). Every one of them walks git
+      # history: they resolve a fork SHA, and they assert that a commit touching
+      # a given path exists strictly after another commit. Under checkout's
+      # default shallow depth-1 clone those SHAs are not in the repository at
+      # all, and the gates fail with "does not resolve to a commit" rather than
+      # with anything about the code.
+      #
+      # This was invisible while the workflow ran on main only: main lags beta
+      # by a long way and does not carry those test files, so the step passed
+      # there for want of anything to run. Opening the trigger to every branch
+      # is what surfaced it. beta-build.yml already sets fetch-depth: 0 for the
+      # same reason -- this brings build.yml in line with it.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/cache@v4
         with:
@@ -34,28 +101,108 @@ jobs:
 
       - uses: actions/setup-python@v4
 
-      # - name: install gh
-      #   run: apt update && apt install gh
-      
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio
+
+      # Phase 6 WR-01: run the native Unity suite (host-side, no AVR board
+      # required) in CI. test_messages pins the CRC8 polynomial + the exact
+      # wire-frame byte sequence — a silent refactor that breaks the locked
+      # frame contract from CONTEXT D-01..D-04 must fail CI, not slip
+      # through because CI only built and never executed the tests.
+      # main ships WITHOUT dev tools, so the unconditional leg is the
+      # no-DEV_TOOLS one below. A pull request targets beta, which ships WITH
+      # them, so the DEV_TOOLS configuration is checked on PRs too -- otherwise
+      # the beta push would be the first place it is ever compiled.
+      - name: Run native unit tests (DEV_TOOLS, pull requests only)
+        if: github.event_name == 'pull_request'
+        run: pio test -e native
+
+      # v1.22 Phase 119 D-04: proves the is_memory_cmd() admission predicate
+      # behaves identically without -D DEV_TOOLS as it does with it -- a
+      # no-DEV_TOOLS build had never been compiled or tested before this
+      # milestone (-D DEV_TOOLS lives in the shared [env] block and is
+      # inherited by all three AVR envs AND [env:native]). The note that used
+      # to sit here -- that this step would not fire on a milestone branch
+      # because the workflow triggered on main only, leaving a local run
+      # recorded in 119-02-SUMMARY.md as the sole proof -- no longer holds:
+      # the trigger now covers every branch, so milestone branches get this
+      # gate in CI rather than on someone's laptop.
+      - name: Run native unit tests (no DEV_TOOLS)
+        run: pio test -e native_nodevtools
+
+      - name: Install pytest for script tests
+        run: pip install pytest
+
+      - name: Run update_version.py tests
+        run: pytest tests/ -v
+
+      # --- Version bump + tag commit now gated by everything above ---
+      #
+      # PUBLISH BOUNDARY. Everything above this line runs on every branch and
+      # every PR; everything below runs ONLY on a push to main.
+      #
+      # `update_version.py` rewrites the tracked include/version.h in place, so
+      # skipping it off-main is harmless -- the build simply uses the committed
+      # version. It is gated anyway because its output feeds the two steps that
+      # follow, and leaving it ungated would put a dirty version.h in front of
+      # the auto-commit on branches where nothing should be committed at all.
       - name: Generate release version
         id: version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: .github/scripts/update_version.py
 
+      # Pushes a commit back to the branch it ran on. Ungated on an
+      # unrestricted trigger this would land a version-bump commit on every
+      # feature branch -- and that commit is itself a push, so it would
+      # re-trigger this workflow.
       - uses: stefanzweifel/git-auto-commit-action@v5
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         # with:
         #   tagging_message: ${{ steps.version.outputs.version }}
         # env:
         #   GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-      - name: Install PlatformIO Core
-        run: pip install --upgrade platformio
 
+      # Deliberately OUTSIDE the publish boundary: compiling every AVR env is
+      # the whole point of running on other branches. It stays after the bump
+      # so that on main the published .hex carries the bumped version.
       - name: Build PlatformIO Project
         run: pio run
 
+      - name: Assert no AVR image gained the dev commands
+        run: |
+          set -euo pipefail
+          NEEDLE_DIR="$RUNNER_TEMP/devtools-needle"
+          mkdir -p "$NEEDLE_DIR"
+          CHECKED=0
+          for ENV in uno uno328pb leonardo; do
+            MATCHES=(.pio/build/"$ENV"/firestarter_*.elf)
+            if [ "${#MATCHES[@]}" -ne 1 ]; then
+              echo "::error::expected exactly one firestarter_*.elf under .pio/build/$ENV, found ${#MATCHES[@]}"
+              exit 2
+            fi
+            ELF="${MATCHES[0]}"
+            STRINGS_OUT="$NEEDLE_DIR/$ENV.txt"
+            strings "$ELF" > "$STRINGS_OUT"
+            if grep -Fq -- 'CTRL remapped' "$STRINGS_OUT"; then
+              echo "::error::$ENV image implements the dev commands -- the stable publisher must not gain dev tools"
+              exit 1
+            fi
+            CHECKED=$((CHECKED + 1))
+          done
+          if [ "$CHECKED" -ne 3 ]; then
+            echo "::error::checked $CHECKED envs, expected 3"
+            exit 2
+          fi
+          echo "PASS: uno, uno328pb and leonardo all lack the dev commands" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Creates a GitHub Release with make_latest: true. On any branch other
+      # than main this would publish a spurious "latest" stable release under
+      # whatever tag update_version.py produced.
       - name: Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          files: .pio/build/**/firestarter_*.hex        
+          files: .pio/build/**/firestarter_*.hex
           tag_name: ${{ steps.version.outputs.version }}
           make_latest: true
           # token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}

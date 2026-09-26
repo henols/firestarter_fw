@@ -8,7 +8,7 @@
 #ifndef __DEV_TOOLS_H__
 #define __DEV_TOOLS_H__
 
-#ifdef DEV_TOOLS
+#if DEV_TOOLS
 #include "firestarter.h"
 
 #ifdef __cplusplus

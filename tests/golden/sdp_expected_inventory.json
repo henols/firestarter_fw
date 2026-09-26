@@ -1,0 +1,22 @@
+{
+  "meta": {
+    "source": "test/native/avr/_shared/sdp_expected.h",
+    "recorded_by": "Phase 124 Plan 03 Re-derived by the planning-citation cleanup (debug session planning-refs-in-src-comments): the source header's COMMENT TEXT changed and nothing else. Both halves of this record were re-derived with the gate module's OWN _parse_arrays() against the live header and are byte-identical to the previous record -- every array name and entry count is unchanged -- so only blob_sha moved. The code-only digest of the header (comments stripped, blank lines dropped, sha256) is identical before and after. blob_sha is `git hash-object <source>` run on the working tree BEFORE staging, and recorded_at_head names this commit's PARENT (c67a3301d507bccea89281c08af75f3a7bb76edb), per the one-commit property the earlier entries describe.",
+    "requirement": "MERGE-06",
+    "blob_sha": "cb254374305b4fcbe4ee1682c70e52f699f53007",
+    "recorded_at_head": "c67a3301d507bccea89281c08af75f3a7bb76edb",
+    "why_two_checks": "A whole-file blob match alone cannot distinguish 'unchanged' from 'an array deleted together with the assertions that consumed it' -- both leave the remaining bytes identical to some other prior state's remaining bytes, so the per-array name+entry-count inventory is what makes a deletion visible.",
+    "how_to_update": "If this file legitimately changes, re-derive this inventory from the file with an independent parse (never hand-edit the numbers) AND state in the commit message which array changed and why -- never edit this JSON merely to make a surprise disappear."
+  },
+  "arrays": [
+    { "name": "SDP_SHIPPED_DIP28_28C256", "entries": 54 },
+    { "name": "SDP_FIXED_DIP28_28C256", "entries": 54 },
+    { "name": "SDP_FIXED_DIP28_28C64", "entries": 54 },
+    { "name": "SDP_FIXED_DIP24_2816", "entries": 54 },
+    { "name": "SDP_FIXED_DIP32_28C512_EEPROM", "entries": 54 },
+    { "name": "SDP_FIXED_LOCK_DIP28_28C256", "entries": 30 },
+    { "name": "SDP_FIXED_LOCK_DIP28_28C64", "entries": 30 },
+    { "name": "SDP_FIXED_LOCK_DIP24_2816", "entries": 30 },
+    { "name": "SDP_FIXED_LOCK_DIP32_28C512_EEPROM", "entries": 33 }
+  ]
+}

@@ -1,0 +1,134 @@
+name: Build PY32F071 firmware
+description: >
+  Install the GNU Arm toolchain, configure and build platform/py32f071.
+
+  D-06: this is the ONLY place in the repo that holds the ARM toolchain
+  install + cmake configure + cmake build invocation. A composite action
+  runs its steps in the calling job, on the same runner and in the same
+  workspace as that job's own checkout -- which is exactly what keeps
+  REL-01's "same job, after the version bump" property intact: this action
+  produces its image inside whichever job calls it, immediately after that
+  job's prior steps, with no second checkout to go stale. A `workflow_call`
+  reusable workflow would NOT have this property -- it runs as a separate
+  job with a separate checkout, and would break REL-01 outright. Do not
+  convert this file to `workflow_call`.
+
+  D-05/T-128-11: `continue-on-error` must never appear anywhere in this
+  file. It belongs on the call site in `beta-build.yml` only. If it were
+  added here, the LOUD `py32f071.yml` gate would silently inherit the
+  containment, and D-05's whole loud/soft split between the two workflows
+  would collapse without warning.
+
+  S-5: every comment in this file names the decision or requirement that
+  produced the line it sits on.
+outputs:
+  hex_path:
+    description: Path to the emitted Intel HEX image
+    value: ${{ steps.build.outputs.hex_path }}
+  sdk_sha:
+    description: Resolved FetchContent SDK commit SHA
+    value: ${{ steps.build.outputs.sdk_sha }}
+runs:
+  using: composite
+  steps:
+    # D-06/Pitfall 5: `shell:` is REQUIRED on every composite `run:` step --
+    # unlike a workflow step, a composite step has no default shell, and
+    # omitting it is a hard error at action-load time that would break both
+    # calling workflows at once. No `.github/actions/` directory has existed
+    # in this repo before this file, so nobody here has hit this before.
+    - id: toolchain
+      name: Install GNU Arm toolchain and build tools
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          ninja-build \
+          gcc-arm-none-eabi \
+          binutils-arm-none-eabi
+        # D-17: unpinned, verbatim from py32f071.yml:28-35. Toolchain version
+        # pinning is a real behaviour change, out of REL-01...REL-04 scope,
+        # and is recorded as a deliberate deferral, not an oversight.
+        # binutils-arm-none-eabi also supplies arm-none-eabi-objcopy, which
+        # is what the release job's REL-01 assertion (Plan 128-06) inspects.
+
+    - id: versions
+      name: Record tool versions
+      shell: bash
+      run: |
+        set -o pipefail
+        {
+          arm-none-eabi-gcc --version
+          arm-none-eabi-ld --version
+          cmake --version
+          ninja --version
+        } | tee tool-versions.txt
+        # Consumed by py32f071.yml's failure-diagnostics upload, which stays
+        # in that workflow -- this action does not upload artifacts itself.
+
+    - id: configure
+      name: Configure
+      shell: bash
+      run: |
+        set -o pipefail
+        cmake \
+          -S platform/py32f071 \
+          -B build/py32f071 \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          2>&1 | tee configure.log
+        # Paths stay relative to the workspace: this composite runs with the
+        # calling job's working directory, which is the checkout root (D-06)
+        # -- no checkout step is added here; the calling job already did it.
+
+    - id: build
+      name: Build and resolve outputs
+      shell: bash
+      run: |
+        set -o pipefail
+        cmake --build build/py32f071 2>&1 | tee build.log
+
+        # REL-04: hex_path. nullglob makes an unmatched glob expand to zero
+        # words instead of the literal pattern string -- without it, bash
+        # would leave a single-element array containing the literal text
+        # "firestarter_*.hex" on a miss, and a naive count!=1 check below
+        # would never fire, silently propagating that literal string
+        # downstream as a confusing filename mismatch instead of a clear
+        # "no image" failure. With nullglob, a miss is count=0 and a
+        # collision (more than one stale hex) is count>1; both are caught
+        # by the same count guard. This also makes the LOUD py32f071.yml
+        # gate additionally enforce exactly-one-image-with-the-underscore-
+        # prefix, a bonus of centralising the build here (D-06).
+        shopt -s nullglob
+        MATCHES=(build/py32f071/firestarter_*.hex)
+        if [ "${#MATCHES[@]}" -ne 1 ]; then
+          echo "::error::expected exactly one build/py32f071/firestarter_*.hex, found ${#MATCHES[@]}: ${MATCHES[*]}"
+          exit 1
+        fi
+        HEX_PATH="${MATCHES[0]}"
+        echo "hex_path=${HEX_PATH}" >> "$GITHUB_OUTPUT"
+        echo "hex_path: ${HEX_PATH}"
+
+        # REL-04/D-10: sdk_sha. SRC is the FetchContent source dir,
+        # MEASURED (not guessed) off CI run 30676982030 (job 91306188205,
+        # branch v1.23-py32f071-integration, 2026-08-01) -- ninja object
+        # paths under _deps/py32f071_sdk-src/ relative to the build dir.
+        # This matches CMake's documented default
+        # <binary_dir>/_deps/<lowercaseName>-src.
+        SRC="build/py32f071/_deps/py32f071_sdk-src"
+        if [ ! -d "$SRC" ]; then
+          # Deliberately non-fatal here: provenance enforcement is REL-04's
+          # concern and its hard gate lives in the release job (Plan
+          # 128-06), where an empty sdk_sha is caught by a 40-hex guard.
+          # Failing the *build* here would turn a FetchContent layout
+          # change into a red compile on the LOUD gate for a reason that is
+          # not a compile problem. This empty-value path is deliberately
+          # non-fatal here and fail-closed downstream -- not a swallowed
+          # error.
+          echo "::warning::FetchContent SDK source dir not found at ${SRC} -- FetchContent layout may have changed; sdk_sha will be empty"
+          echo "sdk_sha=" >> "$GITHUB_OUTPUT"
+        else
+          RESOLVED=$(git -C "$SRC" rev-parse HEAD)
+          echo "sdk_sha=${RESOLVED}" >> "$GITHUB_OUTPUT"
+          echo "sdk_sha: ${RESOLVED}"
+        fi

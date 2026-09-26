@@ -25,6 +25,7 @@
 #define JSMN_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -71,10 +72,20 @@ enum jsmnerr {
  * end		end position in JSON data string
  */
 typedef struct jsmntok {
-  jsmntype_t type;
+  /* LOCAL DELTA vs upstream jsmn: was `jsmntype_t type;` -- jsmntype_t
+   * is a 16-bit int on AVR, but this field's only values are the five
+   * jsmntype_t enumerators (JSMN_UNDEFINED..JSMN_PRIMITIVE), all <= 8. */
+  uint8_t type;
+  /* LOCAL DELTA vs upstream jsmn: was `int size;` -- this field's real
+   * maximum is an object's pair count or an array's element count, both far
+   * below 255. */
+  uint8_t size;
+  /* UNCHANGED and SIGNED vs upstream jsmn: twelve `-1` sentinel field
+   * references on six lines of jsmn.c (start/end init and end-of-token
+   * checks at lib/jsmn/src/jsmn.c:15,222,241,256,290,348) depend on `start`
+   * and `end` staying a signed type -- do not narrow or unsign either. */
   int start;
   int end;
-  int size;
 #ifdef JSMN_PARENT_LINKS
   int parent;
 #endif

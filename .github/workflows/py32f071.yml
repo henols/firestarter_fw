@@ -1,0 +1,115 @@
+name: PY32F071 firmware
+
+on:
+  # MERGE-03/D-05: this workflow is the LOUD ARM gate -- no continue-on-error,
+  # red and staying red when ARM breaks -- while beta-build.yml's ARM steps are
+  # the SOFT copy (continue-on-error: true, existing only to produce the
+  # release asset, never able to block AVR). That pairing is what makes
+  # beta-build.yml's containment defensible; neither half is sound alone.
+  # continue-on-error comes off beta-build.yml's call site when the target is
+  # validated on real silicon; no PCB exists, so it is unreachable and the flag
+  # stays there.
+  #
+  # SUPERSEDES the MERGE-03 note that used to live here recording the trigger
+  # as "preserved verbatim" (128-03-SUMMARY.md). `push: branches: [beta]`
+  # meant ARM was only proven once work reached beta -- a push to a milestone
+  # or fix branch built nothing, so an ARM break was found at merge time
+  # rather than when it was written. The push filter is removed; the loud gate
+  # now runs wherever the code is.
+  #
+  # This workflow publishes nothing. Its two upload-artifact steps attach
+  # ephemeral build output to the run itself -- they are not releases, and
+  # keeping them on every branch is the point: the .hex is most useful to
+  # download exactly when the work is still on a branch. The release ASSET is
+  # produced by beta-build.yml, which remains beta-only.
+  # '**' matches every BRANCH but no tags -- milestone-close tag pushes must
+  # still fire zero CI.
+  push:
+    # Never on main. The py32f071 target has no silicon and is beta-only
+    # (channel.BETA_ONLY_BOARDS), so a stable branch must not build it.
+    branches: ['**', '!main']
+  pull_request:
+    paths:
+      - "platform/py32f071/**"
+      - "include/**"
+      - "src/**"
+      - "lib/jsmn/**"
+      - ".github/workflows/py32f071.yml"
+  workflow_dispatch:
+
+# A same-repo PR branch now matches both `push` and the path-filtered
+# `pull_request`, so supersede stale runs per ref rather than queueing both to
+# completion. Never cancel on a publishing branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/beta' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # D-06: the ARM toolchain install + cmake configure + cmake build
+      # invocation now exists in exactly one place -- the composite action.
+      # D-05: this call site carries NO continue-on-error. This workflow is
+      # the LOUD half of the split: it must go red and stay red when the ARM
+      # build breaks on beta, and the containment in beta-build.yml is only
+      # defensible because this workflow exists to not hide the same
+      # failure. The continue-on-error removal trigger for the OTHER side's
+      # flag is recorded there and repeated here for locality: it comes off
+      # beta-build.yml's call site when the target is validated on real
+      # silicon; no PCB exists, so it is unreachable this milestone and the
+      # flag stays there. Recording the trigger is what makes its
+      # persistence read as a decision, not an oversight.
+      - name: Build PY32F071 firmware
+        id: arm
+        uses: ./.github/actions/build-py32f071
+
+      - name: Upload failed build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestarter_py32f071_build_diagnostics
+          if-no-files-found: warn
+          path: |
+            configure.log
+            build.log
+            tool-versions.txt
+            build/py32f071/CMakeCache.txt
+            build/py32f071/build.ninja
+
+      # ad47c3b: size goes to the job log, which is worth seeing on every
+      # run, and is worth nothing as an artifact -- no longer teed to a file.
+      - name: Report firmware size
+        run: |
+          set -o pipefail
+          arm-none-eabi-size \
+            build/py32f071/firestarter_py32f071.elf
+
+      # ad47c3b/D-16: the non-empty check stays as a build gate; the
+      # sha256sum generation/verification and the .elf/.bin non-empty checks
+      # go -- D-16 keeps only the single install image, so checksumming it
+      # here has no consumer.
+      - name: Verify the install image exists and is non-empty
+        working-directory: build/py32f071
+        run: |
+          set -euxo pipefail
+          test -s firestarter_py32f071.hex
+
+      # D-16: keep the single-file upload of the install image from
+      # ad47c3b. A PR build stays downloadable, which is the only way to
+      # obtain an image for a future board bring-up before a release
+      # exists, and a single-file artifact unzips to exactly the image and
+      # nothing else. The ELF/map/logs/checksum uploads ad47c3b removes stay
+      # removed -- no release step lives here; release assets come from
+      # beta-build.yml only (REL-01's ordering constraint), and build.yml is
+      # out of scope (D-13).
+      - name: Upload firmware install image
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestarter_py32f071
+          if-no-files-found: error
+          path: build/py32f071/firestarter_py32f071.hex
