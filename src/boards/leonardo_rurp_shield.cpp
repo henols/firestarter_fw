@@ -22,11 +22,6 @@
 #define PORTC_CONTROL_MASK 0x80
 
 
-// Constant for VCC calculation using the internal 1.1V bandgap reference.
-// Formula: (1.1V * 1024 ADC steps * 1000 mV/V)
-static constexpr long VCC_CALC_CONSTANT = 1126400L;
-
-
 uint8_t control_pins = 0x00;
 
 void rurp_board_setup() {
