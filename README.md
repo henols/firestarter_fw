@@ -1,6 +1,13 @@
-<p align="left"><img src="https://raw.githubusercontent.com/henols/firestarter_app/refs/heads/main/images/firestarter_logo.png" alt="Firestarter EPROM Programmer" width="200"></p>
+<p align="left"><img src="images/branding/firestarter_logo_horizontal.png" alt="Firestarter EPROM Programmer" width="500"></p>
 
+---
 # Firestarter Firmware
+
+> [!IMPORTANT]
+> Bugs, feature requests, support requests, and project-wide work are tracked in the [central Firestarter issue tracker](https://github.com/henols/firestarter/issues).
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![ko-fi](https://raw.githubusercontent.com/henols/firestarter_app/refs/heads/main/images/ko-fi.png)](https://ko-fi.com/E1E21I2WWW)
 
 The AVR firmware that runs on the Arduino and drives the chip in the socket.
 

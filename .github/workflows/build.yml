@@ -38,9 +38,16 @@ on:
     - '.gitignore'
     - 'docs/**'
     - 'documents/**'
+    - 'test/**'
     - 'images/**'
+    # Keep .github/** here. Without it a workflow- or template-only push to
+    # main starts the STABLE publisher, which carries make_latest. main has
+    # always ignored it; beta never did, so a beta->main promotion silently
+    # drops it unless it is restored like this.
+    - '.github/**'
     - '.vscode/**'
     - '.editorconfig/**'
+    - 'tools/**'
   pull_request:
     paths-ignore:
     - '**.md'
@@ -134,26 +141,45 @@ jobs:
       # PUBLISH BOUNDARY. Everything above this line runs on every branch and
       # every PR; everything below runs ONLY on a push to main.
       #
-      # `update_version.py` rewrites the tracked include/version.h in place, so
-      # skipping it off-main is harmless -- the build simply uses the committed
-      # version. It is gated anyway because its output feeds the two steps that
-      # follow, and leaving it ungated would put a dirty version.h in front of
-      # the auto-commit on branches where nothing should be committed at all.
-      - name: Generate release version
+      # The version is READ from the committed include/version.h. It is never
+      # computed and pushed back.
+      #
+      # This step used to be `update_version.py` followed by
+      # git-auto-commit-action. That push is rejected: main's ruleset requires
+      # a pull request and GitHub Actions is not a bypass actor, so the commit
+      # fails with GH013, the step fails, and the job aborts -- before `pio
+      # run`, before the dev-tools assertion, and before the Release step. The
+      # firmware has published nothing from main by automation since
+      # 2026-09-01, and the failure looks like a red build rather than a missed
+      # release. firestarter_app run 34784468070 shows the same shape.
+      #
+      # So the version lives in the pull request that promotes the release.
+      # Set it in include/version.h there, and this workflow builds it, tags it
+      # and releases it. The committed header and the release tag always agree,
+      # because one is read from the other, and `pio run` below compiles the
+      # same value it publishes.
+      - name: Read the version to release
         id: version
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: .github/scripts/update_version.py
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^#define VERSION "\(.*\)"/\1/p' include/version.h | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "::error::no #define VERSION found in include/version.h"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version in include/version.h: $VERSION"
 
-      # Pushes a commit back to the branch it ran on. Ungated on an
-      # unrestricted trigger this would land a version-bump commit on every
-      # feature branch -- and that commit is itself a push, so it would
-      # re-trigger this workflow.
-      - uses: stefanzweifel/git-auto-commit-action@v5
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        # with:
-        #   tagging_message: ${{ steps.version.outputs.version }}
-        # env:
-        #   GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          # Idempotence. Not every push to main is a release: a source change
+          # that does not move the version must not try to re-cut an existing
+          # tag. Skip instead, and say so.
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "already_released=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Tag $VERSION already exists. Nothing to release." \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "already_released=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # Deliberately OUTSIDE the publish boundary: compiling every AVR env is
       # the whole point of running on other branches. It stays after the bump
@@ -192,7 +218,10 @@ jobs:
       # than main this would publish a spurious "latest" stable release under
       # whatever tag update_version.py produced.
       - name: Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: >-
+          github.event_name == 'push'
+          && github.ref == 'refs/heads/main'
+          && steps.version.outputs.already_released == 'false'
         uses: softprops/action-gh-release@v2
         with:
           files: .pio/build/**/firestarter_*.hex

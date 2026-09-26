@@ -25,7 +25,9 @@ on:
   # '**' matches every BRANCH but no tags -- milestone-close tag pushes must
   # still fire zero CI.
   push:
-    branches: ['**']
+    # Never on main. The py32f071 target has no silicon and is beta-only
+    # (channel.BETA_ONLY_BOARDS), so a stable branch must not build it.
+    branches: ['**', '!main']
   pull_request:
     paths:
       - "platform/py32f071/**"
