@@ -18,6 +18,8 @@
 #include "memory.h"
 #include "operation_utils.h"
 #include "rurp_shield.h"
+#include "rurp_voltage_math.h"
+#include "rurp_config_migrate.h"
 #include "version.h"
 #if DEV_TOOLS
 #include "dev_tools.h"
@@ -103,7 +105,34 @@ bool parse_json(firestarter_handle_t* handle) {
         if (res < 0) {
             LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
             return false;
-        } else if (res == 1) {
+        }
+        if (res & JSON_CFG_CALIBRATE) {
+            // Back-solve this MCU's bandgap from the operator's meter reading
+            // of the supply pin. Refused, never clamped: a stored bandgap is
+            // a value the firmware trusts to judge programming voltages.
+            // Sample in PROGRAMMER mode, because that is the mode every
+            // real measurement is taken in: hw_read_voltage and
+            // eprom_check_vpp both switch to it before reading. The I/O state
+            // differs between the two modes and moves the bandgap count by a
+            // whole count on a SERIAL_ON_IO board -- about 0.5 %, stored
+            // permanently. Calibrate under the conditions you measure under.
+            rurp_set_programmer_mode();
+            uint32_t bandgap_adc = (uint32_t)rurp_get_bandgap_adc_reading();
+            rurp_set_communication_mode();
+            uint16_t measured = rurp_bandgap_from_measured_vcc(
+                (uint32_t)json_config_measured_vcc_mv(), bandgap_adc);
+            if (measured == 0) {
+                LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
+                return false;
+            }
+            config->bandgap_mv = measured;
+            res |= JSON_CFG_FIELD_CHANGED;
+        }
+        if (res & JSON_CFG_FIELD_CHANGED) {
+            // Range-check whatever was just written before it is stored, so a
+            // bad r1/r2/bandgap never reaches the conversion. Refuses by
+            // correcting to the default, which is the same policy boot applies.
+            (void)rurp_config_migrate(config);
             rurp_save_config(config);
         }
     }

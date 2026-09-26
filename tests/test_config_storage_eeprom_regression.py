@@ -88,6 +88,11 @@ _INCLUDE = _REPO_ROOT / "include"
 _CANDIDATE_SOURCES = (
     _REPO_ROOT / "src" / "rurp_config_utils.cpp",
     _REPO_ROOT / "src" / "boards" / "rurp_config_storage_eeprom.cpp",
+    # rurp_validate_config delegates its per-field migration here (v1.43), so
+    # the link set needs it. The migration was extracted precisely so it could
+    # be covered by behaviour in test/native/avr/test_config_migrate rather
+    # than by scanning this file's text.
+    _REPO_ROOT / "src" / "rurp_config_migrate.cpp",
 )
 _RESOLVED_SOURCES = tuple(p for p in _CANDIDATE_SOURCES if p.is_file())
 
@@ -353,12 +358,23 @@ def test_pre_refactor_tu_compiles_and_runs_with_zero_warnings(tmp_path):
 
 
 def test_load_config_get_access_at_config_start_with_sizeof_length(tmp_path):
-    """Coverage 2 -- CFG-04: rurp_load_config() produces exactly one
-    recorded get access, at index 48, with a length equal to
-    sizeof(rurp_configuration_t) as the compiled binary itself reported it.
-    Compared against the binary's own reported sizeof, never against a
-    Python integer literal -- host `long` is 8 bytes so the value is 32
-    here, 15 under avr-g++ and 20 on ARM (C-6)."""
+    """Coverage 2 -- CFG-04: rurp_load_config() reads once at index 48 with a
+    length equal to sizeof(rurp_configuration_t) as the compiled binary itself
+    reported it. Compared against the binary's own reported sizeof, never
+    against a Python integer literal -- host `long` is 8 bytes (C-6).
+
+    The read may be followed by a write-back. That is v1.43's per-field
+    migration doing its job: this harness starts from an unwritten config, so
+    r1/r2/bandgap are out of band and get corrected, and the correction is
+    persisted. It is the behaviour that fixes the stranding defect, where the
+    old version-gated wipe could never reach a stale value whose version
+    string already matched.
+
+    What must stay true is that the write-back is NOT unconditional -- a board
+    whose stored config is already good must not rewrite its EEPROM on every
+    boot. That property is proved by behaviour in
+    test/native/avr/test_config_migrate (test_a_current_config_is_left_alone),
+    which runs the real migrator rather than inspecting access traces."""
     compile_result, run_result, parsed = _run_regression_harness(tmp_path)
     assert compile_result.returncode == 0 and compile_result.stderr == "", (
         f"expected a clean, warning-free compile.\n"
@@ -369,11 +385,20 @@ def test_load_config_get_access_at_config_start_with_sizeof_length(tmp_path):
         f"expected a 'SIZEOF <n>' line in stdout.\n"
         f"stdout:\n{run_result.stdout}\nstderr:\n{run_result.stderr}"
     )
-    assert parsed["load"] == [("G", _CONFIG_START, sizeof_value)], (
-        f"expected exactly one get access at index {_CONFIG_START} with "
-        f"length sizeof(rurp_configuration_t)={sizeof_value} from "
-        f"rurp_load_config(), got {parsed['load']!r}.\n"
+    load_accesses = parsed["load"]
+    assert load_accesses and load_accesses[0] == ("G", _CONFIG_START, sizeof_value), (
+        f"expected rurp_load_config() to READ FIRST at index {_CONFIG_START} "
+        f"with length sizeof(rurp_configuration_t)={sizeof_value}, got "
+        f"{load_accesses!r}.\n"
         f"stdout:\n{run_result.stdout}\nstderr:\n{run_result.stderr}"
+    )
+    assert all(a[1] == _CONFIG_START and a[2] == sizeof_value for a in load_accesses), (
+        f"every access from rurp_load_config() must use index {_CONFIG_START} "
+        f"and length {sizeof_value}; got {load_accesses!r}"
+    )
+    assert [a[0] for a in load_accesses] in (["G"], ["G", "P"]), (
+        f"rurp_load_config() must read, and may write back exactly once when "
+        f"the migration corrects a field; got {load_accesses!r}"
     )
 
 

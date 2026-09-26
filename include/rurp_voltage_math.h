@@ -43,6 +43,15 @@ extern "C" {
  */
 #define RURP_BANDGAP_NOMINAL_MV 1100UL
 
+/*
+ * The plausible range for a MEASURED bandgap, from the ATmega datasheet's
+ * 1.0-1.2 V specification. A calibration landing outside this is not a
+ * calibration -- it is a typo or a bad meter reading -- and is REFUSED, never
+ * clamped: a stored value the firmware trusts decides programming voltages.
+ */
+#define RURP_BANDGAP_MIN_MV 1000U
+#define RURP_BANDGAP_MAX_MV 1200U
+
 /* 10-bit ADC full scale, in counts. */
 #define RURP_ADC_FULL_SCALE 1024UL
 
@@ -59,12 +68,12 @@ extern "C" {
 /*
  * Convert a divider ADC reading to millivolts at the divider's input.
  *
- *   Vin_mV = (adc * 1100 * (r1 + r2)) / (bandgap_adc * r2)
+ *   Vin_mV = (adc * bandgap_mv * (r1 + r2)) / (bandgap_adc * r2)
  *
  * Evaluated entirely in 32-bit by folding the divider into one scale factor
  * FIRST, rather than forming a 64-bit numerator:
  *
- *   k   = 1100 * (r1 + r2) / r2
+ *   k   = bandgap_mv * (r1 + r2) / r2
  *   Vin = (adc * k + bandgap_adc / 2) / bandgap_adc
  *
  * At the shipped calibration k is 7850 exactly, so this is bit-identical to
@@ -77,16 +86,17 @@ extern "C" {
  * high-voltage path must not read 0 as "the rail is low" -- use
  * rurp_calibration_is_plausible() to refuse before energising anything.
  */
-uint16_t rurp_scale_voltage_mv(uint32_t adc, uint32_t bandgap_adc, uint32_t r1, uint32_t r2);
+uint16_t rurp_scale_voltage_mv(uint32_t adc, uint32_t bandgap_adc, uint32_t r1, uint32_t r2,
+                               uint32_t bandgap_mv);
 
 /*
  * Convert a bandgap ADC reading to the supply voltage in millivolts.
  *
- *   VCC_mV = (1100 * 1024) / bandgap_adc
+ *   VCC_mV = (bandgap_mv * 1024) / bandgap_adc
  *
  * Returns 0 when bandgap_adc is 0.
  */
-uint16_t rurp_scale_vcc_mv(uint32_t bandgap_adc);
+uint16_t rurp_scale_vcc_mv(uint32_t bandgap_adc, uint32_t bandgap_mv);
 
 /*
  * True when r1/r2 can be evaluated by rurp_scale_voltage_mv without a guard
@@ -94,7 +104,18 @@ uint16_t rurp_scale_vcc_mv(uint32_t bandgap_adc);
  * pre-flight check can refuse an unusable calibration before any
  * high-voltage bit is set, instead of reading a 0 mV result as a low rail.
  */
-uint8_t rurp_calibration_is_plausible(uint32_t r1, uint32_t r2);
+uint8_t rurp_calibration_is_plausible(uint32_t r1, uint32_t r2, uint32_t bandgap_mv);
+
+/*
+ * Back-solve this MCU's bandgap from an operator meter reading of the supply.
+ *
+ *   Vbg = VCC_meter * bandgap_adc / 1024
+ *
+ * Returns 0 when the result is outside RURP_BANDGAP_MIN_MV..MAX_MV -- a
+ * refusal, never a clamp. A stored bandgap is a value the firmware TRUSTS to
+ * judge programming voltages, so an implausible one must not be written.
+ */
+uint16_t rurp_bandgap_from_measured_vcc(uint32_t vcc_meter_mv, uint32_t bandgap_adc);
 
 #ifdef __cplusplus
 }

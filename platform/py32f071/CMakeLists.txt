@@ -57,6 +57,7 @@ set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/boards/rurp_serial_utils.cpp"
     "${REPOSITORY_ROOT}/src/rurp_vpp.cpp"
     "${REPOSITORY_ROOT}/src/rurp_config_utils.cpp"
+    "${REPOSITORY_ROOT}/src/rurp_config_migrate.cpp"
     "${REPOSITORY_ROOT}/src/proms/memory.cpp"
     "${REPOSITORY_ROOT}/src/proms/eprom.cpp"
     "${REPOSITORY_ROOT}/src/proms/eprom_params.cpp"

@@ -78,7 +78,7 @@ Coverage:
      rurp_validate_config stay declared in include/rurp_shield.h and are
      absent from the seam header.
   6. test_config_version_literal_is_unchanged -- D-07: CONFIG_VERSION in
-     include/rurp_shield.h is still the literal "VER06".
+     include/rurp_shield.h is still the literal "VER07".
   7. test_config_start_lives_below_the_seam -- D-07: CONFIG_START is defined
      as 48 in the AVR backend translation unit and absent from the common
      policy layer.
@@ -417,12 +417,12 @@ def _public_declarations_violations(shield_text, seam_text):
 
 
 def _config_version_violations(shield_text):
-    """D-07: CONFIG_VERSION is still the literal 'VER06'."""
+    """D-07: CONFIG_VERSION is still the literal 'VER07'."""
     match = re.search(r'#\s*define\s+CONFIG_VERSION\s+"([^"]*)"', shield_text)
     if not match:
         return ["CONFIG_VERSION #define not found in rurp_shield.h"]
-    if match.group(1) != "VER06":
-        return [f"CONFIG_VERSION is {match.group(1)!r}, expected 'VER06'"]
+    if match.group(1) != "VER07":
+        return [f"CONFIG_VERSION is {match.group(1)!r}, expected 'VER07'"]
     return []
 
 
@@ -532,11 +532,11 @@ def test_public_config_declarations_stay_in_rurp_shield_h():
 
 
 def test_config_version_literal_is_unchanged():
-    """Coverage 6 -- D-07: CONFIG_VERSION in rurp_shield.h is still 'VER06'."""
+    """Coverage 6 -- D-07: CONFIG_VERSION in rurp_shield.h is still 'VER07'."""
     violations = _config_version_violations(_SHIELD_HEADER.read_text())
     assert violations == [], (
         f"expected CONFIG_VERSION in {_SHIELD_HEADER} to be the literal "
-        f"'VER06'.\nViolations:\n" + "\n".join(violations)
+        f"'VER07'.\nViolations:\n" + "\n".join(violations)
     )
 
 

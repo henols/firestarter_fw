@@ -24,6 +24,18 @@ bool get_vpp_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handl
 bool get_r1(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
 bool get_r2(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
 bool get_rev(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
+bool get_vcc(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
+bool get_bg(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
+
+/*
+ * The operator's measured supply voltage, in millivolts, for a calibration.
+ *
+ * It is NOT a stored field, so it has no home in rurp_configuration_t: it is
+ * an input the firmware consumes once to back-solve this MCU's bandgap. Reset
+ * at the top of json_parse_config so a value can never survive into a later
+ * command.
+ */
+static long s_measured_vcc_mv = 0;
 
 static int jsoneq_(const char* json, jsmntok_t* tok, const char* s);
 
@@ -381,6 +393,7 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
 
 int json_parse_config(const char* json, jsmntok_t* tokens, int token_count, rurp_configuration_t* config, firestarter_handle_t* handle) {
     int res = 0;
+    s_measured_vcc_mv = 0;  // never let a value survive into a later command
     for (int i = 1; i < token_count; i++) {
         if (get_cmd(json, tokens, i) != 0xFF) {
             i++;
@@ -390,15 +403,21 @@ int json_parse_config(const char* json, jsmntok_t* tokens, int token_count, rurp
 #ifdef HARDWARE_REVISION
         else if (get_rev(json, tokens, i, config)) {
             i++;
-            res = 1;
+            res |= JSON_CFG_FIELD_CHANGED;
         }
 #endif
         else if (get_r1(json, tokens, i, config)) {
             i++;
-            res = 1;
+            res |= JSON_CFG_FIELD_CHANGED;
         } else if (get_r2(json, tokens, i, config)) {
             i++;
-            res = 1;
+            res |= JSON_CFG_FIELD_CHANGED;
+        } else if (get_vcc(json, tokens, i, config)) {
+            i++;
+            res |= JSON_CFG_CALIBRATE;
+        } else if (get_bg(json, tokens, i, config)) {
+            i++;
+            res |= JSON_CFG_FIELD_CHANGED;
         } else {
             return -1;
         }
@@ -555,4 +574,23 @@ bool get_r2(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* 
 
 bool get_rev(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
     extract_int("rev", config->hardware_revision);
+}
+
+bool get_vcc(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
+    (void)config;
+    extract_long("vcc", s_measured_vcc_mv);
+}
+
+/*
+ * Write the stored bandgap directly. This is the escape hatch -- restoring the
+ * nominal, or re-applying a calibration recorded elsewhere. The value is still
+ * range-checked by rurp_config_migrate before it is ever used, so a bad one
+ * cannot reach the conversion.
+ */
+bool get_bg(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
+    extract_int("bg", config->bandgap_mv);
+}
+
+long json_config_measured_vcc_mv(void) {
+    return s_measured_vcc_mv;
 }

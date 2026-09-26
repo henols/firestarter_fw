@@ -70,7 +70,7 @@ static void test_shipped_defaults_match_the_header(void) {
 
 static void test_named_single_reading(void) {
     // adc 1023 at bandgap count 225 gives 35691 mV in both forms.
-    TEST_ASSERT_EQUAL_UINT16(35691, rurp_scale_voltage_mv(1023, 225, kR1, kR2));
+    TEST_ASSERT_EQUAL_UINT16(35691, rurp_scale_voltage_mv(1023, 225, kR1, kR2, RURP_BANDGAP_NOMINAL_MV));
     TEST_ASSERT_EQUAL_UINT32(35691, reference_v64(1023, 225, kR1, kR2));
 }
 
@@ -86,7 +86,7 @@ static void test_bit_identity_over_the_full_bandgap_range(void) {
                 continue;  // both forms narrow identically; compare below the cast
             }
             TEST_ASSERT_EQUAL_UINT16((uint16_t)expected,
-                                     rurp_scale_voltage_mv(adc, bg, kR1, kR2));
+                                     rurp_scale_voltage_mv(adc, bg, kR1, kR2, RURP_BANDGAP_NOMINAL_MV));
         }
     }
 }
@@ -101,7 +101,7 @@ static void test_worst_deviation_is_five_and_never_over_reads(void) {
         for (uint32_t bg = 200; bg <= 250; bg++) {
             for (uint32_t adc = 0; adc < 1024; adc++) {
                 uint32_t v64 = reference_v64(adc, bg, kR1, r2);
-                uint32_t v32 = rurp_scale_voltage_mv(adc, bg, kR1, r2);
+                uint32_t v32 = rurp_scale_voltage_mv(adc, bg, kR1, r2, RURP_BANDGAP_NOMINAL_MV);
                 if (v64 > 0xFFFFUL) {
                     continue;
                 }
@@ -122,11 +122,11 @@ static void test_divider_sum_guard_boundary(void) {
     uint32_t r2 = 44000;
     uint32_t r1_at = RURP_DIVIDER_SUM_MAX - r2;
     TEST_ASSERT_EQUAL_UINT32(RURP_DIVIDER_SUM_MAX, r1_at + r2);
-    TEST_ASSERT_EQUAL_UINT8(1, rurp_calibration_is_plausible(r1_at, r2));
-    TEST_ASSERT_NOT_EQUAL(0, rurp_scale_voltage_mv(512, 225, r1_at, r2));
+    TEST_ASSERT_EQUAL_UINT8(1, rurp_calibration_is_plausible(r1_at, r2, RURP_BANDGAP_NOMINAL_MV));
+    TEST_ASSERT_NOT_EQUAL(0, rurp_scale_voltage_mv(512, 225, r1_at, r2, RURP_BANDGAP_NOMINAL_MV));
 
-    TEST_ASSERT_EQUAL_UINT8(0, rurp_calibration_is_plausible(r1_at + 1, r2));
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_voltage_mv(512, 225, r1_at + 1, r2));
+    TEST_ASSERT_EQUAL_UINT8(0, rurp_calibration_is_plausible(r1_at + 1, r2, RURP_BANDGAP_NOMINAL_MV));
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_voltage_mv(512, 225, r1_at + 1, r2, RURP_BANDGAP_NOMINAL_MV));
 }
 
 static void test_scale_factor_guard_boundary(void) {
@@ -146,9 +146,9 @@ static void test_scale_factor_guard_boundary(void) {
     TEST_ASSERT_EQUAL_UINT32(RURP_SCALE_K_MAX + 1,
                              (RURP_BANDGAP_NOMINAL_MV * (r1_over + r2)) / r2);
 
-    TEST_ASSERT_EQUAL_UINT8(1, rurp_calibration_is_plausible(r1_at, r2));
-    TEST_ASSERT_EQUAL_UINT8(0, rurp_calibration_is_plausible(r1_over, r2));
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_voltage_mv(512, 225, r1_over, r2));
+    TEST_ASSERT_EQUAL_UINT8(1, rurp_calibration_is_plausible(r1_at, r2, RURP_BANDGAP_NOMINAL_MV));
+    TEST_ASSERT_EQUAL_UINT8(0, rurp_calibration_is_plausible(r1_over, r2, RURP_BANDGAP_NOMINAL_MV));
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_voltage_mv(512, 225, r1_over, r2, RURP_BANDGAP_NOMINAL_MV));
 }
 
 static void test_scale_guard_keeps_the_product_inside_thirty_two_bits(void) {
@@ -161,10 +161,10 @@ static void test_scale_guard_keeps_the_product_inside_thirty_two_bits(void) {
 // --- Zero sentinels ---------------------------------------------------
 
 static void test_zero_sentinels(void) {
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_voltage_mv(512, 225, kR1, 0));
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_voltage_mv(512, 0, kR1, kR2));
-    TEST_ASSERT_EQUAL_UINT8(0, rurp_calibration_is_plausible(kR1, 0));
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_vcc_mv(0));
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_voltage_mv(512, 225, kR1, 0, RURP_BANDGAP_NOMINAL_MV));
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_voltage_mv(512, 0, kR1, kR2, RURP_BANDGAP_NOMINAL_MV));
+    TEST_ASSERT_EQUAL_UINT8(0, rurp_calibration_is_plausible(kR1, 0, RURP_BANDGAP_NOMINAL_MV));
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_vcc_mv(0, RURP_BANDGAP_NOMINAL_MV));
 }
 
 // --- VCC --------------------------------------------------------------
@@ -172,8 +172,8 @@ static void test_zero_sentinels(void) {
 static void test_vcc_conversion(void) {
     // 1100 * 1024 = 1126400, rounded to nearest.
     TEST_ASSERT_EQUAL_UINT32(1126400UL, RURP_BANDGAP_NOMINAL_MV * RURP_ADC_FULL_SCALE);
-    TEST_ASSERT_EQUAL_UINT16(5006, rurp_scale_vcc_mv(225));
-    TEST_ASSERT_EQUAL_UINT16(1100, rurp_scale_vcc_mv(1024));
+    TEST_ASSERT_EQUAL_UINT16(5006, rurp_scale_vcc_mv(225, RURP_BANDGAP_NOMINAL_MV));
+    TEST_ASSERT_EQUAL_UINT16(1100, rurp_scale_vcc_mv(1024, RURP_BANDGAP_NOMINAL_MV));
 }
 
 static void test_vcc_readout_measures_the_bandgap_discrepancy(void) {
@@ -182,14 +182,72 @@ static void test_vcc_readout_measures_the_bandgap_discrepancy(void) {
     // error, not a supply fault. A true 5000 mV supply on a part whose real
     // bandgap is 1000 mV reads 5500 mV: the count is 1000/5000*1024 = 204.8,
     // and at 205 counts the conversion returns the impossible figure.
-    TEST_ASSERT_EQUAL_UINT16(5495, rurp_scale_vcc_mv(205));
+    TEST_ASSERT_EQUAL_UINT16(5495, rurp_scale_vcc_mv(205, RURP_BANDGAP_NOMINAL_MV));
     // The same part over-reads the divider by the same ratio. At a true
     // 12000 mV rail the divider sees 12000 / 7.1364 = 1681.5 mV, which
     // against a real 1000 mV bandgap is 1681.5 / 5000 * 1024 = 344 counts.
     // The firmware reads that as 13173 mV -- 9.8 % high, which is above the
     // +500 mV hard error threshold for a 12000 mV target and is why a
     // correctly set rail can refuse to program.
-    TEST_ASSERT_EQUAL_UINT16(13173, rurp_scale_voltage_mv(344, 205, kR1, kR2));
+    TEST_ASSERT_EQUAL_UINT16(13173, rurp_scale_voltage_mv(344, 205, kR1, kR2, RURP_BANDGAP_NOMINAL_MV));
+}
+
+
+// --- Calibration -------------------------------------------------------
+
+static void test_nominal_bandgap_is_the_identity(void) {
+    // A board that has never been calibrated stores the nominal, and must
+    // produce byte-identical numbers to the pre-calibration firmware.
+    TEST_ASSERT_EQUAL_UINT16(35691, rurp_scale_voltage_mv(1023, 225, kR1, kR2, 1100));
+    TEST_ASSERT_EQUAL_UINT16(5006, rurp_scale_vcc_mv(225, 1100));
+}
+
+static void test_back_solve_from_a_measured_supply(void) {
+    // Vbg = VCC_meter * bandgap_adc / 1024, the whole of the measurement.
+    // The three boards measured on 2026-09-26, from BENCH-RECORD.md.
+    TEST_ASSERT_EQUAL_UINT16(1024, rurp_bandgap_from_measured_vcc(5090, 206));  // leonardo
+    TEST_ASSERT_EQUAL_UINT16(1100, rurp_bandgap_from_measured_vcc(4940, 228));  // uno
+    TEST_ASSERT_EQUAL_UINT16(1050, rurp_bandgap_from_measured_vcc(5120, 210));  // uno328pb
+}
+
+static void test_back_solve_refuses_rather_than_clamps(void) {
+    // Outside the ATmega datasheet window is a typo or a bad meter reading,
+    // not a calibration. A stored bandgap is trusted to judge programming
+    // voltages, so it must be refused -- and 0 is distinguishable from any
+    // in-band value, so the caller cannot mistake it for one.
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(509, 206));    // volts, not mV
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(50900, 206));  // 50.9 V
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(5090, 0));     // no reading
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(0, 206));
+    // Both boundaries land INSIDE and are kept -- the refusal is a band, not
+    // a blanket.
+    TEST_ASSERT_EQUAL_UINT16(RURP_BANDGAP_MIN_MV,
+                             rurp_bandgap_from_measured_vcc(1000UL * 1024 / 206, 206));
+    TEST_ASSERT_EQUAL_UINT16(RURP_BANDGAP_MAX_MV,
+                             rurp_bandgap_from_measured_vcc(1200UL * 1024 / 206, 206));
+}
+
+static void test_an_out_of_band_bandgap_is_never_used(void) {
+    // The same band gates the conversion itself, so a calibration that
+    // somehow reached storage still cannot produce a reading.
+    TEST_ASSERT_EQUAL_UINT8(0, rurp_calibration_is_plausible(kR1, kR2, 999));
+    TEST_ASSERT_EQUAL_UINT8(0, rurp_calibration_is_plausible(kR1, kR2, 1201));
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_voltage_mv(344, 205, kR1, kR2, 999));
+    TEST_ASSERT_EQUAL_UINT8(1, rurp_calibration_is_plausible(kR1, kR2, 1000));
+    TEST_ASSERT_EQUAL_UINT8(1, rurp_calibration_is_plausible(kR1, kR2, 1200));
+}
+
+static void test_calibration_corrects_the_measured_leonardo(void) {
+    // The case this whole milestone exists for. Uncalibrated, the leonardo
+    // reads a true 12.0 V rail as 13173 mV -- above the +500 mV hard error
+    // threshold, so it refuses to write. Calibrated to its measured 1024 mV
+    // bandgap, the same ADC counts read within the window.
+    uint16_t uncal = rurp_scale_voltage_mv(344, 205, kR1, kR2, 1100);
+    uint16_t cal = rurp_scale_voltage_mv(344, 205, kR1, kR2, 1024);
+    TEST_ASSERT_EQUAL_UINT16(13173, uncal);
+    TEST_ASSERT_TRUE_MESSAGE(uncal > 12000 + 500, "precondition: uncalibrated trips the HIGH guard");
+    TEST_ASSERT_TRUE_MESSAGE(cal <= 12000 + 500, "calibrated must clear the HIGH guard");
+    TEST_ASSERT_TRUE_MESSAGE(cal >= 12000 * 95 / 100, "calibrated must clear the LOW guard");
 }
 
 int main(int, char**) {
@@ -205,5 +263,10 @@ int main(int, char**) {
     RUN_TEST(test_zero_sentinels);
     RUN_TEST(test_vcc_conversion);
     RUN_TEST(test_vcc_readout_measures_the_bandgap_discrepancy);
+    RUN_TEST(test_nominal_bandgap_is_the_identity);
+    RUN_TEST(test_back_solve_from_a_measured_supply);
+    RUN_TEST(test_back_solve_refuses_rather_than_clamps);
+    RUN_TEST(test_an_out_of_band_bandgap_is_never_used);
+    RUN_TEST(test_calibration_corrects_the_measured_leonardo);
     return UNITY_END();
 }

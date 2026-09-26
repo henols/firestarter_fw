@@ -273,7 +273,12 @@ extern "C" void rurp_load_config() {}
 // correctly refuses every voltage-gated operation against it, so the whole HV
 // path would be untestable. A real board always carries a calibration.
 // The fourth member stays 0 so the modelled hardware revision is unchanged.
-static rurp_configuration_t s_host_config = {CONFIG_VERSION, VALUE_R1, VALUE_R2, 0};
+extern "C" {
+#include "rurp_voltage_math.h"
+}
+
+static rurp_configuration_t s_host_config = {CONFIG_VERSION, VALUE_R1, VALUE_R2, 0,
+                                             (uint16_t)RURP_BANDGAP_NOMINAL_MV};
 extern "C" rurp_configuration_t* rurp_get_config() {
     return &s_host_config;
 }

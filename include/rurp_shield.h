@@ -41,11 +41,26 @@ extern "C" {
 
 
 // Constants
-#define CONFIG_VERSION "VER06"
+#define CONFIG_VERSION "VER07"
 
 // Default configuration
 #define VALUE_R1 270000
 #define VALUE_R2 44000
+
+/*
+ * Migration bands for rurp_validate_config. A stored value inside its band is
+ * KEPT across a CONFIG_VERSION change; one outside it is replaced by the
+ * default above.
+ *
+ * +/-25 % of each default, the same tolerance the host already applies to r1
+ * (_R1_LO/_R1_HI in cli_handlers.py). This is what reaches a stale value the
+ * version gate alone never could: a board carrying the pre-Phase-44 r1 of
+ * 1000 passes every arithmetic guard, so only a range check corrects it.
+ */
+#define VALUE_R1_MIN 202500L
+#define VALUE_R1_MAX 337500L
+#define VALUE_R2_MIN 33000L
+#define VALUE_R2_MAX 55000L
 
 // Bit masks
 #define LEAST_SIGNIFICANT_BYTE 0x01  // LEAST SIGNIFICANT BYTE

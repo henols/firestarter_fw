@@ -20,7 +20,14 @@
  */
 
 /*
- * Samples averaged per reading. The divider presents roughly 38 kOhm to the
+ * Samples averaged per reading, rounded to nearest rather than truncated.
+ *
+ * Truncating discards up to 7/8 of a count, and a count is worth about 0.5 %
+ * on the bandgap channel -- which is the resolution a calibration is written
+ * at. Rounding halves that for two tokens. It does NOT recover the sub-count
+ * resolution oversampling could give: that needs the scaled sum carried
+ * through the arithmetic, and the ~0.5 %-per-count floor stands until then.
+ * The divider presents roughly 38 kOhm to the
  * ADC and the rail is the output of a PWM boost converter, so a single
  * conversion samples whatever the ripple happened to be. Eight is the same
  * count rurp_hw_rev_utils.h already uses for revision detect, and the shift
@@ -45,7 +52,7 @@ static uint16_t adc_sample_average(uint8_t pin) {
     for (uint8_t i = 0; i < RURP_ADC_SAMPLES; i++) {
         sum += (uint16_t)analogRead(pin);
     }
-    return (uint16_t)(sum >> RURP_ADC_SAMPLE_SHIFT);
+    return (uint16_t)((sum + (RURP_ADC_SAMPLES / 2)) >> RURP_ADC_SAMPLE_SHIFT);
 }
 
 /**
@@ -83,11 +90,12 @@ long rurp_get_bandgap_adc_reading() {
             sum += (uint16_t)result;
         }
     }
-    return (long)(sum >> RURP_ADC_SAMPLE_SHIFT);
+    return (long)((sum + (RURP_ADC_SAMPLES / 2)) >> RURP_ADC_SAMPLE_SHIFT);
 }
 
 uint16_t rurp_read_vcc_mv() {
-    return rurp_scale_vcc_mv((uint32_t)rurp_get_bandgap_adc_reading());
+    return rurp_scale_vcc_mv((uint32_t)rurp_get_bandgap_adc_reading(),
+                             rurp_get_config()->bandgap_mv);
 }
 
 uint16_t rurp_read_voltage_mv() {
@@ -100,6 +108,7 @@ uint16_t rurp_read_voltage_mv() {
     long bandgap_adc_reading = rurp_get_bandgap_adc_reading();
 
     return rurp_scale_voltage_mv(voltage_adc_reading, (uint32_t)bandgap_adc_reading,
-                                 (uint32_t)rurp_config->r1, (uint32_t)rurp_config->r2);
+                                 (uint32_t)rurp_config->r1, (uint32_t)rurp_config->r2,
+                                 rurp_config->bandgap_mv);
 }
 #endif

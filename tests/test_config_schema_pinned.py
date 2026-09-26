@@ -42,7 +42,7 @@ code rather than something a reviewer has to notice.
 WHY THE SCHEMA PIN OUTLIVES THIS PHASE:
 rurp_configuration_t is precisely the struct the closed calibration PR's
 `768580f` adds fields to BEFORE its CONFIG_VERSION bump -- a silent layout
-change while the version string still reads "VER06". That is strictly worse
+change while the version string still reads "VER07". That is strictly worse
 than a visible version bump, because every board already storing a record
 would misparse the new layout with no migration signal at all. A future
 cherry-pick of that shape is exactly what this gate exists to catch, which is
@@ -84,12 +84,12 @@ makes no build or runtime claim; see .planning/REQUIREMENTS.md's "Validation
 Ceiling" section for the claims this phase is not permitted to make.
 
 Coverage:
-  1. test_rurp_configuration_t_has_exactly_the_four_pinned_fields -- the
+  1. test_rurp_configuration_t_has_exactly_the_pinned_fields -- the
      struct's member list is exactly version (char[6]), r1 (long), r2 (long),
      hardware_revision (uint8_t), in that order, with no fifth member and no
      size or offset literal.
-  2. test_config_version_literal_is_ver06 -- CONFIG_VERSION in
-     include/rurp_shield.h is still the literal "VER06".
+  2. test_config_version_literal_is_current -- CONFIG_VERSION in
+     include/rurp_shield.h is still the literal "VER07".
   3. test_default_resistance_values_are_unchanged -- VALUE_R1 is 270000 and
      VALUE_R2 is 44000 -- rurp_validate_config's write-back writes both, so a
      silent change would alter every defaulting board's stored record with no
@@ -181,11 +181,17 @@ _STORED_CONFIGURATION_STRUCT_RE = re.compile(
 )
 _FIELD_STMT_RE = re.compile(r"^([A-Za-z_][\w\s]*?)\s+([A-Za-z_]\w*)(\[(\d+)\])?$")
 
+# v1.43 appended bandgap_mv, the per-MCU calibrated reference. APPENDED, never
+# inserted: the ARM dual-slot record embeds this struct byte-for-byte and
+# validates by length + CRC32, so growing it at the end makes an old record
+# fail validation and fall back to defaults, which is the designed recovery
+# path. An inserted field would instead be misparsed.
 _EXPECTED_CONFIGURATION_FIELDS = (
     ("char", "version", "6"),
     ("long", "r1", None),
     ("long", "r2", None),
     ("uint8_t", "hardware_revision", None),
+    ("uint16_t", "bandgap_mv", None),
 )
 
 
@@ -236,12 +242,12 @@ def _rurp_configuration_t_violations(header_text):
 
 
 def _config_version_violations(shield_text):
-    """Coverage 2: CONFIG_VERSION is still the literal 'VER06'."""
+    """Coverage 2: CONFIG_VERSION is still the literal 'VER07'."""
     match = re.search(r'#\s*define\s+CONFIG_VERSION\s+"([^"]*)"', shield_text)
     if not match:
         return ["CONFIG_VERSION #define not found in rurp_shield.h"]
-    if match.group(1) != "VER06":
-        return [f"CONFIG_VERSION is {match.group(1)!r}, expected 'VER06'"]
+    if match.group(1) != "VER07":
+        return [f"CONFIG_VERSION is {match.group(1)!r}, expected 'VER07'"]
     return []
 
 
@@ -374,7 +380,7 @@ def _public_declarations_in_shield_violations(shield_text, names):
     return violations
 
 
-def test_rurp_configuration_t_has_exactly_the_four_pinned_fields():
+def test_rurp_configuration_t_has_exactly_the_pinned_fields():
     """Coverage 1."""
     text = _TYPES_HEADER.read_text()
     violations = _rurp_configuration_t_violations(text)
@@ -385,12 +391,12 @@ def test_rurp_configuration_t_has_exactly_the_four_pinned_fields():
     )
 
 
-def test_config_version_literal_is_ver06():
+def test_config_version_literal_is_current():
     """Coverage 2."""
     violations = _config_version_violations(_SHIELD_HEADER.read_text())
     assert violations == [], (
         f"expected CONFIG_VERSION in {_SHIELD_HEADER} to be the literal "
-        f"'VER06'.\nViolations:\n" + "\n".join(violations)
+        f"'VER07'.\nViolations:\n" + "\n".join(violations)
     )
 
 
@@ -466,9 +472,13 @@ def _mutate_reordered_fields(text):
 
 
 def _mutate_config_version(text):
-    marker = '#define CONFIG_VERSION "VER06"'
+    marker = '#define CONFIG_VERSION "VER07"'
     assert marker in text, "fixture assumption failed: rurp_shield.h's CONFIG_VERSION line has drifted"
-    return text.replace(marker, '#define CONFIG_VERSION "VER07"', 1)
+    # Plant a version that is NOT the current one. "VER99" rather than the
+    # next real value, so a future bump can never turn this mutation back into
+    # a no-op -- which is exactly what a blanket VER06->VER07 rename did, and
+    # what this non-vacuity case caught.
+    return text.replace(marker, '#define CONFIG_VERSION "VER99"', 1)
 
 
 def _mutate_value_r1(text):

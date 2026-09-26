@@ -231,9 +231,10 @@ static void dt_sample_adc(dt_adc_sample_t* out, rurp_register_t ctrl) {
     // third time: a separate sample would be a different measurement taken
     // at a different instant, which is what makes a pair unusable.
     uint32_t k = (out->bandgap_adc == 0 ||
-                  !rurp_calibration_is_plausible((uint32_t)cfg->r1, (uint32_t)cfg->r2))
+                  !rurp_calibration_is_plausible((uint32_t)cfg->r1, (uint32_t)cfg->r2,
+                                                 cfg->bandgap_mv))
                      ? 0
-                     : (RURP_BANDGAP_NOMINAL_MV * ((uint32_t)cfg->r1 + (uint32_t)cfg->r2)) /
+                     : ((uint32_t)cfg->bandgap_mv * ((uint32_t)cfg->r1 + (uint32_t)cfg->r2)) /
                            (uint32_t)cfg->r2;
     out->divider_adc =
         (k == 0) ? 0

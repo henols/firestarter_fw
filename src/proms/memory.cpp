@@ -218,7 +218,7 @@ rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* ha
  * __udivmodsi4 and moves the wrap point above 65485 mV. Do not widen them. */
 bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle) {
     rurp_configuration_t* cfg = rurp_get_config();
-    if (rurp_calibration_is_plausible((uint32_t)cfg->r1, (uint32_t)cfg->r2)) {
+    if (rurp_calibration_is_plausible((uint32_t)cfg->r1, (uint32_t)cfg->r2, cfg->bandgap_mv)) {
         return false;
     }
     uint8_t _cal[8];
