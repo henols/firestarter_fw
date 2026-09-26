@@ -476,8 +476,16 @@ def test_exactly_one_protocol_keyed_site_at_the_pinned_line():
 def test_inventory_is_non_vacuous():
     inventory = _load_inventory()
     sites = inventory["sites"]
-    assert len(sites) >= 20, (
-        f"non-vacuous guard: expected >= 20 recorded sites, got "
+    # Lowered 20 -> 18 in v1.43 Task 6, deliberately and once: the two VPP
+    # window predicates moved out of eprom.cpp into
+    # mem_util_check_vpp_window, which meta.sources does not cover, so this
+    # file legitimately inventories two fewer sites. Their coverage moved with
+    # them into six behaviour cases in test_flash_intel_vpp. The floor is
+    # still a real guard against a truncated or emptied inventory -- it caught
+    # this reduction, which is why it is being moved by hand rather than
+    # having been adjusted silently.
+    assert len(sites) >= 18, (
+        f"non-vacuous guard: expected >= 18 recorded sites, got "
         f"{len(sites)} -- an empty or truncated inventory must FAIL, not "
         "silently pass."
     )
