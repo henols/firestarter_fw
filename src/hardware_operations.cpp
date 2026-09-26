@@ -19,6 +19,12 @@
 #define HW_VCC_PLAUSIBLE_MIN_MV 4400
 #define HW_VCC_PLAUSIBLE_MAX_MV 5250
 
+// The VCC warning is emitted ONCE per command, not once per reading. The
+// condition cannot change between samples of one command, and a frame
+// interleaved with every DATA frame is noise the host read loop has to step
+// around on every iteration.
+static bool s_vcc_warned = false;
+
 bool hw_read_voltage(firestarter_handle_t* handle) {
     // State 0: Initialization. This runs only once per command.
     if (handle->operation_state == 0) {
@@ -43,6 +49,7 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
         }
         delay(100);                     // Allow voltage to stabilize.
         rurp_set_communication_mode();  // Switch back to communication mode to send the ready signal.
+        s_vcc_warned = false;           // re-arm the once-per-command VCC warning
         handle->operation_state = 1;    // Transition to the reading state.
 
         // Send a ready signal to the client to prompt it for the first ACK.
@@ -84,7 +91,9 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
     // this command prints. Bounds: USB VBUS is specified 4.75-5.25 V and the
     // board takes a MOSFET drop off it, so anything outside the band below
     // cannot be a real supply.
-    if (vcc_mv < HW_VCC_PLAUSIBLE_MIN_MV || vcc_mv > HW_VCC_PLAUSIBLE_MAX_MV) {
+    if (!s_vcc_warned &&
+        (vcc_mv < HW_VCC_PLAUSIBLE_MIN_MV || vcc_mv > HW_VCC_PLAUSIBLE_MAX_MV)) {
+        s_vcc_warned = true;
         LOG_WARN_ID_U16(MSG_WARN_VCC_IMPLAUSIBLE, vcc_mv);
         handle->response_code = RESPONSE_CODE_WARNING;
     }
