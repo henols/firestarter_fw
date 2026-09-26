@@ -12,7 +12,7 @@
  * then synced here. Edit the catalog there and re-sync.
  *
  * Catalog version: 1
- * Total messages: 79
+ * Total messages: 82
  */
 
 #ifndef __MESSAGES_H__
@@ -75,6 +75,7 @@ extern "C" {
 #define MSG_WARN_FL4_BOOT_BLOCK_LOCKED    0x85
 #define MSG_WARN_SDP_UNLOCK_SKIPPED       0x86
 #define MSG_WARN_SDP_TBLC_EXCEEDED        0x87
+#define MSG_WARN_VCC_IMPLAUSIBLE          0x88
 #define MSG_ERR_BAD_JSON                  0xA0
 #define MSG_ERR_NO_CMD                    0xA1
 #define MSG_ERR_SETUP                     0xA2
@@ -108,12 +109,14 @@ extern "C" {
 #define MSG_ERR_ENERGY_CAP                0xBE
 #define MSG_ERR_FL4_PAGE_SIZE             0xBF
 #define MSG_ERR_FL4_PAGE_ALIGN            0xC0
+#define MSG_ERR_CALIBRATION               0xC1
 #define MSG_DATA_PROGRESS                 0xE0
 #define MSG_DATA_PROTECTION_STATUS        0xE1
 #define MSG_DATA_SENDING                  0xE2
 #define MSG_DATA_VPP_VOLTAGE              0xE4
 #define MSG_DATA_VPE_VOLTAGE              0xE5
 #define MSG_DATA_CHUNK                    0xE6
+#define MSG_DATA_ADC_RAW                  0xE7
 #define MSG_DEBUG                         0xF0
 
 // --- Debug sub-IDs (sorted ascending) ---

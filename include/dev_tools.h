@@ -17,6 +17,7 @@ extern "C" {
 
     bool dt_set_registers(firestarter_handle_t* handle);
     bool dt_set_address(firestarter_handle_t* handle);
+    bool dt_read_adc(firestarter_handle_t* handle);
 
 #ifdef __cplusplus
 }

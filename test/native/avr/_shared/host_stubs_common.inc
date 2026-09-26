@@ -268,7 +268,12 @@ extern "C" uint8_t rurp_map_ctrl_reg_for_hardware_revision(rurp_register_t data)
 extern "C" void rurp_board_setup() {}
 extern "C" void rurp_load_config() {}
 
-static rurp_configuration_t s_host_config = {};
+// The shipped defaults, not zeros. A zero-initialised config means r2 == 0,
+// which is an unusable divider calibration -- mem_util_refuse_bad_calibration
+// correctly refuses every voltage-gated operation against it, so the whole HV
+// path would be untestable. A real board always carries a calibration.
+// The fourth member stays 0 so the modelled hardware revision is unchanged.
+static rurp_configuration_t s_host_config = {CONFIG_VERSION, VALUE_R1, VALUE_R2, 0};
 extern "C" rurp_configuration_t* rurp_get_config() {
     return &s_host_config;
 }

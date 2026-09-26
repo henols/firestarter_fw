@@ -12,6 +12,13 @@
 #include "rurp_pinout.h"
 #include "version.h"
 
+// Plausible internal-VCC band, in millivolts. USB VBUS is specified
+// 4.75-5.25 V (USB 2.0 section 7.2.2) and the board derives VCC from it
+// through a series switch, so a reported value outside this band is the
+// bandgap constant being wrong, not the supply.
+#define HW_VCC_PLAUSIBLE_MIN_MV 4400
+#define HW_VCC_PLAUSIBLE_MAX_MV 5250
+
 bool hw_read_voltage(firestarter_handle_t* handle) {
     // State 0: Initialization. This runs only once per command.
     if (handle->operation_state == 0) {
@@ -68,6 +75,19 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
     // An ACK was received. Proceed with taking a measurement.
     uint16_t vcc_mv = rurp_read_vcc_mv();
     uint16_t voltage_mv = rurp_read_voltage_mv();
+
+    // An internal VCC outside what the board can physically run at is an
+    // INSTRUMENT fault, not a supply fault. rurp_scale_vcc_mv returns
+    // supply * RURP_BANDGAP_NOMINAL_MV / bandgap_true, so a figure the
+    // hardware cannot reach measures how far this chip's real bandgap is from
+    // the assumed 1100 mV -- and that same error scales every VPP/VPE reading
+    // this command prints. Bounds: USB VBUS is specified 4.75-5.25 V and the
+    // board takes a MOSFET drop off it, so anything outside the band below
+    // cannot be a real supply.
+    if (vcc_mv < HW_VCC_PLAUSIBLE_MIN_MV || vcc_mv > HW_VCC_PLAUSIBLE_MAX_MV) {
+        LOG_WARN_ID_U16(MSG_WARN_VCC_IMPLAUSIBLE, vcc_mv);
+        handle->response_code = RESPONSE_CODE_WARNING;
+    }
 
     // Compute pre-rounded integer/decimal tenths for each voltage (catalog expects 4 x u16).
     uint16_t v_int  = (uint16_t)((voltage_mv + 50) / 1000);

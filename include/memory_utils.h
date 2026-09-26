@@ -68,6 +68,19 @@ void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
  * CMD_CHECK_CHIP_ID path must keep refusing unconditionally regardless of
  * --force -- do not fold the force test into this helper.
  */
+/*
+ * Refuse a voltage-gated operation when the stored divider calibration cannot
+ * be evaluated. Returns true when it refused, having emitted
+ * MSG_ERR_CALIBRATION and set RESPONSE_CODE_ERROR.
+ *
+ * Call this BEFORE asserting any high-voltage bit. Without it, an unusable
+ * calibration makes rurp_read_voltage_mv return 0, which the low-side test
+ * reads as "the rail is low" -- a WARNING, so the write proceeds against a
+ * rail nothing has measured. See
+ * agent-os/standards/firmware/fail-closed-refusals.md.
+ */
+bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle);
+
 void mem_util_report_chip_id(firestarter_handle_t* handle, uint16_t actual, bool warn_only);
 
 static inline bool using_p1_as_vpp(const firestarter_handle_t* handle) {

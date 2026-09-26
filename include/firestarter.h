@@ -75,6 +75,13 @@
 #if DEV_TOOLS
 #define CMD_DEV_ADDRESS 7
 #define CMD_DEV_REGISTER 8
+
+// 17 is the next unused integer: 0-16 are allocated and ordinals 4 and 6 are
+// retired and must never be reused. Dev-gated, so it exists only under
+// -D DEV_TOOLS, which the beta channel injects and the stable build does not.
+// It is NOT a memory command -- it configures no protocol handler and is
+// deliberately absent from is_memory_cmd() below.
+#define CMD_DEV_ADC 17
 #endif
 
 // Standalone SDP (Software Data Protection) enable/disable commands on

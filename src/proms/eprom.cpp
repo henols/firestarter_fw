@@ -535,6 +535,13 @@ void eprom_check_vpp(firestarter_handle_t* handle) {
         return;
     }
 #endif
+    // Pre-flight, before ANY high-voltage bit: an unusable calibration makes
+    // the reading 0 mV, which the low-side test below would report as a
+    // WARNING and let the write proceed against an unmeasured rail.
+    if (mem_util_refuse_bad_calibration(handle)) {
+        return;
+    }
+
     // Route selection via eprom_hv_route_mask --
     // see eprom_internal_write_execute_body's identical call, above, for
     // the full rationale. Replaces the byte-identical

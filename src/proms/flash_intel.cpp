@@ -67,6 +67,13 @@ void configure_flash_intel(firestarter_handle_t* handle) {
 }
 
 void flash_intel_write_init(firestarter_handle_t* handle) {
+    // Pre-flight, before the regulator is asserted. flash_intel_check_vpp
+    // below runs with 12 V already on socket pin 1, so it is too late to be
+    // the refusal point: an unusable calibration would read 0 mV there and
+    // only raise a low-side WARNING.
+    if (mem_util_refuse_bad_calibration(handle)) {
+        return;
+    }
     handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE, 1);
     delay(500);
     flash_intel_check_vpp(handle);

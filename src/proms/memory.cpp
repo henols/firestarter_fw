@@ -22,6 +22,7 @@
 #include "proto_constants.h"
 #include "rurp_pinmap_guard.h"
 #include "rurp_shield.h"
+#include "rurp_voltage_math.h"
 #include "rurp_pinout.h"
 #include "sram.h"
 
@@ -215,6 +216,27 @@ rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* ha
  * operands are uint16_t, so `(x + 50)` promotes to 16-bit and `/1000` compiles
  * to __udivmodhi4. Widening either to uint32_t swaps in the 32-bit
  * __udivmodsi4 and moves the wrap point above 65485 mV. Do not widen them. */
+bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle) {
+    rurp_configuration_t* cfg = rurp_get_config();
+    if (rurp_calibration_is_plausible((uint32_t)cfg->r1, (uint32_t)cfg->r2)) {
+        return false;
+    }
+    uint8_t _cal[8];
+    uint32_t r1 = (uint32_t)cfg->r1;
+    uint32_t r2 = (uint32_t)cfg->r2;
+    _cal[0] = (uint8_t)((r1 >> 24) & 0xFF);
+    _cal[1] = (uint8_t)((r1 >> 16) & 0xFF);
+    _cal[2] = (uint8_t)((r1 >>  8) & 0xFF);
+    _cal[3] = (uint8_t)((r1      ) & 0xFF);
+    _cal[4] = (uint8_t)((r2 >> 24) & 0xFF);
+    _cal[5] = (uint8_t)((r2 >> 16) & 0xFF);
+    _cal[6] = (uint8_t)((r2 >>  8) & 0xFF);
+    _cal[7] = (uint8_t)((r2      ) & 0xFF);
+    LOG_ERROR_ID_BYTES(MSG_ERR_CALIBRATION, _cal, 8);
+    handle->response_code = RESPONSE_CODE_ERROR;
+    return true;
+}
+
 void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
                               uint16_t expected_mv, uint8_t msg_id, uint8_t response_code) {
     uint16_t _v0 = (uint16_t)((measured_mv + 50) / 1000);

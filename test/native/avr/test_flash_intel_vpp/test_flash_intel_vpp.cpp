@@ -24,6 +24,8 @@ extern "C" {
 }
 #include "firestarter.h"
 #include "rurp_pinout.h"
+#include "rurp_shield.h"
+#include "rurp_voltage_math.h"
 
 using namespace fakeit;
 
@@ -34,11 +36,15 @@ extern "C" void set_mock_hw_rev(uint8_t rev);
 static rurp_register_t s_last_ctrl_reg = 0;
 static bool s_last_ctrl_state = false;
 static unsigned s_ctrl_writes_with_p1_low = 0;
+static unsigned s_ctrl_writes_asserting_hv = 0;
 static void mock_set_ctrl_reg(struct firestarter_handle*, rurp_register_t reg, bool state) {
     s_last_ctrl_reg = reg;
     s_last_ctrl_state = state;
     if ((reg & CTRL_VPP_P1_ENABLE) && state == false) {
         s_ctrl_writes_with_p1_low++;
+    }
+    if (state && (reg & (CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE))) {
+        s_ctrl_writes_asserting_hv++;
     }
 }
 static bool mock_get_ctrl_reg(struct firestarter_handle*, rurp_register_t) { return 0; }
@@ -61,6 +67,10 @@ void setUp(void) {
     s_last_ctrl_reg = 0;
     s_last_ctrl_state = false;
     s_ctrl_writes_with_p1_low = 0;
+    s_ctrl_writes_asserting_hv = 0;
+    /* Restore the shipped calibration: the refusal cases below mutate it. */
+    rurp_get_config()->r1 = VALUE_R1;
+    rurp_get_config()->r2 = VALUE_R2;
 }
 
 void tearDown(void) {
@@ -175,6 +185,56 @@ void test_flash_intel_high_vpp_error_clears_regulator(void) {
         "SAF-04: final control-register write must drive regulator low after VPP error");
 }
 
+
+/*
+ * mem_util_refuse_bad_calibration: the planted-violation cases.
+ *
+ * These prove the refusal can actually fire, and -- the point of putting it
+ * pre-flight -- that it fires BEFORE any high-voltage bit is asserted. Without
+ * the refusal an unusable calibration makes rurp_read_voltage_mv return 0,
+ * which the low-side test reads as "the rail is low": a WARNING, letting the
+ * write proceed with 12 V on socket pin 1 and nothing having measured it.
+ */
+void test_flash_intel_refuses_r2_zero_before_asserting_hv(void) {
+    set_mock_vpp_mv(12000);
+    rurp_get_config()->r2 = 0;  /* planted: divider bottom leg unusable */
+    firestarter_handle_t h = make_intel_handle(12000, 0);
+    configure_memory(&h);
+    h.firestarter_set_control_register = mock_set_ctrl_reg;  /* configure_memory overwrites it */
+    h.firestarter_operation_init(&h);
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_UINT(0, s_ctrl_writes_asserting_hv);
+}
+
+void test_flash_intel_refuses_divider_sum_over_bound(void) {
+    set_mock_vpp_mv(12000);
+    rurp_get_config()->r1 = (long)(RURP_DIVIDER_SUM_MAX - VALUE_R2 + 1);
+    rurp_get_config()->r2 = VALUE_R2;
+    firestarter_handle_t h = make_intel_handle(12000, 0);
+    configure_memory(&h);
+    h.firestarter_set_control_register = mock_set_ctrl_reg;  /* configure_memory overwrites it */
+    h.firestarter_operation_init(&h);
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_UINT(0, s_ctrl_writes_asserting_hv);
+}
+
+/*
+ * Non-vacuity: the SAME assertions against a calibration one step inside the
+ * bound must NOT refuse, and must assert HV. Without this pair, a refusal that
+ * fired unconditionally would pass every test above.
+ */
+void test_flash_intel_accepts_divider_sum_at_bound_and_asserts_hv(void) {
+    set_mock_vpp_mv(12000);
+    rurp_get_config()->r1 = (long)(RURP_DIVIDER_SUM_MAX - VALUE_R2);
+    rurp_get_config()->r2 = VALUE_R2;
+    firestarter_handle_t h = make_intel_handle(12000, 0);
+    configure_memory(&h);
+    h.firestarter_set_control_register = mock_set_ctrl_reg;  /* configure_memory overwrites it */
+    h.firestarter_operation_init(&h);
+    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_GREATER_THAN_UINT(0, s_ctrl_writes_asserting_hv);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_flash_intel_vpp_nominal_proceeds);
@@ -183,5 +243,8 @@ int main(int, char**) {
     RUN_TEST(test_flash_intel_high_vpp_with_force_warns);
     RUN_TEST(test_flash_intel_rev0_skips_vpp_check);
     RUN_TEST(test_flash_intel_high_vpp_error_clears_regulator);
+    RUN_TEST(test_flash_intel_refuses_r2_zero_before_asserting_hv);
+    RUN_TEST(test_flash_intel_refuses_divider_sum_over_bound);
+    RUN_TEST(test_flash_intel_accepts_divider_sum_at_bound_and_asserts_hv);
     return UNITY_END();
 }
