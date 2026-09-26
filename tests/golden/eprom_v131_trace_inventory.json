@@ -1,0 +1,45 @@
+{
+  "meta": {
+    "source": "test/native/avr/_shared/eprom_v131_expected.h",
+    "recorded_by": "Phase 144 Plan 03 -- because D-05, D-06 and D-08 require the renamed pre-change header, the new fixture and this inventory to land in the SAME commit (the one-commit property that keeps the identity gate from going transiently RED for a reason that is really a git exit code, per F-05), recorded_at_head necessarily names this commit's PARENT rather than the commit that actually carries this file. Do not read that as a mistake: it is the deliberate one-commit offset this plan's own objective documents. This file's blob_sha is the SHA of the working-tree fixture as it will read once committed (git hash-object test/native/avr/_shared/eprom_v131_expected.h, run BEFORE staging). RE-RECORDED by debug session w27c512-program-fail-byte0 (Phase 145 Gate 2 root-cause fix), under the identical one-commit property: blob_sha is `git hash-object test/native/avr/_shared/eprom_v131_expected.h` run on the working tree BEFORE staging, and recorded_at_head names this commit's PARENT (a594173d2bbbabe74e6a470b4751528435246326). Entry counts moved from EPROM_V131_TRACE_PROTO_07 91, EPROM_V131_TRACE_PROTO_08 115, EPROM_V131_TRACE_PROTO_0B 59 to EPROM_V131_TRACE_PROTO_07 121, EPROM_V131_TRACE_PROTO_08 148, EPROM_V131_TRACE_PROTO_0B 92 because that session restored the program-voltage route assert Phase 141 dropped: each program pulse now carries a CONTROL latch group raising the route, an EPROM_VPP_SETUP_US settle, an EPROM_VPP_HOLD_US settle, and a CONTROL latch group lowering it again. The growth is therefore EXPECTED WORK for this change and a REGRESSION for any later one -- meta.frozen_for's v1.32 drift-detection reading is unchanged, it is only re-anchored. The fixture was re-captured cold (rm -rf .pio/build/native_trace_v131, then the same PLATFORMIO_BUILD_FLAGS=\"-D EPROM_V131_TRACE_DUMP\" build-and-run-directly sequence the fixture header documents), and the suite's own two-drive determinism check passed against the pasted arrays. RE-RECORDED ONCE MORE in the same debug session's follow-up commit, which raised EPROM_VPP_SETUP_US 100 -> 1000 and EPROM_VPP_HOLD_US 10 -> 100 after 1 of 3 bench cycles at the first values failed its full-array verify on a single under-programmed byte. Entry COUNTS are unchanged (121/148/92) -- only 18 timing VALUES moved, which is why this bump is a blob_sha change with no arrays edit; the previous sha was 774a7e509ae021a13c4741d7eca9049bfb49f4df. RE-RECORDED A THIRD TIME by debug session w27c512-write-slow-3x (2026-08-22). Entry counts moved EPROM_V131_TRACE_PROTO_07 121 -> 131, EPROM_V131_TRACE_PROTO_08 148 -> 149, EPROM_V131_TRACE_PROTO_0B 92 -> 101 because that session replaced the per-BYTE program loop with a PASS-BATCHED one: the program-voltage route is asserted once per PASS (with one EPROM_VPP_SETUP_US and one EPROM_VPP_HOLD_US settle per pass) instead of once per programmed byte, and the scan pass that decides the next pass adds its own read-back traffic where the per-byte loop interleaved a verify read with each pulse. The per-byte cadence the previous arrays recorded WAS the defect this session fixed -- 1.568 s per 1024-byte block and 105.89 s for a 64 KiB W27C512 on a leonardo, against 29.71 s on the v2.x firmware (gh#36; gh#42 recorded 139.2 s); the pass-batched loop measures 33.51 s on the same rig, byte-exact. So, exactly as the Phase 145 re-record above describes for a different bug, this fixture was asserting a regression, and this growth is EXPECTED WORK for this change and a REGRESSION for any later one. Re-derived, never hand-edited: arrays and measured_entry_counts both come from the gate module's OWN _parse_arrays()/kind-column parse run against the live header, and blob_sha from `git hash-object test/native/avr/_shared/eprom_v131_expected.h` on the working tree before staging. measured_entry_counts was ALSO stale before this re-record -- it still held Phase 144's 91/115/59 merged figures after the Phase 145 re-record moved the arrays to 121/148/92 -- and is now consistent with the arrays for the first time (merged equals entries on all three). DEVIATION FROM THE ONE-COMMIT PROPERTY, stated rather than hidden: every earlier re-record landed the fixture and this inventory in the SAME commit so the identity gate never went transiently RED. That was not possible here. The fixture landed at 453a188 and was PUSHED to an open pull request (#55) before this gate's failure was discovered, so folding this record into that commit would mean rewriting published history under a live PR. This record therefore lands in a follow-up commit, recorded_at_head names the actual HEAD at recording time (273eedb) rather than this commit's parent, and the identity gate was legitimately RED for the two commits in between. Do not read recorded_at_head here as the parent-offset the earlier entries describe. Re-derived by the planning-citation cleanup (debug session planning-refs-in-src-comments): the source header's COMMENT TEXT changed and nothing else. Both halves of this record were re-derived with the gate module's OWN _parse_arrays() against the live header and are byte-identical to the previous record -- every array name and entry count is unchanged -- so only blob_sha moved. The code-only digest of the header (comments stripped, blank lines dropped, sha256) is identical before and after. blob_sha is `git hash-object <source>` run on the working tree BEFORE staging, and recorded_at_head names this commit's PARENT (c67a3301d507bccea89281c08af75f3a7bb76edb), per the one-commit property the earlier entries describe.",
+    "requirement": "TEST-06",
+    "blob_sha": "df780397680e7ae3030ed36bcb2d6f3fa8816949",
+    "recorded_at_head": "c67a3301d507bccea89281c08af75f3a7bb76edb",
+    "why_two_checks": "A whole-file blob match alone cannot distinguish 'unchanged' from 'an array deleted together with the assertions that consumed it' -- both leave the remaining bytes identical to some other prior state's remaining bytes, so the per-array name+entry-count inventory is what makes a deletion visible.",
+    "how_to_update": "If this file legitimately changes, re-derive this inventory from the file with an independent parse (never hand-edit the numbers) AND state in the commit message which array changed and why -- never edit this JSON merely to make a surprise disappear.",
+    "frozen_for": "This record now arms the identity gate for v1.32 drift detection: a divergence from these three arrays (EPROM_V131_TRACE_PROTO_07/_08/_0B) is a regression to investigate, not expected work. It no longer names Phase 144 as the consumer that will diff this fixture against the pre-change cadence -- that diff, against the arrays preserved byte-for-byte in eprom_v131_expected_prechange.h, is plan 144-04's job, using the capture this record describes as its post-change side.",
+    "measured_entry_counts": {
+      "0x07": {
+        "strobes": 93,
+        "timings": 38,
+        "merged": 131
+      },
+      "0x08": {
+        "strobes": 105,
+        "timings": 44,
+        "merged": 149
+      },
+      "0x0B": {
+        "strobes": 69,
+        "timings": 32,
+        "merged": 101
+      }
+    },
+    "overflow_observed": "false for both recorders on every one of the three new captures -- strobe_overflowed()==0 and timing_overflowed()==0 in all cases, per Phase 144 Plan 03's trace_dump.txt banners (##### EPROM_V131_TRACE_PROTO_07/_08/_0B, each reading strobe_overflow=0 timing_overflow=0)",
+    "prechange_header_non_claim": "D-08's named non-claim: with a single inventory record here, nothing gate-asserts test/native/avr/_shared/eprom_v131_expected_prechange.h. Its preserved blob ca3e09f164e6e1c541ecb63d15bbebf5bce41d70 stays hand-verifiable via `git rev-parse HEAD:test/native/avr/_shared/eprom_v131_expected_prechange.h` and is cited in the phase record (144-03-SUMMARY.md), but it is NOT machine-checked by this or any other gate. No second inventory record is added to close this gap -- deferred work."
+  },
+  "arrays": [
+    {
+      "name": "EPROM_V131_TRACE_PROTO_07",
+      "entries": 131
+    },
+    {
+      "name": "EPROM_V131_TRACE_PROTO_08",
+      "entries": 149
+    },
+    {
+      "name": "EPROM_V131_TRACE_PROTO_0B",
+      "entries": 101
+    }
+  ]
+}

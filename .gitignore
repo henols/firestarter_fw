@@ -14,6 +14,16 @@ firestarter_app
 
 *.bin
 
-CLAUDE.md
-
 .claude/
+
+# Core dump files from native test crashes
+core.*
+
+# Python bytecode caches (Phase 15 added .github/scripts/update_version.py
+# + tests/test_update_version.py; their __pycache__ dirs were being picked
+# up by beta-build.yml's stefanzweifel/git-auto-commit-action step and
+# committed to origin/beta). Ignore the .pyc artifacts globally so the
+# version-bump auto-commit only carries the intended version.h diff.
+__pycache__/
+*.pyc
+*.pyo

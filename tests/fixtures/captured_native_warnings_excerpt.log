@@ -1,0 +1,62 @@
+Processing native/avr/test_val_5v_page in native environment
+--------------------------------------------------------------------------------
+Building...
+In file included from .pio/libdeps/native/ArduinoFake/src/arduino/WString.h:25,
+                 from .pio/libdeps/native/ArduinoFake/src/arduino/Arduino.h:224,
+                 from .pio/libdeps/native/ArduinoFake/src/ArduinoFake.h:14,
+                 from .pio/libdeps/native/ArduinoFake/src/Arduino.h:1,
+                 from src/operation_utils.cpp:10:
+.pio/libdeps/native/ArduinoFake/src/arduino/pgmspace.h:34:9: warning: "PSTR" redefined
+   34 | #define PSTR(str) (str)
+      |         ^~~~
+In file included from include/rurp_shield.h:18,
+                 from include/firestarter.h:14,
+                 from include/operation_utils.h:18,
+                 from src/operation_utils.cpp:8:
+test/native/avr/test_dispatch/avr/pgmspace.h:24:9: note: this is the location of the previous definition
+   24 | #define PSTR(s) (s)
+      |         ^~~~
+.pio/libdeps/native/ArduinoFake/src/arduino/pgmspace.h:56:9: warning: "memcpy_P" redefined
+   56 | #define memcpy_P(dest, src, n) memcpy((dest), (src), (n))
+      |         ^~~~~~~~
+test/native/avr/test_dispatch/avr/pgmspace.h:60:9: note: this is the location of the previous definition
+   60 | #define memcpy_P(dst, src, n) memcpy((dst), (src), (n))
+      |         ^~~~~~~~
+.pio/libdeps/native/ArduinoFake/src/arduino/pgmspace.h:63:9: warning: "strcpy_P" redefined
+   63 | #define strcpy_P(dest, src) strcpy((dest), (src))
+      |         ^~~~~~~~
+test/native/avr/test_dispatch/avr/pgmspace.h:52:9: note: this is the location of the previous definition
+   52 | #define strcpy_P(dst, src) strcpy((dst), (src))
+      |         ^~~~~~~~
+.pio/libdeps/native/ArduinoFake/src/arduino/pgmspace.h:69:9: warning: "strlen_P" redefined
+   69 | #define strlen_P(a) strlen((a))
+      |         ^~~~~~~~
+test/native/avr/test_dispatch/avr/pgmspace.h:56:9: note: this is the location of the previous definition
+   56 | #define strlen_P(s) strlen((s))
+      |         ^~~~~~~~
+.pio/libdeps/native/ArduinoFake/src/arduino/pgmspace.h:102:9: warning: "pgm_read_byte" redefined
+  102 | #define pgm_read_byte(addr) (*(const unsigned char *)(addr))
+      |         ^~~~~~~~~~~~~
+test/native/avr/test_dispatch/avr/pgmspace.h:36:9: note: this is the location of the previous definition
+   36 | #define pgm_read_byte(addr) (*(const uint8_t*)(addr))
+      |         ^~~~~~~~~~~~~
+.pio/libdeps/native/ArduinoFake/src/arduino/pgmspace.h:103:9: warning: "pgm_read_word" redefined
+  103 | #define pgm_read_word(addr) (*(const unsigned short *)(addr))
+      |         ^~~~~~~~~~~~~
+test/native/avr/test_dispatch/avr/pgmspace.h:40:9: note: this is the location of the previous definition
+   40 | #define pgm_read_word(addr) (*(const uint16_t*)(addr))
+      |         ^~~~~~~~~~~~~
+.pio/libdeps/native/ArduinoFake/src/arduino/pgmspace.h:104:9: warning: "pgm_read_dword" redefined
+  104 | #define pgm_read_dword(addr) (*(const unsigned long *)(addr))
+      |         ^~~~~~~~~~~~~~
+test/native/avr/test_dispatch/avr/pgmspace.h:44:9: note: this is the location of the previous definition
+   44 | #define pgm_read_dword(addr) (*(const uint32_t*)(addr))
+      |         ^~~~~~~~~~~~~~
+.pio/libdeps/native/ArduinoFake/src/arduino/pgmspace.h:106:9: warning: "pgm_read_ptr" redefined
+  106 | #define pgm_read_ptr(addr) (*(const void * const *)(addr))
+      |         ^~~~~~~~~~~~
+test/native/avr/test_dispatch/avr/pgmspace.h:48:9: note: this is the location of the previous definition
+   48 | #define pgm_read_ptr(addr) (*(void**)(addr))
+      |         ^~~~~~~~~~~~
+In file included from .pio/libdeps/native/ArduinoFake/src/arduino/WString.h:25,
+                 from .pio/libdeps/native/ArduinoFake/src/arduino/Arduino.h:224,

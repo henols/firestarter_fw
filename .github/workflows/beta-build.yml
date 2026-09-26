@@ -1,0 +1,379 @@
+name: Firestarter beta pre-release build
+on:
+  # EVERY merge to beta cuts a pre-release. The paths-ignore list that used to
+  # sit here ('**.md', '**.sh', '.gitignore', 'docs/**', 'documents/**',
+  # 'images/**', '.vscode/**', '.editorconfig/**') meant a merge touching only
+  # those paths bumped no version and published nothing, leaving the published
+  # beta not corresponding to the beta branch.
+  #
+  # That matters more here than in the host repo, because the version is
+  # COMPILED IN: FW_VERSION comes from include/version.h, which only changes
+  # when the bump below runs. A beta commit that skipped the bump would build
+  # firmware reporting the PREVIOUS release's version -- a binary that
+  # misreports which version it is, and a host-side version gate reading a
+  # number that does not identify the code it is talking to.
+  #
+  # Matches beta-release.yml in firestarter_app, which dropped the same filter
+  # for the same reason. Constant version bumping on beta is explicitly
+  # acceptable: beta is a moving pre-release channel, not a curated one.
+  #
+  # No publish loop, and this is settled by evidence rather than by reasoning
+  # about GITHUB_TOKEN semantics: the "Apply automatic changes" auto-commit
+  # below writes include/version.h, which was NEVER in the removed list. If a
+  # GITHUB_TOKEN push could trigger this workflow, commit 66c3101 on beta
+  # would have started a second run. It started none.
+  push:
+    branches:
+    - beta
+  workflow_dispatch:
+    inputs:
+      beta_version:
+        description: 'Explicit PEP 440 pre-release version (e.g. 3.1.0b1). Leave blank for auto-increment via git-tag scan.'
+        required: false
+        type: string
+      # D-01/D-03: permanent rehearsal input (not scaffolding). Deleting it at
+      # milestone close would leave the next person to change this job with
+      # no way to rehearse, and they would test on `beta` instead (128-CONTEXT
+      # D-03). Typed `boolean` (Security V5): a string-typed input could carry
+      # an arbitrary value into `draft:` and `tag_name:` in Plan 128-07.
+      rehearsal:
+        description: 'Rehearsal mode: publish a DRAFT release under a rehearsal-<run_id> tag instead of a real pre-release. Leave false for a real beta cut.'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # D-01 (permanent, not scaffolding) / A1: `workflow_dispatch` inputs are
+      # absent on a `push` event, so `inputs.rehearsal` resolves to an empty
+      # string on every real `beta` push -- a `draft: true` leaking onto that
+      # push would silently stop publishing real betas. This step resolves
+      # the value exactly once and echoes it to $GITHUB_STEP_SUMMARY on every
+      # run so a `beta` push visibly shows it resolve to `false`, rather than
+      # leaving a reader to reason about the expression at each use site.
+      # The resolved value is therefore self-evidencing: read it off the step
+      # summary of the run in front of you rather than trusting this comment.
+      - name: Resolve rehearsal mode
+        id: mode
+        env:
+          REHEARSAL_INPUT: ${{ inputs.rehearsal }}
+        run: |
+          if [ "$REHEARSAL_INPUT" = "true" ]; then
+            REHEARSAL=true
+          else
+            REHEARSAL=false
+          fi
+          echo "rehearsal=${REHEARSAL}" >> "$GITHUB_OUTPUT"
+          echo "Resolved rehearsal mode: ${REHEARSAL}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio
+
+      # beta ships WITH dev tools, so beta tests that configuration and only
+      # that one. env:native is the DEV_TOOLS=1 env.
+      - name: Run native unit tests (DEV_TOOLS)
+        run: pio test -e native
+
+      - name: Install pytest for script tests
+        run: pip install pytest
+
+      - name: Run update_version.py tests
+        run: pytest tests/ -v
+
+      - name: Generate release version
+        id: version
+        env:
+          BETA_VERSION: ${{ github.event.inputs.beta_version }}
+        run: .github/scripts/update_version.py
+
+      - uses: stefanzweifel/git-auto-commit-action@v5
+
+      - name: Build PlatformIO Project
+        env:
+          PLATFORMIO_BUILD_FLAGS: -D DEV_TOOLS=1
+        run: pio run
+
+      - name: Assert every AVR image implements the dev commands
+        run: |
+          set -euo pipefail
+          NEEDLE_DIR="$RUNNER_TEMP/devtools-needle"
+          mkdir -p "$NEEDLE_DIR"
+          CHECKED=0
+          for ENV in uno uno328pb leonardo; do
+            MATCHES=(.pio/build/"$ENV"/firestarter_*.elf)
+            if [ "${#MATCHES[@]}" -ne 1 ]; then
+              echo "::error::expected exactly one firestarter_*.elf under .pio/build/$ENV, found ${#MATCHES[@]}"
+              exit 2
+            fi
+            ELF="${MATCHES[0]}"
+            STRINGS_OUT="$NEEDLE_DIR/$ENV.txt"
+            strings "$ELF" > "$STRINGS_OUT"
+            if ! grep -Fq -- 'CTRL remapped' "$STRINGS_OUT"; then
+              echo "::error::$ENV image does not implement the dev commands (needle absent) -- check that PLATFORMIO_BUILD_FLAGS: -D DEV_TOOLS=1 is still set on the Build PlatformIO Project step"
+              exit 1
+            fi
+            CHECKED=$((CHECKED + 1))
+          done
+          if [ "$CHECKED" -ne 3 ]; then
+            echo "::error::checked $CHECKED envs, expected 3"
+            exit 2
+          fi
+          echo "PASS: uno, uno328pb and leonardo all implement the dev commands" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # REL-01/D-06: everything ARM must sit strictly below the
+      # `stefanzweifel/git-auto-commit-action@v5` step above, because that is
+      # where `include/version.h` becomes the release version -- an image
+      # built anywhere else would carry a stale VERSION string. A composite
+      # action runs its steps in the calling job, on the same runner and
+      # workspace as this job's own checkout, which is what makes this
+      # genuinely the same job as the version bump; a `workflow_call`
+      # reusable workflow would instead run as a separate job with its own
+      # checkout and would break REL-01 outright.
+      - name: Build PY32F071 firmware
+        id: arm
+        # D-05: SOFT half of the loud/soft split (T-128-11). This flag exists
+        # only to produce the py32f071 asset and must never be able to block
+        # the three AVR assets (REL-03) -- it belongs HERE, at this call
+        # site, and never inside
+        # .github/actions/build-py32f071/action.yml, where the LOUD
+        # `py32f071.yml` gate would silently inherit the containment and
+        # D-05's whole split would collapse. It is defensible only because
+        # `py32f071.yml` stays uncontained and red when ARM breaks on `beta`.
+        # Removal trigger: comes off once the target is validated on real
+        # silicon; no PY32F071 PCB exists this milestone, so that is
+        # unreachable and the flag stays.
+        continue-on-error: true
+        uses: ./.github/actions/build-py32f071
+
+      # D-07: this step surfaces a soft ARM failure without swallowing it.
+      # `py32f071.yml`'s red run says WHAT BROKE; this says WHAT THE RELEASE
+      # LACKS -- and the release run page is the artifact anyone actually
+      # looks at. The condition below reads the step's `outcome`, never its
+      # `conclusion`: for a `continue-on-error` step GitHub sets
+      # `outcome: failure` but `conclusion: success`, so a condition keyed on
+      # the latter could never fire -- the exact hollow-gate shape Phases 118
+      # and 124 both had to unwind. There is no `if: always()` here:
+      # `continue-on-error` already keeps the job on the success path, so
+      # this plain conditional step already runs regardless; `always()`
+      # would only add a cancelled-job case that `== 'failure'` does not
+      # match anyway -- one more thing for a reader to reason about, for
+      # nothing.
+      - name: Report a missing PY32F071 image
+        if: steps.arm.outcome == 'failure'
+        run: |
+          MSG="PY32F071 image not produced — this release carries no py32f071 asset."
+          echo "::warning::${MSG}"
+          {
+            echo "### PY32F071"
+            echo "${MSG}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # D-08(a)/REL-04: this is deliberately a TRANSCRIPTION, not the binding.
+      # The firmware repo cannot import the host `firestarter_app` package, so
+      # this step can only check the emitted basename against a literal that
+      # was hand-copied from asset_candidates("py32f071")[0] in
+      # firestarter_app/firestarter/firmware.py:116-132. The actual binding --
+      # proving that literal still matches the real function -- lives in the
+      # host repo's own test (D-08(b), Plan 128-09). Do not read this step as
+      # importing or evaluating asset_candidates(); it does not, and D-08
+      # explicitly forbids blurring the transcription with the binding.
+      - name: Assert the emitted asset filename (REL-04)
+        if: steps.arm.outcome == 'success'
+        env:
+          HEX_PATH: ${{ steps.arm.outputs.hex_path }}
+        run: |
+          set -euo pipefail
+          EXPECTED=firestarter_py32f071.hex
+          if [ -z "$HEX_PATH" ]; then
+            echo "::error::HEX_PATH is empty -- the build-py32f071 composite action's glob guard did not produce a value (A-7 shape: comparing against an empty basename would be vacuous)"
+            exit 1
+          fi
+          ACTUAL=$(basename "$HEX_PATH")
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::emitted asset basename '$ACTUAL' does not match the transcribed literal '$EXPECTED'"
+            exit 1
+          fi
+          echo "PASS: emitted asset basename is $ACTUAL" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # D-10/REL-04, corrected rationale (F-15): this is NOT a new pin -- the
+      # SDK is already pinned via GIT_TAG in platform/py32f071/CMakeLists.txt.
+      # This step is a per-release proof that the pin was honoured. Nothing
+      # caches build/py32f071/_deps: the actions/cache@v4 block above covers
+      # only ~/.cache/pip and ~/.platformio/.cache, so the SDK source tree is
+      # cloned fresh by FetchContent on every run -- the cache-substitution
+      # scenario cannot occur, and this comment does not claim it can. What
+      # this DOES catch: a GIT_TAG edit that does not match what was actually
+      # fetched, an upstream force-push behind a moved ref, and a future
+      # contributor adding an SDK cache without re-checking the pin.
+      # Provenance: the FetchContent source path was MEASURED (not guessed)
+      # off CI run 30676982030.
+      - name: Assert and log the resolved SDK commit SHA (REL-04)
+        if: steps.arm.outcome == 'success'
+        env:
+          SDK_SHA: ${{ steps.arm.outputs.sdk_sha }}
+        run: |
+          set -euo pipefail
+          PINNED=$(sed -nE 's/^\s*GIT_TAG\s+([0-9a-f]{40})\s*$/\1/p' platform/py32f071/CMakeLists.txt | head -n1)
+          if [ -z "$PINNED" ]; then
+            echo "::error::no 40-hex GIT_TAG parsed from platform/py32f071/CMakeLists.txt"
+            exit 2
+          fi
+          if [ -z "$SDK_SHA" ]; then
+            echo "::error::the build resolved no SDK SHA -- build-py32f071's sdk_sha output was empty"
+            exit 2
+          fi
+          if [ "$SDK_SHA" != "$PINNED" ]; then
+            echo "::error::resolved SDK SHA '$SDK_SHA' does not match the declared GIT_TAG '$PINNED'"
+            exit 1
+          fi
+          echo "Resolved SDK commit SHA: $SDK_SHA (matches declared GIT_TAG -- pin honoured)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # F-9/REL-01: FW_VERSION (include/firestarter.h:54) is `VERSION ":"
+      # RURP_BOARD_NAME`; on ARM, include/rurp_platform_compat.h makes PSTR()
+      # a no-op and PROGMEM empty, so the concatenated literal
+      # "<version>:py32f071" is plain ASCII in .rodata of the shipped image --
+      # not a PROGMEM-indirected string. Asserting it in the published bytes
+      # proves the image was built AFTER the update_version.py auto-commit, a
+      # property that survives a future step reorder in a way a YAML-order
+      # read (Criterion 1's stated method) cannot. This assertion runs
+      # ALONGSIDE that YAML-order read, not instead of it (Plan 128-05 landed
+      # the ordering; Plan 128-10 records the step-index reading as evidence
+      # too). A2: compare against steps.version.outputs.version, NEVER
+      # tag_name -- in rehearsal mode D-03 deliberately overrides tag_name, so
+      # a tag-equality assertion would be red on purpose (F-2).
+      - name: Assert the py32 image carries the bumped VERSION (REL-01)
+        if: steps.arm.outcome == 'success'
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+          HEX_PATH: ${{ steps.arm.outputs.hex_path }}
+        run: |
+          set -euo pipefail
+          if [ -z "$EXPECTED_VERSION" ]; then
+            echo "::error::EXPECTED_VERSION is empty -- comparing against a bare ':py32f071' would be nearly vacuous"
+            exit 2
+          fi
+          EXPECTED="${EXPECTED_VERSION}:py32f071"
+          arm-none-eabi-objcopy -I ihex -O binary "$HEX_PATH" "$RUNNER_TEMP/py32.bin"
+          # A2: grep -Fq, deliberately NOT -Fqx (whole-line equality). .rodata
+          # packing on this target is unobserved -- a too-strict whole-line
+          # match would fail rehearsal run A for a reason that has nothing to
+          # do with the property being asserted. Do not "tighten" this to -x
+          # without first observing real .rodata layout on a real run.
+          # A6: no --gap-fill/--pad-to needed -- the sparse binary still
+          # contains the literal bytes.
+          if ! strings "$RUNNER_TEMP/py32.bin" | grep -Fq -- "$EXPECTED"; then
+            echo "::error::published image does not contain expected version string '$EXPECTED'"
+            exit 1
+          fi
+          echo "PASS: image contains version string $EXPECTED" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Resolve release target SHA
+        id: release_target
+        run: |
+          # Phase 20 E2E-03 (firmware mirror): pin the tag to the post-auto-
+          # commit HEAD so the Pre-release points at the version-bumped
+          # commit, not the trigger commit.
+          SHA=$(git rev-parse HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Release target SHA: $SHA"
+
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # D-15/REL-02: two files: entries are required because PlatformIO
+          # writes the AVR .hex output under .pio/build/ while the py32f071
+          # CMake build writes its image under build/py32f071/ -- one glob
+          # cannot cover both trees. The second entry is a glob
+          # (build/py32f071/firestarter_*.hex), not a literal, matching
+          # D-15's correction of ad47c3b's README, which argued for a glob
+          # and then supplied a literal instead.
+          #
+          # REL-03: the release action's fail_on_unmatched_files input is
+          # deliberately UNSET on this step. Its documented default is
+          # false, and REL-03 requires a broken/contained ARM build to
+          # leave the py32 asset simply ABSENT from this release rather
+          # than failing it -- setting fail_on_unmatched_files true would
+          # violate REL-03 directly.
+          # Corrected mechanism (research F-1, primary-source read of
+          # softprops/action-gh-release's src/util.ts and src/run.ts): the
+          # action's unmatchedPatterns() runs glob.sync() over every
+          # files: entry -- literal or glob alike -- and run.ts decides
+          # severity purely from the fail_on_unmatched_files input. There
+          # is no code path in this action that makes any distinction
+          # between a literal path and a glob pattern. Do not repeat the
+          # superseded folklore in this comment or anywhere else in this
+          # file.
+          # The glob above is chosen for rename-resilience and to read
+          # consistently with the AVR entry, not for any failure-semantics
+          # reason.
+          files: |
+            .pio/build/**/firestarter_*.hex
+            build/py32f071/firestarter_*.hex
+
+          # D-01/D-03/F-3: draft: and tag_name: below both resolve
+          # exclusively through steps.mode.outputs.rehearsal (Plan 128-05) --
+          # never through inputs.rehearsal directly, which is absent on a
+          # `push` event and would leak an unresolved comparison onto every
+          # real beta push (Assumption A1). A draft: true leaking onto a
+          # real beta push would silently stop publishing real betas.
+          #
+          # In rehearsal mode this publishes a DRAFT release, and a draft
+          # release creates NO git tag: the action's finalizeRelease()
+          # returns the release untouched when draft is set, publishing is
+          # what triggers GitHub's tag-ref creation, and publishing never
+          # happens in rehearsal mode -- verified from the action's source,
+          # corroborated by its own "untagged-..." asset-URL comment and by
+          # issue #722 (F-3).
+          #
+          # D-03: tag_name is additionally overridden to
+          # rehearsal-<run_id> in rehearsal mode. The version bump still
+          # runs and still compiles into the image, so REL-01 stays proven
+          # by the rehearsal; what changes is only the name the draft
+          # carries, so an accidentally-published draft cannot masquerade
+          # as the next real beta.
+          #
+          # F-7: this is not hypothetical caution -- this workflow has
+          # already been dispatched from a non-default milestone branch
+          # once, on 2026-07-26 (run 30199560282), and because draft mode
+          # did not exist at the time it published the real, public
+          # prerelease 3.0.0b11 with a real tag. The rehearsal input's
+          # permanence (D-03) is justified by that measured precedent, not
+          # by hypothetical caution.
+          #
+          # Every rehearsal dispatch must supply beta_version explicitly:
+          # update_version.py's is_beta_mode() requires --beta, a
+          # GITHUB_REF of refs/heads/beta, or a non-empty BETA_VERSION -- a
+          # throwaway-branch dispatch with the input left blank satisfies
+          # none of those and takes the STABLE version path instead,
+          # rewriting include/version.h to a stable patch bump (F-2). The
+          # dispatch procedure itself is Plan 128-10's scope; this warning
+          # sits next to the switch a reader will actually be looking at.
+          draft: ${{ steps.mode.outputs.rehearsal == 'true' }}
+          tag_name: ${{ steps.mode.outputs.rehearsal == 'true' && format('rehearsal-{0}', github.run_id) || steps.version.outputs.version }}
+          target_commitish: ${{ steps.release_target.outputs.sha }}
+          prerelease: true
+          make_latest: false
+        env:
+          # Phase 20 E2E-05: PERSONAL_ACCESS_TOKEN is not configured on the
+          # firmware repo. Unlike the app, the firmware Release has no
+          # downstream workflow that needs `release.published` to cascade
+          # (no PyPI publish step), so the built-in GITHUB_TOKEN is
+          # sufficient and avoids requiring a PAT.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

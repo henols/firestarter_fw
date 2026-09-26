@@ -7,22 +7,16 @@
 
 #include "json_parser.h"
 #include <stdio.h>
+#include <stddef.h>
+#include <string.h>
 
 #include "jsmn.h"
-#include "logging.h"
 
 uint8_t get_cmd(const char* json, jsmntok_t* tokens, int pos);
 
 int parse_bus_config(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle);
 
 bool get_flags(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_memory_size(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_address(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_chip_id(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_type(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_pin_count(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_delay(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_vpp_mv(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
 
 bool get_rw_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
 bool get_vpp_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
@@ -46,11 +40,17 @@ static unsigned long simple_strtoul(const char* s) {
 #define jsoneq(json, tok, s) \
     jsoneq_(json, tok, PSTR(s))
 
-int json_init(const char* json, int len, jsmntok_t* tokens) {
-    jsmn_parser parser;
-    jsmn_init(&parser);
-    return jsmn_parse(&parser, json, len, tokens, sizeof(tokens) / sizeof(tokens[0]));
-}
+/*
+ * Read-timing sweep knobs, clamped at parse time so an absurd JSON value
+ * cannot reach delayMicroseconds() unbounded. Values < 3 us are below
+ * delayMicroseconds() accuracy on a 16 MHz AVR.
+ *
+ *   read_settling_us == 0 -> no settling delay
+ *   read_strobe_us   == 0 -> firmware default 3 us
+ *
+ * Must be defined above key_parsers[]: the table's `clamp` column references it.
+ */
+#define READ_TIMING_MAX_US 1000UL   /* sane max (~1ms); caps both knobs */
 
 const char key_mem_size[] PROGMEM = "memory-size";
 const char key_address[] PROGMEM = "address";
@@ -58,19 +58,240 @@ const char key_flags[] PROGMEM = "flags";
 const char key_chip_id[] PROGMEM = "chip-id";
 const char key_pin_count[] PROGMEM = "pin-count";
 const char key_pulse_delay[] PROGMEM = "pulse-delay";
-const char key_vpp[] PROGMEM = "vpp";
-const char key_type[] PROGMEM = "type";
+const char key_vpp_mv[] PROGMEM = "vpp_mv";
+const char key_algorithm[] PROGMEM = "algorithm";
+/* Host-tunable read-timing knobs. */
+const char key_read_settling[] PROGMEM = "read-settling-delay";
+const char key_read_strobe[]   PROGMEM = "read-strobe-us";
+/* Per-chip page-write size delivered by the host.
+ * Wire key is the HYPHEN form "page-size" -- the internal database key
+ * programming.page_size uses an underscore, so a PROGMEM string written
+ * against the underscore form would silently never match. */
+const char key_page_size[]     PROGMEM = "page-size";
+/* Absolute, exclusive end address of the operation's region.
+ * Wire key is the HYPHEN form "region-end" -- a PROGMEM string written
+ * against an underscore form would silently never match, exactly like
+ * key_page_size's warning above. */
+const char key_region_end[]    PROGMEM = "region-end";
 
+/*
+ * field_desc_t -- one row per wire key: {key, clamp, offset, width}.
+ *
+ * 6 B on AVR because avr-gcc gives every type 1-byte struct alignment;
+ * larger and padded on a 64-bit host, where PGM_P is an 8-byte pointer and
+ * the compiler inserts alignment padding after the narrower columns. NO
+ * ASSERTION ON sizeof(field_desc_t) MAY BE AUTHORED WITHOUT A TARGET GUARD
+ * for that reason -- see include/eprom_params.h:52-67's own written warning
+ * about exactly this trap (PATTERNS §4).
+ *
+ * clamp == 0 means "no clamp".
+ */
 typedef struct {
     PGM_P key;
-    bool (*parser_func)(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-} key_parser_t;
+    uint16_t clamp;
+    uint8_t offset;
+    uint8_t width;
+} field_desc_t;
 
-static const key_parser_t key_parsers[] PROGMEM = {
-    {key_mem_size, get_memory_size}, {key_address, get_address},       {key_flags, get_flags},
-    {key_chip_id, get_chip_id},      {key_pin_count, get_pin_count},   {key_pulse_delay, get_delay},
-    {key_vpp, get_vpp_mv},           {key_type, get_type},
+/*
+ * width's low nibble (FIELD_WIDTH_MASK) is the byte width derived from the
+ * member. Bit 7 (FIELD_POLICY_MASK), when set, selects MASK semantics for
+ * an out-of-range value instead of SATURATE. Bit 6 (FIELD_POLICY_REJECT_NEGATIVE),
+ * when set, refuses the whole frame -- see that macro's own comment below.
+ */
+#define FIELD_WIDTH_MASK  0x0F
+#define FIELD_POLICY_MASK 0x80
+
+/*
+ * FIELD_POLICY_REJECT_NEGATIVE -- a third row policy, set on exactly one
+ * row (key_address). simple_strtoul consumes only `[0-9]`, so a leading
+ * '-' makes its loop body never run and the value converts to 0 -- a
+ * fail-open inside a parser whose other policies (FIELD_MASK above) are
+ * fail-closed: `-256` on the wire is today indistinguishable from a
+ * legitimate address-0 frame. The scope is the address field alone,
+ * because the same simple_strtoul converter serves ctrl_flags, bus-config
+ * address lines and static-high lines, and widening the refusal to those
+ * would change wire behaviour for six fields no requirement names. The
+ * host already refuses a negative start address before the wire
+ * (write_blank_guard.require_non_negative_address, Phase 203); this bit is
+ * defence-in-depth against a non-firestarter host or a corrupted frame.
+ */
+#define FIELD_POLICY_REJECT_NEGATIVE 0x40
+
+/*
+ * FIELD -- SATURATE policy (ordinal fields). `offset` and `width` are both
+ * derived from the compiler (offsetof, sizeof(((firestarter_handle_t*)0)->
+ * member)) -- never a literal -- because the AVR and native struct layouts
+ * differ at every member from `protocol` down (157-before-figures.md §6),
+ * so a hand-written offset or width would be correct on one architecture
+ * and wrong on the other. store_field's raw memcpy below is only safe
+ * because both numbers come from the type.
+ */
+#define FIELD(k, member, cl)                                                 \
+    { (k), (uint16_t)(cl), (uint8_t)offsetof(firestarter_handle_t, member),  \
+      (uint8_t)sizeof(((firestarter_handle_t*)0)->member) }
+
+/*
+ * FIELD_MASK -- MASK policy (bitmask fields). Refuses to saturate a bitmask
+ * to its type maximum: on `ctrl_flags` that would set every control flag at
+ * once, including FLAG_FORCE, FLAG_SKIP_ERASE and FLAG_VPE_AS_VPP --
+ * a fail-OPEN where the required behaviour is fail-closed.
+ * This preserves today's width-limited truncation for a bitmask instead,
+ * and does nothing else -- it does not attempt to reject an out-of-range
+ * bitmask, because `reject` needs a new message id, and message ids are
+ * generated from the catalog rather than written here.
+ */
+#define FIELD_MASK(k, member)                                                \
+    { (k), (uint16_t)0, (uint8_t)offsetof(firestarter_handle_t, member),     \
+      (uint8_t)(sizeof(((firestarter_handle_t*)0)->member) | FIELD_POLICY_MASK) }
+
+/*
+ * FIELD_REJECT_NEGATIVE -- SATURATE policy (same as FIELD above), plus the
+ * dispatch loop's sign check ORs in FIELD_POLICY_REJECT_NEGATIVE. Applied
+ * to the key_address row only -- see that macro's own comment above.
+ */
+#define FIELD_REJECT_NEGATIVE(k, member, cl)                                \
+    { (k), (uint16_t)(cl), (uint8_t)offsetof(firestarter_handle_t, member), \
+      (uint8_t)(sizeof(((firestarter_handle_t*)0)->member) | FIELD_POLICY_REJECT_NEGATIVE) }
+
+static const field_desc_t key_parsers[] PROGMEM = {
+    /* memory-size -> handle->mem_size */
+    FIELD(key_mem_size, mem_size, 0),
+    /* address -> handle->address. REJECT_NEGATIVE policy: see that
+     * macro's own comment above for why this row alone refuses a leading
+     * '-' instead of silently converting to 0. */
+    FIELD_REJECT_NEGATIVE(key_address, address, 0),
+    /* flags -> handle->ctrl_flags. MASK policy: see FIELD_MASK's own
+     * comment above for why this row never saturates. */
+    FIELD_MASK(key_flags, ctrl_flags),
+    /* chip-id -> handle->chip_id */
+    FIELD(key_chip_id, chip_id, 0),
+    /* pin-count -> handle->pins */
+    FIELD(key_pin_count, pins, 0),
+    /* pulse-delay -> handle->pulse_delay */
+    FIELD(key_pulse_delay, pulse_delay, 0),
+    /* vpp_mv -> handle->vpp_mv */
+    FIELD(key_vpp_mv, vpp_mv, 0),
+    /* algorithm -> handle->protocol (the primary dispatch key) */
+    FIELD(key_algorithm, protocol, 0),
+    /* read-settling-delay -> handle->read_settling_us, clamped to
+     * READ_TIMING_MAX_US. */
+    FIELD(key_read_settling, read_settling_us, READ_TIMING_MAX_US),
+    /* read-strobe-us -> handle->read_strobe_us, clamped to
+     * READ_TIMING_MAX_US. */
+    FIELD(key_read_strobe, read_strobe_us, READ_TIMING_MAX_US),
+    /* page-size -> handle->page_size */
+    FIELD(key_page_size, page_size, 0),
+    /* region-end -> handle->region_end */
+    FIELD(key_region_end, region_end, 0),
 };
+
+/*
+ * Compile-time layout guards only -- zero flash cost. _Static_assert in a C
+ * translation unit is a NEW IDIOM for this repository (the only
+ * pre-existing static assert is the C++ one at include/eprom_params.h:62,
+ * inert in every C TU); a future reader must not delete these thinking they
+ * are something else. Each one proves an offset FITS the uint8_t offset
+ * column and a width fits the 32-bit store -- it does NOT prove the table
+ * writes the right member, which only the native parse tests do (ceiling
+ * 7).
+ */
+_Static_assert(offsetof(firestarter_handle_t, mem_size) < 256 &&
+                   sizeof(((firestarter_handle_t*)0)->mem_size) <= 4,
+               "mem_size: a struct reorder moved it past the uint8_t offset column's range, "
+               "or gave it a width the 32-bit store cannot carry");
+_Static_assert(offsetof(firestarter_handle_t, address) < 256 &&
+                   sizeof(((firestarter_handle_t*)0)->address) <= 4,
+               "address: a struct reorder moved it past the uint8_t offset column's range, "
+               "or gave it a width the 32-bit store cannot carry");
+_Static_assert(offsetof(firestarter_handle_t, ctrl_flags) < 256 &&
+                   sizeof(((firestarter_handle_t*)0)->ctrl_flags) <= 4,
+               "ctrl_flags: a struct reorder moved it past the uint8_t offset column's range, "
+               "or gave it a width the 32-bit store cannot carry");
+_Static_assert(offsetof(firestarter_handle_t, chip_id) < 256 &&
+                   sizeof(((firestarter_handle_t*)0)->chip_id) <= 4,
+               "chip_id: a struct reorder moved it past the uint8_t offset column's range, "
+               "or gave it a width the 32-bit store cannot carry");
+_Static_assert(offsetof(firestarter_handle_t, pins) < 256 &&
+                   sizeof(((firestarter_handle_t*)0)->pins) <= 4,
+               "pins: a struct reorder moved it past the uint8_t offset column's range, "
+               "or gave it a width the 32-bit store cannot carry");
+_Static_assert(offsetof(firestarter_handle_t, pulse_delay) < 256 &&
+                   sizeof(((firestarter_handle_t*)0)->pulse_delay) <= 4,
+               "pulse_delay: a struct reorder moved it past the uint8_t offset column's range, "
+               "or gave it a width the 32-bit store cannot carry");
+_Static_assert(offsetof(firestarter_handle_t, vpp_mv) < 256 &&
+                   sizeof(((firestarter_handle_t*)0)->vpp_mv) <= 4,
+               "vpp_mv: a struct reorder moved it past the uint8_t offset column's range, "
+               "or gave it a width the 32-bit store cannot carry");
+_Static_assert(offsetof(firestarter_handle_t, protocol) < 256 &&
+                   sizeof(((firestarter_handle_t*)0)->protocol) <= 4,
+               "protocol: a struct reorder moved it past the uint8_t offset column's range, "
+               "or gave it a width the 32-bit store cannot carry");
+_Static_assert(offsetof(firestarter_handle_t, read_settling_us) < 256 &&
+                   sizeof(((firestarter_handle_t*)0)->read_settling_us) <= 4,
+               "read_settling_us: a struct reorder moved it past the uint8_t offset column's "
+               "range, or gave it a width the 32-bit store cannot carry");
+_Static_assert(offsetof(firestarter_handle_t, read_strobe_us) < 256 &&
+                   sizeof(((firestarter_handle_t*)0)->read_strobe_us) <= 4,
+               "read_strobe_us: a struct reorder moved it past the uint8_t offset column's "
+               "range, or gave it a width the 32-bit store cannot carry");
+_Static_assert(offsetof(firestarter_handle_t, page_size) < 256 &&
+                   sizeof(((firestarter_handle_t*)0)->page_size) <= 4,
+               "page_size: a struct reorder moved it past the uint8_t offset column's range, "
+               "or gave it a width the 32-bit store cannot carry");
+_Static_assert(offsetof(firestarter_handle_t, region_end) < 256 &&
+                   sizeof(((firestarter_handle_t*)0)->region_end) <= 4,
+               "region_end: a struct reorder moved it past the uint8_t offset column's range, "
+               "or gave it a width the 32-bit store cannot carry");
+_Static_assert(sizeof(key_parsers) / sizeof(key_parsers[0]) == 12,
+               "key_parsers row count changed -- add or remove the matching per-member offset "
+               "guard above to match");
+
+/*
+ * The single shared write body every table row dispatches through.
+ *
+ * `field` points INTO PROGMEM: read every column with pgm_read_byte /
+ * pgm_read_word, NEVER by dereferencing *field, which compiles and silently
+ * returns RAM garbage on AVR.
+ *
+ * `value` is uint32_t, not `unsigned long`: simple_strtoul returns unsigned
+ * long, which is 32-bit on AVR but 64-bit on native x86-64. Fixing it at 4
+ * bytes makes the saturation branch behave identically on both, so the native
+ * round-trip tests are valid oracles for the AVR build. Do not "simplify" it
+ * back.
+ */
+static void store_field(firestarter_handle_t* handle, const field_desc_t* field, uint32_t value) {
+    uint8_t offset = pgm_read_byte(&field->offset);
+    uint8_t width_raw = pgm_read_byte(&field->width);
+    uint16_t clamp = pgm_read_word(&field->clamp);
+
+    /* 1. The read-timing bound now lives here, as the clamp column. */
+    if (clamp != 0 && value > (uint32_t)clamp) {
+        value = clamp;
+    }
+
+    uint8_t width = width_raw & FIELD_WIDTH_MASK;
+    bool mask_policy = (width_raw & FIELD_POLICY_MASK) != 0;
+
+    /* 2/3. Saturate to the member's own maximum unless the row's policy bit
+     * selects MASK instead, in which case the value is left untouched and
+     * the width-limited store below performs the truncation. The
+     * width < sizeof(uint32_t) guard keeps the shift out of undefined
+     * behaviour (a 32-bit shift by 32) -- keep it. */
+    if (width < sizeof(uint32_t)) {
+        uint32_t max_value = ((uint32_t)1u << (width * 8)) - 1u;
+        if (value > max_value && !mask_policy) {
+            value = max_value;
+        }
+    }
+
+    /* 4. Little-endian assumption, stated explicitly: AVR, native x86-64
+     * and the PY32F071 ARM port are all little-endian, so copying the low
+     * `width` bytes of `value` into the handle at the compiler-derived
+     * `offset` lands correctly on every target this firmware builds for. */
+    memcpy((uint8_t*)handle + offset, &value, width);
+}
 
 int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle) {
     handle->address = 0;
@@ -79,7 +300,28 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
     handle->bus_config.vpp_line = 0xFF;
     handle->bus_config.address_lines[0] = 0xFF;
     handle->bus_config.address_mask = 0;
+    handle->bus_config.static_high_mask = 0;
     handle->chip_id = 0;
+    /* page_size resets to 0 exactly like chip_id above. handle is a
+     * single file-scope global with no per-command memset, and page-size is
+     * emit-when-present, so without this reset a 128 parsed for one chip
+     * would persist into the next command and "absent means 64" becomes
+     * false in practice -- the exact overrun this reset exists to prevent.
+     * The two read-timing knobs (read_settling_us, read_strobe_us) are
+     * deliberately NOT in this reset block: that is a pre-existing latent
+     * instance of the same defect, filed as a todo, so their absence here is
+     * not an oversight. */
+    handle->page_size = 0;
+    /* region_end resets to 0 for a stronger reason than page_size above:
+     * handle is one file-scope global with no per-command memset, and
+     * under D-04 0 means "whole device" -- so a stale non-zero value left
+     * over from a previous command would NARROW a later whole-device blank
+     * check instead of widening it. That is fail-OPEN: a blank-check run
+     * right after a partial write could scan only the write's region and
+     * report the whole device blank. Without this reset that fail-open
+     * path is live; with it, every command starts from whole-device unless
+     * it supplies its own region-end. */
+    handle->region_end = 0;
 
     if (token_count < 1 || tokens[0].type != JSMN_OBJECT) {
         return -1; // Not a JSON object
@@ -106,8 +348,12 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
         for (size_t j = 0; j < sizeof(key_parsers) / sizeof(key_parsers[0]); j++) {
             PGM_P key = (PGM_P)pgm_read_ptr(&key_parsers[j].key);
             if (jsoneq_(json, key_token, key) == 0) {
-                bool (*parser_func)(const char*, jsmntok_t*, int, firestarter_handle_t*) = (void*)pgm_read_ptr(&key_parsers[j].parser_func);
-                parser_func(json, tokens, token_idx, handle);
+                const char* value_str = json + tokens[token_idx + 1].start;
+                uint8_t width_raw = pgm_read_byte(&key_parsers[j].width);
+                if ((width_raw & FIELD_POLICY_REJECT_NEGATIVE) != 0 && *value_str == '-') {
+                    return -1; // Refused: this row's value cannot represent a negative number
+                }
+                store_field(handle, &key_parsers[j], simple_strtoul(value_str));
                 token_idx += 2; // Skip key and simple value
                 found = true;
                 break;
@@ -123,11 +369,8 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
             if (consumed < 0) return -1;
             token_idx += 1 + consumed; // Advance past the key and the entire object value
         } else {
-            char field_name[32];
-            int len = key_token->end - key_token->start;
-            snprintf(field_name, sizeof(field_name), "%.*s", len, json + key_token->start);
-            firestarter_error_response_format("Unknown field: %s", field_name);
-            return -1;
+            // Unknown field — skip key + value token (forward-compatible with new Python fields)
+            token_idx += 2;
         }
     }
     if (handle->bus_config.address_lines[0] == 0xFF) {
@@ -228,6 +471,20 @@ int parse_bus_config(const char* json, jsmntok_t* tokens, int token_count, fires
             int pair_tokens = 1 + 1 + bus_array_size; // key + array_token + elements
             total_consumed_tokens += pair_tokens;
             current_token_idx += pair_tokens;
+        } else if (jsoneq(json, key_token, "static-high") == 0) {
+            jsmntok_t* array_token = &tokens[current_token_idx + 1];
+            if (array_token->type != JSMN_ARRAY) return -1;
+
+            int sh_array_size = array_token->size;
+            int sh_array_start_idx = current_token_idx + 1;
+            for (int j = 0; j < sh_array_size; j++) {
+                uint8_t line = simple_strtoul(json + tokens[sh_array_start_idx + j + 1].start);
+                handle->bus_config.static_high_mask |= 1UL << line;
+            }
+
+            int pair_tokens = 1 + 1 + sh_array_size; // key + array_token + elements
+            total_consumed_tokens += pair_tokens;
+            current_token_idx += pair_tokens;
         } else if (get_rw_pin(json, tokens, current_token_idx, handle)) {
             total_consumed_tokens += 2;
             current_token_idx += 2;
@@ -235,7 +492,9 @@ int parse_bus_config(const char* json, jsmntok_t* tokens, int token_count, fires
             total_consumed_tokens += 2;
             current_token_idx += 2;
         } else {
-            return -1; // Unknown key in bus-config
+            // Unknown key — skip key + value tokens
+            total_consumed_tokens += 2;
+            current_token_idx += 2;
         }
     }
     return total_consumed_tokens;
@@ -261,36 +520,21 @@ static int jsoneq_(const char* json, jsmntok_t* tok, const char* s) {
 
 #define extract_int(element, register) extract_long(element, register)
 
+/*
+ * Hand-expanded rather than the extract_long macro form: that macro emits its
+ * own anonymous PSTR("flags"), so expanding it here would store the wire key
+ * twice. get_flags survives deliberately -- it is called directly from
+ * json_parse_config and json_get_cmd, neither of which walks the field table.
+ *
+ * Truncating by assignment gives the same observable result as the table's
+ * FIELD_MASK row, so all three `flags` paths stay consistent.
+ */
 bool get_flags(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_long("flags", handle->ctrl_flags);
-}
-
-bool get_memory_size(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_long("memory-size", handle->mem_size);
-}
-
-bool get_address(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_long("address", handle->address);
-}
-
-bool get_chip_id(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_int("chip-id", handle->chip_id);
-}
-
-bool get_pin_count(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_int("pin-count", handle->pins);
-}
-
-bool get_type(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_int("type", handle->mem_type);
-}
-
-bool get_delay(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_long("pulse-delay", handle->pulse_delay);
-}
-
-bool get_vpp_mv(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_int("vpp", handle->vpp_mv);
+    if (jsoneq_(json, &tokens[pos], key_flags) == 0) {
+        handle->ctrl_flags = simple_strtoul(json + tokens[pos + 1].start);
+        return 1;
+    }
+    return 0;
 }
 
 bool get_rw_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {

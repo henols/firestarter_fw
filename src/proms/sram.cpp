@@ -9,8 +9,9 @@
 #include "firestarter.h"
 #include "rurp_shield.h"
 #include <stdio.h>
-#include "logging.h"
+#include "logging_id.h"
+#include "messages.h"
 
 void configure_sram(firestarter_handle_t* handle) {
-    debug("Configuring SRAM");
+    LOG_DEBUG_ID_SUB(DBG_CONFIGURING_SRAM);
 }

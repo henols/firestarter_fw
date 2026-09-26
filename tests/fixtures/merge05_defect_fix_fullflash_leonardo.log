@@ -1,0 +1,86 @@
+Processing leonardo (platform: atmelavr; board: leonardo; framework: arduino)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+CONFIGURATION: https://docs.platformio.org/page/boards/atmelavr/leonardo.html
+PLATFORM: Atmel AVR (5.2.0) > Arduino Leonardo
+HARDWARE: ATMEGA32U4 16MHz, 2.50KB RAM, 28KB Flash
+DEBUG: Current (simavr) External (simavr)
+PACKAGES: 
+ - framework-arduino-avr @ 5.3.0 
+ - toolchain-atmelavr @ 1.70300.191015 (7.3.0)
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 6 compatible libraries
+Scanning dependencies...
+Dependency Graph
+|-- EEPROM @ 2.0
+|-- jsmn
+Building in release mode
+Compiling .pio/build/leonardo/src/boards/leonardo_rurp_shield.cpp.o
+Compiling .pio/build/leonardo/src/boards/rurp_common.cpp.o
+Compiling .pio/build/leonardo/src/boards/rurp_config_storage_eeprom.cpp.o
+Compiling .pio/build/leonardo/src/boards/rurp_serial_utils.cpp.o
+Compiling .pio/build/leonardo/src/boards/uno_rurp_shield.cpp.o
+Compiling .pio/build/leonardo/src/dev_tools.cpp.o
+Compiling .pio/build/leonardo/src/eprom_operations.cpp.o
+Compiling .pio/build/leonardo/src/firestarter.cpp.o
+Compiling .pio/build/leonardo/src/hardware_operations.cpp.o
+Compiling .pio/build/leonardo/src/json_parser.c.o
+Compiling .pio/build/leonardo/src/operation_utils.cpp.o
+Compiling .pio/build/leonardo/src/proms/eeprom_28c.cpp.o
+Compiling .pio/build/leonardo/src/proms/eprom.cpp.o
+Compiling .pio/build/leonardo/src/proms/eprom_budget.cpp.o
+Compiling .pio/build/leonardo/src/proms/eprom_params.cpp.o
+Compiling .pio/build/leonardo/src/proms/flash_5v_page.cpp.o
+Compiling .pio/build/leonardo/src/proms/flash_intel.cpp.o
+Compiling .pio/build/leonardo/src/proms/flash_nor_unlock.cpp.o
+Compiling .pio/build/leonardo/src/proms/flash_utils.cpp.o
+Compiling .pio/build/leonardo/src/proms/memory.cpp.o
+Compiling .pio/build/leonardo/src/proms/not_implemented.cpp.o
+Compiling .pio/build/leonardo/src/proms/sram.cpp.o
+Compiling .pio/build/leonardo/src/rurp_config_utils.cpp.o
+Compiling .pio/build/leonardo/src/rurp_vpp.cpp.o
+Compiling .pio/build/leonardo/lib5fe/jsmn/jsmn.c.o
+Archiving .pio/build/leonardo/libFrameworkArduinoVariant.a
+Indexing .pio/build/leonardo/libFrameworkArduinoVariant.a
+Compiling .pio/build/leonardo/FrameworkArduino/CDC.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/HardwareSerial.cpp.o
+Archiving .pio/build/leonardo/lib5fe/libjsmn.a
+Indexing .pio/build/leonardo/lib5fe/libjsmn.a
+Compiling .pio/build/leonardo/FrameworkArduino/HardwareSerial0.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/HardwareSerial1.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/HardwareSerial2.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/HardwareSerial3.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/IPAddress.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/PluggableUSB.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/Print.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/Stream.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/Tone.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/USBCore.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/WInterrupts.c.o
+Compiling .pio/build/leonardo/FrameworkArduino/WMath.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/WString.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/abi.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/hooks.c.o
+Compiling .pio/build/leonardo/FrameworkArduino/main.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/new.cpp.o
+Compiling .pio/build/leonardo/FrameworkArduino/wiring.c.o
+Compiling .pio/build/leonardo/FrameworkArduino/wiring_analog.c.o
+Compiling .pio/build/leonardo/FrameworkArduino/wiring_digital.c.o
+Compiling .pio/build/leonardo/FrameworkArduino/wiring_pulse.S.o
+Compiling .pio/build/leonardo/FrameworkArduino/wiring_pulse.c.o
+Compiling .pio/build/leonardo/FrameworkArduino/wiring_shift.c.o
+Archiving .pio/build/leonardo/libFrameworkArduino.a
+Indexing .pio/build/leonardo/libFrameworkArduino.a
+Linking .pio/build/leonardo/firestarter_leonardo.elf
+Checking size .pio/build/leonardo/firestarter_leonardo.elf
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [========  ]  78.7% (used 2014 bytes from 2560 bytes)
+Flash: [========= ]  82.4% (used 27002 bytes from 32768 bytes)
+Building .pio/build/leonardo/firestarter_leonardo.hex
+========================= [SUCCESS] Took 2.49 seconds =========================
+
+Environment    Status    Duration
+-------------  --------  ------------
+leonardo       SUCCESS   00:00:02.494
+========================= 1 succeeded in 00:00:02.494 =========================

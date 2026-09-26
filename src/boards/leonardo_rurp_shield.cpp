@@ -10,7 +10,6 @@
 #include "rurp_shield.h"
 #include <Arduino.h>
 #include "rurp_register_utils.h"
-#include "logging.h"
 
 #include "rurp_serial_utils.h"
 
@@ -111,9 +110,19 @@ void rurp_write_data_buffer(uint8_t data) {
 }
 
 uint8_t rurp_read_data_buffer() {
-    // Read from ports and map back to data bus bits (D0-D7)
+    // Read from ports and map back to data bus bits (D0-D7).
+    // Insert a single _NOP() between each PINx read to let the AVR's input
+    // synchronizer latch settle before the next port read. The 32U4 PINx
+    // register has a 0.5-1.5 clock-cycle latch latency (datasheet 7766J
+    // §10.2.4); with a partially-erased EPROM (weak chip drive) plus the
+    // address-bus driven through nearby PCB traces, three back-to-back PINx
+    // reads can sample mid-transition values. One _NOP() @ 16 MHz = 62.5 ns;
+    // worst-case W27C512 tACC at 5V is 90 ns. Two stalls put total settling
+    // at ~125 ns - comfortably > tACC, < 1 µs / 64KB read overhead.
     uint8_t pind_val = PIND;
+    _NOP();
     uint8_t pinc_val = PINC;
+    _NOP();
     uint8_t pine_val = PINE;
 
     uint8_t data = 0;
@@ -141,11 +150,4 @@ void rurp_set_data_input() {
     DDRE &= ~PORTE_DATA_MASK; // Set pin D6 as output
 }
 
-#ifdef SERIAL_DEBUG
-void debug_setup() {}
-
-void debug_buf(const char* msg) {
-    rurp_log("DEBUG", msg);
-}
-#endif
 #endif

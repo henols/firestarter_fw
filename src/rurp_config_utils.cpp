@@ -6,9 +6,7 @@
  */
 
 #include "rurp_shield.h" // For CONFIG_VERSION, VALUE_R1, VALUE_R2
-#include <EEPROM.h>
-
-#define CONFIG_START 48
+#include "rurp_config_storage.h"
 
 // Define the global configuration variable here.
 // This is the single definition that the linker will use.
@@ -21,12 +19,17 @@ rurp_configuration_t* rurp_get_config() {
 
 void rurp_load_config() {
     rurp_configuration_t* config = rurp_get_config();
-    EEPROM.get(CONFIG_START, *config);
+    // The bool result is deliberately discarded: rurp_validate_config()
+    // below decides usability of whatever bytes came back (or were left
+    // untouched), which is what keeps one validate policy on both
+    // platforms rather than branching per platform here.
+    (void)rurp_config_storage_load(config, sizeof(*config));
     rurp_validate_config(config);
 }
 
 void rurp_save_config(rurp_configuration_t* config) {
-    EEPROM.put(CONFIG_START, *config);
+    // Result deliberately discarded -- see rurp_load_config() above.
+    (void)rurp_config_storage_save(config, sizeof(*config));
 }
 
 void rurp_validate_config(rurp_configuration_t* config) {
