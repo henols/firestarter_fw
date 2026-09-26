@@ -221,24 +221,19 @@ static void dt_sample_adc(dt_adc_sample_t* out, rurp_register_t ctrl) {
     if (ctrl != 0) {
         delay(DT_ADC_SETTLE_MS);
     }
-    // Read through the same averaged path the production reading uses, so
-    // these counts describe the shipped instrument rather than a second one
-    // that only this command has.
+
+    // EXACTLY ONE sample of each channel, and every figure below derived from
+    // those two. Calling rurp_read_vcc_mv() and rurp_read_voltage_mv() here
+    // instead would take THREE bandgap samples and two divider samples, so the
+    // reported counts would describe different instants from the millivolt
+    // figures printed beside them -- a diagnostic that contradicts itself by
+    // about one count, which is 0.5 % on the bandgap channel.
+    out->divider_adc = rurp_read_divider_adc();
     out->bandgap_adc = (uint16_t)rurp_get_bandgap_adc_reading();
-    out->vcc_mv = rurp_read_vcc_mv();
-    out->voltage_mv = rurp_read_voltage_mv();
-    // Recover the divider count from the reading rather than sampling a
-    // third time: a separate sample would be a different measurement taken
-    // at a different instant, which is what makes a pair unusable.
-    uint32_t k = (out->bandgap_adc == 0 ||
-                  !rurp_calibration_is_plausible((uint32_t)cfg->r1, (uint32_t)cfg->r2,
-                                                 cfg->bandgap_mv))
-                     ? 0
-                     : ((uint32_t)cfg->bandgap_mv * ((uint32_t)cfg->r1 + (uint32_t)cfg->r2)) /
-                           (uint32_t)cfg->r2;
-    out->divider_adc =
-        (k == 0) ? 0
-                 : (uint16_t)(((uint32_t)out->voltage_mv * out->bandgap_adc + k / 2) / k);
+    out->vcc_mv = rurp_scale_vcc_mv(out->bandgap_adc, cfg->bandgap_mv);
+    out->voltage_mv = rurp_scale_voltage_mv(out->divider_adc, out->bandgap_adc,
+                                            (uint32_t)cfg->r1, (uint32_t)cfg->r2,
+                                            cfg->bandgap_mv);
 }
 
 /*

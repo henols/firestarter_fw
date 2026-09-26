@@ -289,11 +289,16 @@ extern "C" uint16_t rurp_read_vcc_mv(void)
         reference_reading);
 }
 
+extern "C" uint16_t rurp_read_divider_adc(void)
+{
+    return static_cast<uint16_t>(
+        read_adc_average(RURP_PY32F071_VPP_ADC_CHANNEL, 16U));
+}
+
 extern "C" uint16_t rurp_read_voltage_mv(void)
 {
     const uint32_t vcc_mv = rurp_read_vcc_mv();
-    const uint32_t adc_reading =
-        read_adc_average(RURP_PY32F071_VPP_ADC_CHANNEL, 16U);
+    const uint32_t adc_reading = rurp_read_divider_adc();
     const rurp_configuration_t *const configuration = rurp_get_config();
 
     if (vcc_mv == 0U || adc_reading == 0U || configuration->r2 == 0U)

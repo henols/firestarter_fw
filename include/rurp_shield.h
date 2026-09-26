@@ -153,6 +153,16 @@ extern "C" {
     uint16_t rurp_read_voltage_mv();
 
     long rurp_get_bandgap_adc_reading();
+
+    /*
+     * The raw averaged ADC reading of the VPP divider.
+     *
+     * Exposed so a caller that wants BOTH counts gets them from one sample
+     * each. Reading the divider and then calling rurp_read_voltage_mv() takes
+     * a second divider sample and a second bandgap sample, and the numbers
+     * then describe three different instants.
+     */
+    uint16_t rurp_read_divider_adc();
     uint8_t rurp_user_button_pressed();
 
     rurp_configuration_t* rurp_get_config();
