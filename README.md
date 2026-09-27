@@ -1,4 +1,4 @@
-<p align="left"><img src="images/branding/firestarter_logo_horizontal.png" alt="Firestarter EPROM Programmer" width="500"></p>
+<p align="left"><img src="https://raw.githubusercontent.com/henols/firestarter/main/images/branding/firestarter_logo_horizontal.png" alt="Firestarter EPROM Programmer" width="400"></p>
 
 ---
 # Firestarter Firmware
