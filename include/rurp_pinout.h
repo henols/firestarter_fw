@@ -119,6 +119,41 @@ extern "C" {
 
 #define RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV 17380
 
+/*
+ * The VPP acceptance window, as a fraction of the row's target.
+ *
+ * Both bounds are sized against the MEASURED post-calibration uncertainty of
+ * this instrument (v1.43, three boards, three shield revisions):
+ *
+ *   divider assumed nominal, measured 7.1974 vs 7.1364   0.85 %
+ *   divider spread across boards (rails-off 136..138)    0.73 %
+ *   calibration quantisation, one bandgap count          0.48 %
+ *   operator meter accuracy, 3.5-digit DMM               0.50 %
+ *   bandgap read jitter, +/-1 count                      0.45 %
+ *   divider read quantisation, 1 count of ~341 at 12 V   0.29 %
+ *   ------------------------------------------------------------
+ *   RSS (typical) 1.42 %        linear sum (worst case) 3.30 %
+ *
+ * HIGH is a relative headroom with an absolute floor. It was a flat 500 mV,
+ * which is +4.2 % at a 12000 mV target but only +2.0 % at 25000 -- tighter
+ * than the instrument can resolve, so it could refuse a correctly set rail on
+ * measurement error alone. That affected exactly the 30 database rows at
+ * 18000 mV and above, which is the same census Phase 199 was about. The floor
+ * keeps all 716 rows below 18000 mV on the identical threshold they had.
+ *
+ * LOW stays at 5 %, comfortably outside the worst case, so it raises no false
+ * warning and can now see a real shortfall -- which before calibration it
+ * could not, because the reading itself was inflated by more than the window.
+ *
+ * Neither figure is used for ROUTING. RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV
+ * above decides the route from path capability and never from a reading, per
+ * v1.40 D-22/D-23. These two improve the verification leg only.
+ */
+#define RURP_VPP_HIGH_HEADROOM_PCT 3
+#define RURP_VPP_HIGH_HEADROOM_FLOOR_MV 500
+#define RURP_VPP_LOW_TOLERANCE_PCT 5
+
+
 #define CTRL_ADDRESS_LINE_13          0x20  // reserved — no current call-site
 
 // ---- Section 3: Per-rev variants (CTRL_*_REV1 / CTRL_*_REV2) -----------

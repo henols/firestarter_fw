@@ -22,6 +22,7 @@
 #include "proto_constants.h"
 #include "rurp_pinmap_guard.h"
 #include "rurp_shield.h"
+#include "rurp_voltage_math.h"
 #include "rurp_pinout.h"
 #include "sram.h"
 
@@ -215,6 +216,55 @@ rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* ha
  * operands are uint16_t, so `(x + 50)` promotes to 16-bit and `/1000` compiles
  * to __udivmodhi4. Widening either to uint32_t swaps in the 32-bit
  * __udivmodsi4 and moves the wrap point above 65485 mV. Do not widen them. */
+void mem_util_check_vpp_window(firestarter_handle_t* handle, uint16_t vpp_mv) {
+    uint32_t target = (uint32_t)handle->vpp_mv;
+    uint32_t headroom = target * RURP_VPP_HIGH_HEADROOM_PCT / 100;
+    if (headroom < RURP_VPP_HIGH_HEADROOM_FLOOR_MV) {
+        headroom = RURP_VPP_HIGH_HEADROOM_FLOOR_MV;
+    }
+    if ((uint32_t)vpp_mv > target + headroom) {
+        // HIGH stays a hard error unless FLAG_FORCE: an over-set rail damages
+        // the part, where an under-set one only fails to program.
+        bool force = is_flag_set(FLAG_FORCE);
+        mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv,
+                                force ? MSG_WARN_VPP_HIGH : MSG_ERR_VPP_HIGH,
+                                force ? RESPONSE_CODE_WARNING : RESPONSE_CODE_ERROR);
+    } else if ((uint32_t)vpp_mv < target * (100 - RURP_VPP_LOW_TOLERANCE_PCT) / 100) {
+        mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv, MSG_WARN_VPP_LOW,
+                                RESPONSE_CODE_WARNING);
+    }
+}
+
+void mem_util_warn_if_uncalibrated(firestarter_handle_t* handle) {
+    rurp_configuration_t* cfg = rurp_get_config();
+    if (cfg->bandgap_mv != (uint16_t)RURP_BANDGAP_NOMINAL_MV) {
+        return;
+    }
+    LOG_WARN_ID(MSG_WARN_NOT_CALIBRATED);
+    handle->response_code = RESPONSE_CODE_WARNING;
+}
+
+bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle) {
+    rurp_configuration_t* cfg = rurp_get_config();
+    if (rurp_calibration_is_plausible((uint32_t)cfg->r1, (uint32_t)cfg->r2, cfg->bandgap_mv)) {
+        return false;
+    }
+    uint8_t _cal[8];
+    uint32_t r1 = (uint32_t)cfg->r1;
+    uint32_t r2 = (uint32_t)cfg->r2;
+    _cal[0] = (uint8_t)((r1 >> 24) & 0xFF);
+    _cal[1] = (uint8_t)((r1 >> 16) & 0xFF);
+    _cal[2] = (uint8_t)((r1 >>  8) & 0xFF);
+    _cal[3] = (uint8_t)((r1      ) & 0xFF);
+    _cal[4] = (uint8_t)((r2 >> 24) & 0xFF);
+    _cal[5] = (uint8_t)((r2 >> 16) & 0xFF);
+    _cal[6] = (uint8_t)((r2 >>  8) & 0xFF);
+    _cal[7] = (uint8_t)((r2      ) & 0xFF);
+    LOG_ERROR_ID_BYTES(MSG_ERR_CALIBRATION, _cal, 8);
+    handle->response_code = RESPONSE_CODE_ERROR;
+    return true;
+}
+
 void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
                               uint16_t expected_mv, uint8_t msg_id, uint8_t response_code) {
     uint16_t _v0 = (uint16_t)((measured_mv + 50) / 1000);

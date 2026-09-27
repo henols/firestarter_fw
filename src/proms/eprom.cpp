@@ -535,6 +535,19 @@ void eprom_check_vpp(firestarter_handle_t* handle) {
         return;
     }
 #endif
+    // Pre-flight, before ANY high-voltage bit: an unusable calibration makes
+    // the reading 0 mV, which the low-side test below would report as a
+    // WARNING and let the write proceed against an unmeasured rail.
+    if (mem_util_refuse_bad_calibration(handle)) {
+        return;
+    }
+
+    // The verdict below is only as good as the instrument. On a board that
+    // has never been calibrated the reading carries the full per-die bandgap
+    // spread, up to 10 %, against a window of 3-5 % -- so say so rather than
+    // present the verdict as if it meant something.
+    mem_util_warn_if_uncalibrated(handle);
+
     // Route selection via eprom_hv_route_mask --
     // see eprom_internal_write_execute_body's identical call, above, for
     // the full rationale. Replaces the byte-identical
@@ -544,14 +557,7 @@ void eprom_check_vpp(firestarter_handle_t* handle) {
     delay(100);
     uint16_t vpp_mv = rurp_read_voltage_mv();
     LOG_DEBUG_ID_SUB_U16(DBG_CHECKING_VPP_VOLTAGE, vpp_mv);
-    if (vpp_mv > (uint32_t)handle->vpp_mv + 500) {
-        bool force = is_flag_set(FLAG_FORCE);
-        mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv,
-                                 force ? MSG_WARN_VPP_HIGH : MSG_ERR_VPP_HIGH,
-                                 force ? RESPONSE_CODE_WARNING : RESPONSE_CODE_ERROR);
-    } else if (vpp_mv < (uint32_t)handle->vpp_mv * 95 / 100) {
-        mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv, MSG_WARN_VPP_LOW, RESPONSE_CODE_WARNING);
-    }
+    mem_util_check_vpp_window(handle, vpp_mv);
     handle->firestarter_set_control_register(handle, EPROM_HV_ALL_OFF_MASK, 0);  // shared composite (was REGULATOR | DROP)
 }
 

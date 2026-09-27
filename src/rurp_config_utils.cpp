@@ -7,6 +7,7 @@
 
 #include "rurp_shield.h" // For CONFIG_VERSION, VALUE_R1, VALUE_R2
 #include "rurp_config_storage.h"
+#include "rurp_config_migrate.h"
 
 // Define the global configuration variable here.
 // This is the single definition that the linker will use.
@@ -33,11 +34,7 @@ void rurp_save_config(rurp_configuration_t* config) {
 }
 
 void rurp_validate_config(rurp_configuration_t* config) {
-    if (strcmp(config->version, CONFIG_VERSION) != 0) {
-        strcpy(config->version, CONFIG_VERSION);
-        config->r1 = VALUE_R1;
-        config->r2 = VALUE_R2;
-        config->hardware_revision = 0xFF;
+    if (rurp_config_migrate(config)) {
         rurp_save_config(config);
     }
 }

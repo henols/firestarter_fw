@@ -12,6 +12,19 @@
 #include "rurp_pinout.h"
 #include "version.h"
 
+// Plausible internal-VCC band, in millivolts. USB VBUS is specified
+// 4.75-5.25 V (USB 2.0 section 7.2.2) and the board derives VCC from it
+// through a series switch, so a reported value outside this band is the
+// bandgap constant being wrong, not the supply.
+#define HW_VCC_PLAUSIBLE_MIN_MV 4400
+#define HW_VCC_PLAUSIBLE_MAX_MV 5250
+
+// The VCC warning is emitted ONCE per command, not once per reading. The
+// condition cannot change between samples of one command, and a frame
+// interleaved with every DATA frame is noise the host read loop has to step
+// around on every iteration.
+static bool s_vcc_warned = false;
+
 bool hw_read_voltage(firestarter_handle_t* handle) {
     // State 0: Initialization. This runs only once per command.
     if (handle->operation_state == 0) {
@@ -36,6 +49,7 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
         }
         delay(100);                     // Allow voltage to stabilize.
         rurp_set_communication_mode();  // Switch back to communication mode to send the ready signal.
+        s_vcc_warned = false;           // re-arm the once-per-command VCC warning
         handle->operation_state = 1;    // Transition to the reading state.
 
         // Send a ready signal to the client to prompt it for the first ACK.
@@ -68,6 +82,21 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
     // An ACK was received. Proceed with taking a measurement.
     uint16_t vcc_mv = rurp_read_vcc_mv();
     uint16_t voltage_mv = rurp_read_voltage_mv();
+
+    // An internal VCC outside what the board can physically run at is an
+    // INSTRUMENT fault, not a supply fault. rurp_scale_vcc_mv returns
+    // supply * RURP_BANDGAP_NOMINAL_MV / bandgap_true, so a figure the
+    // hardware cannot reach measures how far this chip's real bandgap is from
+    // the assumed 1100 mV -- and that same error scales every VPP/VPE reading
+    // this command prints. Bounds: USB VBUS is specified 4.75-5.25 V and the
+    // board takes a MOSFET drop off it, so anything outside the band below
+    // cannot be a real supply.
+    if (!s_vcc_warned &&
+        (vcc_mv < HW_VCC_PLAUSIBLE_MIN_MV || vcc_mv > HW_VCC_PLAUSIBLE_MAX_MV)) {
+        s_vcc_warned = true;
+        LOG_WARN_ID_U16(MSG_WARN_VCC_IMPLAUSIBLE, vcc_mv);
+        handle->response_code = RESPONSE_CODE_WARNING;
+    }
 
     // Compute pre-rounded integer/decimal tenths for each voltage (catalog expects 4 x u16).
     uint16_t v_int  = (uint16_t)((voltage_mv + 50) / 1000);
@@ -116,11 +145,13 @@ bool hw_get_version(firestarter_handle_t* handle) {
 bool hw_get_config(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_CONFIG);
     rurp_configuration_t* rurp_config = rurp_get_config();
-    // P-03: pack u32 r1 + u32 r2 + u8 override (0xFF = no override) into 9 bytes.
+    // u32 r1 + u32 r2 + u8 override (0xFF = no override) + u16 bandgap_mv = 11 bytes.
+    // Widening a fixed-length frame: an older host rejects it on length rather
+    // than misreading it, and firmware ships before the host that needs it.
     uint8_t override_byte = (rurp_config->hardware_revision < 0xFF)
                             ? (uint8_t)rurp_config->hardware_revision
                             : 0xFF;
-    uint8_t _cfg[9];
+    uint8_t _cfg[11];
     _cfg[0] = (uint8_t)((rurp_config->r1 >> 24) & 0xFF);
     _cfg[1] = (uint8_t)((rurp_config->r1 >> 16) & 0xFF);
     _cfg[2] = (uint8_t)((rurp_config->r1 >>  8) & 0xFF);
@@ -130,7 +161,9 @@ bool hw_get_config(firestarter_handle_t* handle) {
     _cfg[6] = (uint8_t)((rurp_config->r2 >>  8) & 0xFF);
     _cfg[7] = (uint8_t)((rurp_config->r2      ) & 0xFF);
     _cfg[8] = override_byte;
-    LOG_ID_BYTES(MSG_OK_CFG, _cfg, 9);
+    _cfg[9] = (uint8_t)((rurp_config->bandgap_mv >> 8) & 0xFF);
+    _cfg[10] = (uint8_t)((rurp_config->bandgap_mv) & 0xFF);
+    LOG_ID_BYTES(MSG_OK_CFG, _cfg, 11);
     return true;
 }
 
