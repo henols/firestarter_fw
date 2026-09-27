@@ -380,8 +380,10 @@ the defines, update that wiki page in the same change. Nothing checks this autom
 
 ### PY32F071 Flash-Path and PCB Record
 
-`platform/py32f071/FLASH-PATH-AND-PCB.md` copies five sections of the meta-repository record
-`.planning/milestones/v1.23-FLASH-PATH-DECISION.md`. A marker names each shared section:
+`platform/py32f071/FLASH-PATH-AND-PCB.md` copies five sections of the authoritative record
+`platform/py32f071/v1.23-FLASH-PATH-DECISION.md`. That record was vendored from the meta
+repository on 2026-09-27, when its `.planning/` tree was retired; both copies now live in this
+repository, so the sync gate runs in CI instead of skipping. A marker names each shared section:
 
 - `[SHARED:S1]` — the three-tier flash path.
 - `[SHARED:S2]` — the PCB checklist.
