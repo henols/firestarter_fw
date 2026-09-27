@@ -67,12 +67,15 @@ void rurp_detect_hardware_revision() {
     uint16_t adc_a3 = analog_read_avg8(PIN_HW_REVISION_DETECT_ADC);
 
     if (adc_a3 < ADC_BAND_R41_4K7_HIGH) {
-        // Rev 2.0/2.1/2.2 with R41=4k7 — reports as REVISION_2_0 (broad bucket
-        // operator distinguishes 2.1/2.2 via EEPROM hw_revision
-        // override if needed).
+        // Low band: R41 to GND only. Stock Rev 2.0, 2.1, 2.2 AND 2.3 all
+        // read here, because A3 is INPUT (high-Z) and R41's value no longer
+        // sets the level. All report REVISION_2_0. The operator sets the
+        // real revision with the EEPROM hw_revision override.
         revision = REVISION_2_0;
     } else if (adc_a3 >= ADC_BAND_R41_10K_LOW && adc_a3 < ADC_BAND_R41_10K_HIGH) {
-        // Rev 2.3 with R41=10k.
+        // Mid band: an external pull-up to +5 V on the A3 net. Only a
+        // reworked board reads here. A stock Rev 2.3 does not (see the
+        // band notes in rurp_pinout.h).
         revision = REVISION_2_3;
     } else if (adc_a3 >= ADC_BAND_R41_10K_HIGH) {
         // High band — no R41 (pre-detect-resistor era). Disambiguate Rev 0 vs
