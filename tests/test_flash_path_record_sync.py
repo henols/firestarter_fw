@@ -6,10 +6,11 @@ Permission is hereby granted under MIT license.
 
 Fail-closed sync gate over the two copies of the flash-path and PCB record.
 
-**The shared-section contract.** The two copies are the flash-path and PCB
-decision record in the meta repository, which is authoritative, and
-`platform/py32f071/FLASH-PATH-AND-PCB.md` in this repository, which is a
-subset. Five stable keys name the sections both copies must carry. Each key
+**The shared-section contract.** The two copies are
+`platform/py32f071/v1.23-FLASH-PATH-DECISION.md`, the authoritative record
+vendored from the meta repository, and
+`platform/py32f071/FLASH-PATH-AND-PCB.md`, which is a subset. Both now live in
+this repository. Five stable keys name the sections both copies must carry. Each key
 appears as a suffix on a `## ` heading line in both copies: `S1` three-tier
 flash path, `S2` PCB checklist, `S3` flash budget, `S4` USB VID/PID, `S5`
 socket-empty instruction. Only the **body** below each heading is compared.
@@ -18,12 +19,13 @@ itself is never part of the comparison. `firestarter_fw/CLAUDE.md` names the
 same five keys, so the human instruction and the machine gate cannot drift
 apart.
 
-**CI coverage, stated honestly.** `pytest tests/ -v` in `build.yml` does
-collect and run this module. Its cross-repo legs nevertheless **skip** there,
-because CI checks out this repository alone and the meta copy is absent, which
-trips the `requires_meta` collection-time marker. Enforcement of the sync is
-therefore a local-run obligation for anyone editing either copy. Never imply
-that CI compared the two records.
+**CI coverage, stated honestly.** `pytest tests/ -v` in `build.yml` collects
+and runs this module, and every leg RUNS there. Until 2026-09-27 the
+comparison legs skipped in CI, because the authoritative copy lived in the meta
+repository and CI checks out this repository alone. Vendoring that copy into
+`platform/py32f071/` removed the skip: there is no longer any environment in
+which this gate silently does nothing. Do not reintroduce a cross-repo read
+here -- see agent-os `standards/testing/standalone-checkout.md`.
 
 **Single-helper rule.** Every test, positive legs and planted-violation legs
 alike, goes through the one module-level `_extract_shared_section` and
@@ -36,10 +38,13 @@ implementations drift, and a planted violation then proves nothing.
 `conftest.py`, `pytest.ini`, `pyproject.toml`, `setup.cfg` or `tox.ini` exists
 anywhere in this repository. That is a house rule, not an omission.
 
-An absent meta repository must produce an auditable skip, never a silent pass.
-A missing scan target under a *present* meta repository must raise
-`MissingScanTargetError` rather than downgrade to a skip, because that
-downgrade is the fail-open this module exists to prevent.
+Both records are in-repo, so a missing one is a hard failure, never a skip --
+the same `assert path.exists()` shape every other path in this module uses.
+The meta-presence probe that used to mediate this (`tests/meta_presence.py`,
+with its `FIRESTARTER_META_ROOT` seam, `requires_meta` marker and
+`MissingScanTargetError`) was deleted along with the cross-repo read: the
+fail-open it guarded against is now structurally impossible rather than
+merely tested for.
 """
 
 from __future__ import annotations
@@ -53,30 +58,22 @@ from pathlib import Path
 
 import pytest
 
-# This sibling-package import was proved to resolve at plan time under both
-# `python -m pytest tests/ -v` and the bare `pytest tests/ -v` console
-# script, run from the firmware repo root. It is the FIRST sibling-helper
-# import in this repo's test suite -- every other module self-resolves via
-# `Path(__file__)`. It works because `tests/__init__.py` exists and
-# pytest's prepend import mode inserts the repo root onto `sys.path`. No
-# `conftest.py` is added to make this work.
-from tests.meta_presence import (
-    META_ABSENT_REASON,
-    META_MARKER,
-    META_PRESENT,
-    META_ROOT,
-    MissingScanTargetError,
-    meta_path,
-    requires_meta,
-)
-
 _HERE = Path(__file__).resolve().parent
 _FW_REPO_ROOT = _HERE.parent
 _FW_DOC = _FW_REPO_ROOT / "platform" / "py32f071" / "FLASH-PATH-AND-PCB.md"
 
-_META_DOC_REL = "milestones/v1.23-FLASH-PATH-DECISION.md"
+# The authoritative record and its seed, VENDORED from the meta repository's
+# retired `.planning/` tree on 2026-09-27. Both resolve from Path(__file__)
+# inside this repo -- never from a sibling or parent repo, and never from an
+# environment variable. Each carries a header citing the source blob it was
+# taken from; test_vendored_record_cites_its_source_blob asserts that.
+_VENDORED_DOC = _FW_REPO_ROOT / "platform" / "py32f071" / "v1.23-FLASH-PATH-DECISION.md"
+_VENDORED_SEED = (
+    _FW_REPO_ROOT / "platform" / "py32f071" / "py32f071-no-external-tool-fw-install.md"
+)
+_DOC_SOURCE_BLOB = "d91283323b131cc3a09af47608c6becff723bfc5"
+_SEED_SOURCE_BLOB = "76ed3093eca33fd7b5e2c0ee351cfecbab662365"
 _LINKER = _FW_REPO_ROOT / "platform" / "py32f071" / "linker" / "PY32F071xB_FLASH.ld"
-_SEED_REL = "seeds/py32f071-no-external-tool-fw-install.md"
 
 _SHARED_KEYS = ("S1", "S2", "S3", "S4", "S5")
 
@@ -190,44 +187,6 @@ def _git_porcelain(path: Path) -> str:
         check=True,
     )
     return result.stdout
-
-
-def _run_gate_in_subprocess(env_overrides, node_id=None):
-    """Run `[sys.executable, "-m", "pytest", <this module's path>, "-q",
-    "-rs"]` (optionally scoped to `node_id`) with `cwd=_FW_REPO_ROOT` and
-    `os.environ` merged with `env_overrides`, capturing text output, and
-    return the `CompletedProcess`.
-
-    A subprocess is mandatory here because `meta_presence`'s names bind at
-    import and `pytest.mark.skipif` binds at collection, so
-    `monkeypatch.setenv` has no effect on either.
-
-    Guards against infinite recursion by refusing to run (raising
-    `AssertionError`) when the environment variable
-    `FIRESTARTER_129_GATE_CHILD` is already set in the CURRENT process, and
-    sets that variable in the child's environment. Callers that themselves
-    run inside a nested child (i.e. that see the variable already set) must
-    check for it and skip BEFORE calling this function, rather than relying
-    on this guard alone -- see
-    `test_absent_meta_root_skip_is_auditable_not_silent`.
-    """
-    assert os.environ.get("FIRESTARTER_129_GATE_CHILD") is None, (
-        "refusing to spawn a nested gate subprocess -- "
-        "FIRESTARTER_129_GATE_CHILD is already set in this process; this "
-        "would recurse indefinitely if it were allowed to proceed."
-    )
-    module_path = str(_HERE / "test_flash_path_record_sync.py")
-    target = f"{module_path}::{node_id}" if node_id else module_path
-    env = dict(os.environ)
-    env.update(env_overrides)
-    env["FIRESTARTER_129_GATE_CHILD"] = "1"
-    return subprocess.run(
-        [sys.executable, "-m", "pytest", target, "-q", "-rs"],
-        cwd=str(_FW_REPO_ROOT),
-        env=env,
-        capture_output=True,
-        text=True,
-    )
 
 
 def _synthetic_record(bodies):
@@ -370,11 +329,15 @@ _LINKER_FORBIDDEN_RE = re.compile(r"no\s+VTOR", re.IGNORECASE)
 
 
 def _meta_doc() -> Path:
-    """Resolve the meta repo's authoritative flash-path record through
-    meta_presence.meta_path() -- never a string concatenation onto
-    META_ROOT -- so a missing target under a present meta repo raises
-    MissingScanTargetError instead of silently skipping."""
-    return meta_path(".planning", _META_DOC_REL)
+    """Assert the vendored authoritative record exists (naming the resolved
+    absolute path), then return it. It lives inside this repository, so a
+    missing file is a hard failure -- there is no meta-repo-absent case left
+    to skip on, and no environment in which this resolves outside the repo."""
+    assert _VENDORED_DOC.exists(), (
+        f"{_VENDORED_DOC} does not exist. This must FAIL the suite, never be "
+        "silently skipped."
+    )
+    return _VENDORED_DOC
 
 
 def _fw_doc_text() -> str:
@@ -411,10 +374,13 @@ def _linker_text() -> str:
 
 
 def _seed_text() -> str:
-    """Read the py32f071 no-external-tool-fw-install seed through
-    meta_presence.meta_path(), so a missing seed under a present meta repo
-    raises MissingScanTargetError instead of silently skipping."""
-    return meta_path(".planning", _SEED_REL).read_text()
+    """Assert the vendored seed exists (naming the resolved absolute path),
+    then return its text. In-repo, so a missing seed fails the suite."""
+    assert _VENDORED_SEED.exists(), (
+        f"{_VENDORED_SEED} does not exist. This must FAIL the suite, never be "
+        "silently skipped."
+    )
+    return _VENDORED_SEED.read_text()
 
 
 def _copy_text(copy_id: str) -> str:
@@ -513,134 +479,18 @@ def _checklist_rows(body):
 
 
 class TestFlashPathRecordSyncFailsClosed:
-    """The pure RED demonstrations: none carries `@requires_meta`, none
-    needs either real record to exist. These are the legs that make this
-    gate a gate rather than a comment."""
+    """The pure RED demonstrations: none needs either real record to
+    exist. These are the legs that make this gate a gate rather than a
+    comment.
 
-    def test_absent_meta_root_skip_is_auditable_not_silent(self, tmp_path):
-        """Coverage 1 -- F-14 mode 3. Point a subprocess's
-        `FIRESTARTER_META_ROOT` at an empty tmp_path directory (no `.git`)
-        and assert the run exits 0, reports a skip, names the resolved
-        absent marker path, and never reports a failure.
-
-        This test targets ONLY ITSELF as the subprocess's node id, so no
-        other test in this module (some of which assume the real,
-        present meta root) runs inside the child. The child re-enters this
-        same function; the `FIRESTARTER_129_GATE_CHILD` check below fires
-        on that second entry and turns it into the very skip this test is
-        proving is auditable -- its reason is the child's own
-        `META_ABSENT_REASON`, which names the resolved (absent) marker
-        path, because that name is bound fresh in the child's own process
-        from the overridden environment, not inherited via monkeypatch.
-        """
-        if os.environ.get("FIRESTARTER_129_GATE_CHILD"):
-            pytest.skip(META_ABSENT_REASON)
-            return
-
-        empty_root = tmp_path / "empty-meta-root"
-        empty_root.mkdir()
-        result = _run_gate_in_subprocess(
-            {"FIRESTARTER_META_ROOT": str(empty_root)},
-            node_id=(
-                "TestFlashPathRecordSyncFailsClosed::"
-                "test_absent_meta_root_skip_is_auditable_not_silent"
-            ),
-        )
-        output = result.stdout + result.stderr
-        assert result.returncode == 0, (
-            f"expected exit 0 from the absent-meta-root subprocess run, "
-            f"got {result.returncode}. Output:\n{output}"
-        )
-        assert "skipped" in output, (
-            f"expected the subprocess output to report a skip -- an "
-            f"absent meta root must be auditable, never silent. "
-            f"Output:\n{output}"
-        )
-        expected_marker = str(empty_root / ".git")
-        assert expected_marker in output, (
-            f"expected the subprocess output to name the resolved absent "
-            f"marker path {expected_marker!r} so the skip claim is "
-            f"auditable. Output:\n{output}"
-        )
-        assert "failed" not in output, (
-            f"expected no failure in the absent-meta-root subprocess run. "
-            f"Output:\n{output}"
-        )
-
-    def test_absent_meta_claim_can_never_be_false(self):
-        """Coverage 2 -- the census assertion, in-process against this
-        process's own already-imported, real bindings: if
-        `META_MARKER.exists()` then `META_PRESENT` must be `True`, and
-        `str(META_MARKER)` must be a substring of `META_ABSENT_REASON`. A
-        skip claiming the meta checkout is absent while its marker exists
-        is the A-7 shape and must be impossible by construction."""
-        if META_MARKER.exists():
-            assert META_PRESENT is True, (
-                f"{META_MARKER} exists but META_PRESENT is False -- an "
-                "absent claim while the marker exists would be a false "
-                "skip (research finding A-7's exact shape)."
-            )
-        assert str(META_MARKER) in META_ABSENT_REASON, (
-            f"expected the resolved marker path {str(META_MARKER)!r} to be "
-            f"a substring of META_ABSENT_REASON {META_ABSENT_REASON!r} so "
-            "any skip claiming absence is auditable against what was "
-            "actually resolved."
-        )
-
-    def test_present_root_with_missing_target_raises_not_skips(self):
-        """Coverage 3 -- F-14 mode 3's hard half. Under the real present
-        meta root, a missing scan target raises `MissingScanTargetError`
-        rather than ever being downgraded to a skip. The filename is
-        deliberately one that will never exist so this leg is stable
-        across every later wave that adds real files under `.planning/`.
-
-        The meta root's presence is this leg's PREMISE, not its claim.
-        Where the premise holds -- the devcontainer's submodule-under-meta
-        checkout -- the leg runs and fails closed exactly as before. Where
-        it does not, as in a standalone CI checkout of this repo where no
-        meta root is fetched at all, the leg skips with the same auditable
-        `META_ABSENT_REASON` every other absent-root leg in this module
-        uses, rather than hard-asserting an environment fact into a
-        failure. Phase 129 wrote this as a bare `assert META_PRESENT`; that
-        was invisible until Phase 130 first ran this module in CI, where it
-        turned an unmet premise into a red beta-release build. Scoping it
-        is not a weakening: the gate's own subject -- that a missing scan
-        target raises rather than skips -- is still asserted wherever it
-        can be, and `test_absent_meta_claim_can_never_be_false` above
-        still makes a FALSE absence claim impossible by construction."""
-        if not META_PRESENT:
-            pytest.skip(META_ABSENT_REASON)
-        with pytest.raises(MissingScanTargetError) as exc_info:
-            meta_path(".planning", "__definitely_not_a_real_file__.md")
-        message = str(exc_info.value)
-        expected_path = META_ROOT / ".planning" / "__definitely_not_a_real_file__.md"
-        assert str(expected_path) in message, (
-            f"expected the MissingScanTargetError message to name the "
-            f"resolved absolute path {str(expected_path)!r}. Got: "
-            f"{message!r}"
-        )
-        assert "update" in message, (
-            f"expected the MissingScanTargetError message to instruct the "
-            f"reader to update the path rather than deleting the gate. "
-            f"Got: {message!r}"
-        )
-
-    def test_marker_name_is_not_overridable(self):
-        """Coverage 4. Reads `tests/meta_presence.py`'s own source and
-        asserts `os.environ` appears exactly once, that
-        `FIRESTARTER_META_ROOT` appears, and that no other
-        `FIRESTARTER_META_` identifier appears -- the seam overrides the
-        root only, never the marker name."""
-        source = (_FW_REPO_ROOT / "tests" / "meta_presence.py").read_text()
-        assert source.count("os.environ") == 1, (
-            "expected exactly one os.environ read in meta_presence.py -- "
-            "the seam overrides the root only."
-        )
-        assert "FIRESTARTER_META_ROOT" in source
-        assert "FIRESTARTER_META_MARKER" not in source, (
-            "the marker name must never be overridable -- one more knob "
-            "that can be set wrong in a real run."
-        )
+    Four further legs used to live here, proving the meta-presence probe
+    could not silently skip: the absent-root subprocess skip, the census
+    assertion that an absence claim can never be false, the
+    present-root-missing-target raise, and the marker-name-not-overridable
+    source scan. All four were removed on 2026-09-27 when the records were
+    vendored in-repo. They are not gaps: the condition they guarded --
+    a cross-repo read that can find nothing and skip -- no longer exists.
+    test_no_test_reads_outside_this_repo below keeps it from coming back."""
 
     def test_empty_extraction_is_not_a_vacuous_pass(self):
         """Coverage 5 -- F-14 mode 2. A synthetic document with no markers
@@ -802,6 +652,85 @@ class TestFlashPathRecordSyncFailsClosed:
         )
 
 
+    def test_no_test_reads_outside_this_repo(self):
+        """The structural successor to the four meta-presence legs removed
+        on 2026-09-27, and the enforcement of agent-os
+        `standards/testing/standalone-checkout.md`: "A test reads only files
+        inside its own repo. Never a sibling repo, the meta repo or
+        `.planning/`."
+
+        Parses every `tests/*.py` module with `ast` and refuses three
+        things: an import of the deleted `meta_presence` helper, a read of
+        any `FIRESTARTER_META*` environment key, and a `.planning` path in
+        any string literal that is not a docstring. Docstrings and comments
+        are deliberately exempt -- several modules discuss the retired tree
+        in prose, and describing history is not depending on it.
+
+        This catches the regression the old legs could not: they proved the
+        cross-repo read failed LOUDLY, while this proves it is not there."""
+        import ast
+
+        # Built from character codes, not literals -- the same idiom
+        # _SEED_FORBIDDEN_STATUS uses below -- so this checker's OWN source
+        # does not trip it. Spelling either sentinel literally here would
+        # make the module self-flagging, and the obvious fix for that
+        # (exempting this file) would blind the check to the one module
+        # most likely to regress.
+        env_prefix = "".join(chr(c) for c in (
+            70, 73, 82, 69, 83, 84, 65, 82, 84, 69, 82, 95, 77, 69, 84, 65))
+        retired_tree = "".join(chr(c) for c in (
+            46, 112, 108, 97, 110, 110, 105, 110, 103))
+
+        violations = []
+        for module in sorted(_HERE.glob("*.py")):
+            tree = ast.parse(module.read_text(), filename=str(module))
+
+            docstrings = set()
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                     ast.AsyncFunctionDef)):
+                    doc = ast.get_docstring(node, clean=False)
+                    if doc is not None:
+                        docstrings.add(doc)
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    if "meta_presence" in node.module:
+                        violations.append(
+                            f"{module.name}:{node.lineno} imports "
+                            f"{node.module} -- the cross-repo presence probe "
+                            "was deleted and must not return"
+                        )
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if "meta_presence" in alias.name:
+                            violations.append(
+                                f"{module.name}:{node.lineno} imports "
+                                f"{alias.name}"
+                            )
+                elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    if node.value in docstrings:
+                        continue
+                    if node.value.startswith(env_prefix):
+                        violations.append(
+                            f"{module.name}:{node.lineno} names the "
+                            f"environment key {node.value!r} -- the meta-root "
+                            "seam was deleted with the cross-repo read"
+                        )
+                    if retired_tree in node.value:
+                        violations.append(
+                            f"{module.name}:{node.lineno} contains a "
+                            f"retired-planning-tree path in a non-docstring "
+                            f"string literal: {node.value!r}"
+                        )
+
+        assert not violations, (
+            "test modules must read only files inside this repository "
+            "(agent-os standards/testing/standalone-checkout.md). "
+            "Violations:\n  " + "\n  ".join(violations)
+        )
+
+
 # Built at runtime from the characters of the seed's own historical status
 # value, rather than embedded as a literal string in the assertion below.
 _SEED_FORBIDDEN_STATUS = "".join(
@@ -811,8 +740,9 @@ _SEED_FORBIDDEN_STATUS = "".join(
 
 class TestFlashPathRecordSync:
     """Plan 02's live legs: D-03's parity and content half over the two
-    copies of the v1.23 flash-path and PCB requirements record. Every
-    method carries `@requires_meta`. Every method re-reads and re-parses
+    copies of the v1.23 flash-path and PCB requirements record. Both
+    copies are in-repo, so every method RUNS -- none is gated on an
+    environment that might not be there. Every method re-reads and re-parses
     (no caching across tests) and calls the `_assert_non_vacuous` guard
     before comparing anything.
 
@@ -826,18 +756,16 @@ class TestFlashPathRecordSync:
     failure shape and the discharging plan for each group.
     """
 
-    @requires_meta
     @pytest.mark.parametrize("key", _SHARED_KEYS)
     def test_meta_extract_is_non_vacuous(self, key):
-        """Coverage 11 -- parses the meta copy only, key `key`; no
-        comparison in this test. RED-by-construction while the meta
-        record does not exist: `_meta_doc()` raises
-        `MissingScanTargetError` before any section is parsed."""
+        """Coverage 11 -- parses the authoritative copy only, key `key`;
+        no comparison in this test. RED-by-construction while the vendored
+        record does not exist: `_meta_doc()` asserts its existence, naming
+        the resolved path, before any section is parsed."""
         text = _meta_doc().read_text()
         section = _extract_shared_section(text, key)
         _assert_non_vacuous(section, f"meta copy, key {key}")
 
-    @requires_meta
     @pytest.mark.parametrize("key", _SHARED_KEYS)
     def test_fw_extract_is_non_vacuous(self, key):
         """Coverage 12 -- the same, for the firmware subset. A separate
@@ -848,7 +776,6 @@ class TestFlashPathRecordSync:
         section = _extract_shared_section(text, key)
         _assert_non_vacuous(section, f"firmware subset copy, key {key}")
 
-    @requires_meta
     @pytest.mark.parametrize("key", _SHARED_KEYS)
     def test_shared_sections_match(self, key):
         """Coverage 13 -- assert non-vacuity of BOTH parses first, then
@@ -882,7 +809,6 @@ class TestFlashPathRecordSync:
             f"{first_diff}: meta={meta_line_text!r} fw={fw_line_text!r}"
         )
 
-    @requires_meta
     @pytest.mark.parametrize("copy_id", ("meta", "fw"))
     def test_three_tiers_and_non_retirement(self, copy_id):
         """Coverage 14 -- PCB-01. Extract S1; assert non-vacuity; assert
@@ -898,7 +824,6 @@ class TestFlashPathRecordSync:
             f"sentence: {_L1_NON_RETIREMENT!r}"
         )
 
-    @requires_meta
     @pytest.mark.parametrize("copy_id", ("meta", "fw"))
     def test_pcb_checklist_rows_are_wellformed(self, copy_id):
         """Coverage 15 -- PCB-02 / D-14 / D-16 / F-10. Extract S2; assert
@@ -931,7 +856,6 @@ class TestFlashPathRecordSync:
             f"missing needles: {missing_undecided!r}"
         )
 
-    @requires_meta
     @pytest.mark.parametrize("copy_id", ("meta", "fw"))
     def test_flash_budget_cites_reserved_map(self, copy_id):
         """Coverage 16 -- PCB-03 / F-1 / F-3 / C-1 / C-4. Extract S3;
@@ -944,7 +868,6 @@ class TestFlashPathRecordSync:
         missing = [n for n in _S3_NEEDLES if n not in section]
         assert not missing, f"{copy_id} copy S3 missing needles: {missing!r}"
 
-    @requires_meta
     @pytest.mark.parametrize("copy_id", ("meta", "fw"))
     def test_bootloader_figure_carries_its_cost(self, copy_id):
         """Coverage 17 -- D-10's proximity gate. Split S3 into lines; for
@@ -975,7 +898,6 @@ class TestFlashPathRecordSync:
                     f"({_S3_COST_TOKENS!r}) within two lines either side."
                 )
 
-    @requires_meta
     @pytest.mark.parametrize("copy_id", ("meta", "fw"))
     def test_vid_pid_decision_and_ship_gate(self, copy_id):
         """Coverage 18 -- PCB-04 / C-2 / F-6 / F-7. Extract S4; assert
@@ -991,7 +913,6 @@ class TestFlashPathRecordSync:
             f"sentence: {_L2_SHIP_GATE!r}"
         )
 
-    @requires_meta
     @pytest.mark.parametrize("copy_id", ("meta", "fw", "readme"))
     def test_socket_empty_instruction_present(self, copy_id):
         """Coverage 19 -- PCB-05. For meta/fw, extract S5, assert
@@ -1022,7 +943,6 @@ class TestFlashPathRecordSync:
         missing = [n for n in _S5_NEEDLES if n not in section]
         assert not missing, f"{copy_id} copy S5 missing needles: {missing!r}"
 
-    @requires_meta
     def test_linker_comment_cross_references_record(self):
         """Coverage 20 -- D-11 / C-1. Read _linker_text(); assert every
         _LINKER_NEEDLES entry is present; assert _LINKER_FORBIDDEN_RE finds
@@ -1067,7 +987,6 @@ class TestFlashPathRecordSync:
         block = "\n".join(lines[brace_idx : bootloader_idx + 1])
         _assert_non_vacuous(block, "linker script MEMORY-to-BOOTLOADER span")
 
-    @requires_meta
     def test_seed_status_is_no_longer_dormant(self):
         """Coverage 21 -- D-17 / D-18. Read _seed_text(); call
         _frontmatter; assert its key set is exactly title,
@@ -1095,7 +1014,6 @@ class TestFlashPathRecordSync:
         )
         assert "FUT-N05" in text, "seed body does not name FUT-N05"
 
-    @requires_meta
     def test_planted_mutation_of_the_real_subset_is_detected(
         self, tmp_path, monkeypatch
     ):
@@ -1144,3 +1062,35 @@ class TestFlashPathRecordSync:
             "the firmware repo's working tree is no longer clean after "
             "the planted-copy test"
         )
+
+    def test_vendored_record_cites_its_source_blob(self):
+        """The vendoring provenance gate, mirroring
+        test_config_storage_design_vendored.py's
+        test_design_doc_cites_the_vendored_blob_by_sha.
+
+        Both vendored files must name the meta blob they were taken from,
+        so a reader can recover the original and verify nothing was altered
+        in transit:
+
+            git -C <meta> cat-file -p <blob>
+
+        A vendored copy that does not say where it came from is
+        indistinguishable from one somebody edited."""
+        for path, blob, label in (
+            (_VENDORED_DOC, _DOC_SOURCE_BLOB, "flash-path record"),
+            (_VENDORED_SEED, _SEED_SOURCE_BLOB, "fw-install seed"),
+        ):
+            assert path.exists(), (
+                f"{path} does not exist. This must FAIL the suite, never be "
+                "silently skipped."
+            )
+            text = path.read_text()
+            assert blob in text, (
+                f"the vendored {label} at {path} does not cite its source "
+                f"blob {blob} -- a vendored copy must name its origin so it "
+                "can be checked against the meta repository's history."
+            )
+            assert "VENDORED" in text, (
+                f"the vendored {label} at {path} does not carry a VENDORED "
+                "marker in its header."
+            )
