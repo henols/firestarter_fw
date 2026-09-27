@@ -92,14 +92,16 @@ Coverage:
      states that giving the seam a size moves the application origin and is
      a migration rather than a resize.
   10. test_the_linker_script_cites_the_geometry_record -- the leading
-      comment names CONFIG-STORAGE.md and the RM identifiers.
+      comment names DESIGN.md and the RM identifiers.
   11. test_no_pre_pv32f071_page_or_sector_figure_appears_near_a_config_address
       -- Pitfall 1's warning signs (128, 0x80, 2048, 4096) are absent from
       the MEMORY block and the config-symbol region, each named with the
       wrong source it corresponds to.
-  12. test_host_contract_asymmetry_is_recorded -- CONFIG-STORAGE.md records
-      FLASH_BASE 0x08000000, the 131072 envelope, and the correct-not-drift
-      statement (C-10 / D-12).
+  12. test_host_contract_is_recorded -- DESIGN.md's "Host side" paragraph
+      states that the host DFU client accepts an image from 0x08000000 up to
+      the linker's ORIGIN(CONFIG), so an install cannot reach the config
+      region. The previous form of this test pinned a 131072-byte host
+      envelope; the host now bounds on the application region instead.
   13. test_helper_reports_violations_on_planted_copies -- the RED
       demonstration: six planted mutated copies in tmp_path, each fed to the
       same module-level helpers, each producing a non-empty violation list.
@@ -143,7 +145,7 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent
 _LINKER_PATH = _REPO_ROOT / "platform" / "py32f071" / "linker" / "PY32F071xB_FLASH.ld"
-_CONFIG_STORAGE_MD = _REPO_ROOT / "platform" / "py32f071" / "CONFIG-STORAGE.md"
+_DESIGN_MD = _REPO_ROOT / "platform" / "py32f071" / "DESIGN.md"
 
 _PY32_SRC_DIR = _REPO_ROOT / "platform" / "py32f071" / "src"
 _MANIFEST_PATH = _REPO_ROOT / "platform" / "py32f071" / "CMakeLists.txt"
@@ -407,8 +409,8 @@ def _violations_bootloader_migration_comment(text):
 
 def _violations_cites_geometry_record(text):
     v = []
-    if "CONFIG-STORAGE.md" not in text:
-        v.append("linker script does not cite platform/py32f071/CONFIG-STORAGE.md")
+    if "DESIGN.md" not in text:
+        v.append("linker script does not cite platform/py32f071/DESIGN.md")
     if "V0.2" not in text:
         v.append("linker script does not cite the reference-manual version 'V0.2'")
     return v
@@ -546,19 +548,56 @@ def test_no_pre_pv32f071_page_or_sector_figure_appears_near_a_config_address():
     assert not violations, violations
 
 
-def test_host_contract_asymmetry_is_recorded():
-    """Coverage 12 -- D-12(b) / C-10: CONFIG-STORAGE.md records FLASH_BASE
-    0x08000000, the physical 131072 envelope, and the statement that the
-    120K-vs-128K asymmetry is correct rather than drift."""
-    text = _CONFIG_STORAGE_MD.read_text()
-    assert "FLASH_BASE" in text, f"expected FLASH_BASE cited in {_CONFIG_STORAGE_MD}"
-    assert "0x08000000" in text, f"expected 0x08000000 cited in {_CONFIG_STORAGE_MD}"
-    assert "131072" in text, f"expected the physical 131072 envelope cited in {_CONFIG_STORAGE_MD}"
-    assert re.search(r"correct,\s+not\s+drift", text), (
-        f"expected the correct-not-drift statement in {_CONFIG_STORAGE_MD} -- "
-        f"the 120K-vs-128K asymmetry must be recorded as intentional, never "
-        f"as an unexplained mismatch"
-    )
+def _host_side_paragraph(design_text):
+    """Return the '**Host side.**' paragraph of DESIGN.md, or None."""
+    m = re.search(r"\*\*Host side\.\*\*(.*?)(?:\n\n|\Z)", design_text, re.DOTALL)
+    return m.group(1) if m else None
+
+
+def _violations_host_contract(design_text, regions):
+    """The host must refuse an image that reaches the config region. The
+    record states the accepted range; its upper end must be ORIGIN(CONFIG)
+    from the linker script, and its lower end ORIGIN(FLASH)."""
+    para = _host_side_paragraph(design_text)
+    if para is None:
+        return ["DESIGN.md has no '**Host side.**' paragraph"]
+    m = re.search(r"from\s+`(0x[0-9A-Fa-f]+)`\s+to\s+`(0x[0-9A-Fa-f]+)`", para)
+    if not m:
+        return ["the host-side paragraph states no 'from `0x...` to `0x...`' range"]
+    lo, hi = int(m.group(1), 16), int(m.group(2), 16)
+    v = []
+    if "FLASH" not in regions or "CONFIG" not in regions:
+        return ["cannot check the host range: FLASH or CONFIG region missing"]
+    if lo != regions["FLASH"][0]:
+        v.append(f"host range starts at {lo:#x}, ORIGIN(FLASH) is {regions['FLASH'][0]:#x}")
+    if hi != regions["CONFIG"][0]:
+        v.append(f"host range ends at {hi:#x}, ORIGIN(CONFIG) is {regions['CONFIG'][0]:#x}")
+    if "ORIGIN(CONFIG)" not in para:
+        v.append("the host-side paragraph does not name ORIGIN(CONFIG)")
+    return v
+
+
+def test_host_contract_is_recorded():
+    """Coverage 12."""
+    _, regions, _ = _real_parsed()
+    violations = _violations_host_contract(_DESIGN_MD.read_text(), regions)
+    assert not violations, violations
+
+
+def test_host_contract_helper_reports_violations():
+    """Coverage 12, violating inputs: a range that reaches past
+    ORIGIN(CONFIG), a missing range and a missing paragraph each fail."""
+    _, regions, _ = _real_parsed()
+    real = _DESIGN_MD.read_text()
+    assert "`0x0801E000`, which is `ORIGIN(CONFIG)`" in real
+    past = real.replace("`0x0801E000`, which is `ORIGIN(CONFIG)`",
+                        "`0x08020000`, which is `ORIGIN(CONFIG)`")
+    assert any("ends at" in x for x in _violations_host_contract(past, regions))
+    no_range = real.replace("from\n`0x08000000` to", "between\n`0x08000000` and")
+    assert no_range != real
+    assert any("no 'from" in x for x in _violations_host_contract(no_range, regions))
+    no_para = real.replace("**Host side.**", "**Host.**")
+    assert any("no '**Host side" in x for x in _violations_host_contract(no_para, regions))
 
 
 def test_helper_reports_violations_on_planted_copies(tmp_path):

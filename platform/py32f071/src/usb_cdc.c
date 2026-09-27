@@ -39,7 +39,7 @@
  * registered vendor identity on a product they did not make.
  *
  * The decision this pair implements lives in
- * platform/py32f071/FLASH-PATH-AND-PCB.md section 5. Its ship gate stands
+ * platform/py32f071/DESIGN.md §"USB identity". Its ship gate stands
  * unchanged: no board ships and no release advertises a USB identity until
  * a PID allocated under VID 0x1209 exists.
  */

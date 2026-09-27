@@ -1,391 +1,85 @@
-# Pinouts and shield wiring — firmware reference
+<p align="left"><img src="https://raw.githubusercontent.com/henols/firestarter/main/images/branding/firestarter_logo_horizontal.png" alt="Firestarter EPROM Programmer" width="400"></p>
 
-Implementation reference: the socket pin map for every chip family the firmware
-drives, the DIP24-to-DIP32 adapter mapping, and the RURP shield's own pin and
-control-register assignments.
+# Shield pin assignments
 
-The user-facing page — which chips need an adapter, how to wire one, and the
-safety guarantees — lives on the wiki:
-https://github.com/henols/firestarter/wiki/Pin-Maps
+This page shows how the firmware drives the RURP shield. The socket pin maps for each chip family
+and the DIP24 adapter wiring are on the [Pin Maps](https://github.com/henols/firestarter/wiki/Pin-Maps)
+wiki page.
 
-The per-family tables below are generated from
-`firestarter_app/firestarter/data/pinouts.json`, which is what the firmware is
-actually configured from. Regenerate rather than hand-edit them.
+## Arduino pins
 
----
+| Arduino pin | Shield signal | Firmware name |
+|---|---|---|
+| D0 to D7 | Data bus D0 to D7 | `rurp_write_data_buffer()`, `rurp_read_data_buffer()` |
+| D8 | Low address byte latch | `LEAST_SIGNIFICANT_BYTE` (`0x01`) |
+| D9 | High address byte latch | `MOST_SIGNIFICANT_BYTE` (`0x02`) |
+| D10 | Chip OE, active low | `OUTPUT_ENABLE` (`0x04`) |
+| D11 | Control-register latch | `CONTROL_REGISTER` (`0x08`) |
+| D12 | User button, Uno only | `USER_BUTTON` (`0x10`) |
+| D13 | Chip CE, active low | `CHIP_ENABLE` (`0x20`) |
+| A2 | VPP rail, through the voltage divider | `PIN_VPP_VOLTAGE_ADC` |
+| A3 | Shield revision, through the R41 detect divider | `PIN_HW_REVISION_DETECT_ADC` |
 
-## Chip socket pin maps
+The hex values in the third column are the bit masks that `rurp_set_control_pin()` and
+`rurp_write_to_register()` use. The definitions are in `include/rurp_shield.h` and
+`include/rurp_pinout.h`.
 
-Pin 1 is the end marked by the notch or the dot on the package.
+On `uno` and `uno328pb`, the data bus is port D and the control pins are port B. D0 and D1 are
+also the serial lines. These builds define `SERIAL_ON_IO`. The firmware stops the UART while it
+drives the data bus and starts it again after the operation step.
 
-The 24-pin UV families run 25 V on VPP during programming. A family with no VPP
-pin never sees a boosted rail.
+On `leonardo`, the USB serial port is separate from the data bus. The data bits are on PD2, PD3,
+PD1, PD0, PD4, PC6, PD7 and PE6, in the order D0 to D7. The control bits are on PB4 to PB7, PD6
+and PC7. The Leonardo build has no user button. The mapping is in
+`src/boards/leonardo_rurp_shield.cpp`.
 
-### `DIP24_2532` — TI 2532 (4KB) — non-JEDEC 24-pin UV-EPROM
+The firmware reads A3 only in a build that defines `HARDWARE_REVISION`. All AVR environments in
+`platformio.ini` define it.
 
-**Programming voltage: 25.0 V.** Read voltage 5.0 V.
+## Control register
 
-VPP pin: yes — pin 21
+The control register is an 8-bit latch. The firmware writes it through D11. Bits 0 to 7 of the
+latch drive these signals in a build without `HARDWARE_REVISION`:
 
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | A7 | 13 | D3 |
-| 2 | A6 | 14 | D4 |
-| 3 | A5 | 15 | D5 |
-| 4 | A4 | 16 | D6 |
-| 5 | A3 | 17 | D7 |
-| 6 | A2 | 18 | A11 |
-| 7 | A1 | 19 | A10 |
-| 8 | A0 | 20 | /CE |
-| 9 | D0 | 21 | VPP |
-| 10 | D1 | 22 | A9 |
-| 11 | D2 | 23 | A8 |
-| 12 | GND | 24 | tied high |
+| Bit | Mask | Name | Signal |
+|---:|---|---|---|
+| 0 | `0x01` | `CTRL_VPP_VPE_DROP_ENABLE`, `CTRL_ADDRESS_LINE_16` | Drop resistor in the VPE path, and address line 16 |
+| 1 | `0x02` | `CTRL_VPP_A9_ENABLE` | VPP onto A9, for the chip-ID read |
+| 2 | `0x04` | `CTRL_VPE_ENABLE` | VPE onto the OE/VPP line |
+| 3 | `0x08` | `CTRL_VPP_P1_ENABLE` | VPP onto socket pin 1 |
+| 4 | `0x10` | `CTRL_ADDRESS_LINE_17` | Address line 17 |
+| 5 | `0x20` | `CTRL_ADDRESS_LINE_18` | Address line 18 |
+| 6 | `0x40` | `CTRL_READ_WRITE` | Read or write direction |
+| 7 | `0x80` | `CTRL_VPP_REGULATOR_ENABLE` | VPP regulator |
 
-### `DIP24_2716` — JEDEC 2716 (2KB)
+A build with `HARDWARE_REVISION` uses a 9-bit logical value. Address line 16 is `0x01` and the drop
+resistor is `0x100`. All other names keep the values above. At each register write,
+`rurp_map_ctrl_reg_for_hardware_revision()` in `include/rurp_hw_rev_utils.h` converts the logical
+value to the physical byte for the detected revision:
 
-**Programming voltage: 25.0 V.** Read voltage 5.0 V.
-
-VPP pin: yes — pin 21
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | A7 | 13 | D3 |
-| 2 | A6 | 14 | D4 |
-| 3 | A5 | 15 | D5 |
-| 4 | A4 | 16 | D6 |
-| 5 | A3 | 17 | D7 |
-| 6 | A2 | 18 | /CE |
-| 7 | A1 | 19 | A10 |
-| 8 | A0 | 20 | /OE |
-| 9 | D0 | 21 | VPP |
-| 10 | D1 | 22 | A9 |
-| 11 | D2 | 23 | A8 |
-| 12 | GND | 24 | tied high |
-
-### `DIP24_2732` — JEDEC 2732 (4KB)
-
-VPP pin: yes — pin 20
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | A7 | 13 | D3 |
-| 2 | A6 | 14 | D4 |
-| 3 | A5 | 15 | D5 |
-| 4 | A4 | 16 | D6 |
-| 5 | A3 | 17 | D7 |
-| 6 | A2 | 18 | /CE |
-| 7 | A1 | 19 | A10 |
-| 8 | A0 | 20 | /OE |
-| 9 | D0 | 21 | A11 |
-| 10 | D1 | 22 | A9 |
-| 11 | D2 | 23 | A8 |
-| 12 | GND | 24 | tied high |
-
-### `DIP24_2816` — JEDEC 24-pin 5V parallel EEPROM (AT28C16/AT28C04 family)
-
-VPP pin: none (5 V only)
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | A7 | 13 | D3 |
-| 2 | A6 | 14 | D4 |
-| 3 | A5 | 15 | D5 |
-| 4 | A4 | 16 | D6 |
-| 5 | A3 | 17 | D7 |
-| 6 | A2 | 18 | /CE |
-| 7 | A1 | 19 | A10 |
-| 8 | A0 | 20 | /OE |
-| 9 | D0 | 21 | /WE |
-| 10 | D1 | 22 | A9 |
-| 11 | D2 | 23 | A8 |
-| 12 | GND | 24 | VCC |
-
-### `DIP24_6116` — JEDEC 24-pin 5V SRAM (6116/6264-style)
-
-VPP pin: none (5 V only)
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | A7 | 13 | D3 |
-| 2 | A6 | 14 | D4 |
-| 3 | A5 | 15 | D5 |
-| 4 | A4 | 16 | D6 |
-| 5 | A3 | 17 | D7 |
-| 6 | A2 | 18 | /CE |
-| 7 | A1 | 19 | A10 |
-| 8 | A0 | 20 | /OE |
-| 9 | D0 | 21 | /WE |
-| 10 | D1 | 22 | A9 |
-| 11 | D2 | 23 | A8 |
-| 12 | GND | 24 | VCC |
-
-### `DIP28_27256` — JEDEC 27256
-
-VPP pin: yes — pin 1
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | VPP | 15 | D3 |
-| 2 | A12 | 16 | D4 |
-| 3 | A7 | 17 | D5 |
-| 4 | A6 | 18 | D6 |
-| 5 | A5 | 19 | D7 |
-| 6 | A4 | 20 | /CE |
-| 7 | A3 | 21 | A10 |
-| 8 | A2 | 22 | /OE |
-| 9 | A1 | 23 | A11 |
-| 10 | A0 | 24 | A9 |
-| 11 | D0 | 25 | A8 |
-| 12 | D1 | 26 | A13 |
-| 13 | D2 | 27 | A14 |
-| 14 | GND | 28 | VCC |
-
-### `DIP28_27512` — JEDEC 27512
-
-VPP pin: yes — pin 22
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | A15 | 15 | D3 |
-| 2 | A12 | 16 | D4 |
-| 3 | A7 | 17 | D5 |
-| 4 | A6 | 18 | D6 |
-| 5 | A5 | 19 | D7 |
-| 6 | A4 | 20 | /CE |
-| 7 | A3 | 21 | A10 |
-| 8 | A2 | 22 | /OE |
-| 9 | A1 | 23 | A11 |
-| 10 | A0 | 24 | A9 |
-| 11 | D0 | 25 | A8 |
-| 12 | D1 | 26 | A13 |
-| 13 | D2 | 27 | A14 |
-| 14 | GND | 28 | VCC |
-
-### `DIP28_2764` — JEDEC 2764/128
-
-VPP pin: yes — pin 1
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | VPP | 15 | D3 |
-| 2 | A12 | 16 | D4 |
-| 3 | A7 | 17 | D5 |
-| 4 | A6 | 18 | D6 |
-| 5 | A5 | 19 | D7 |
-| 6 | A4 | 20 | /CE |
-| 7 | A3 | 21 | A10 |
-| 8 | A2 | 22 | /OE |
-| 9 | A1 | 23 | A11 |
-| 10 | A0 | 24 | A9 |
-| 11 | D0 | 25 | A8 |
-| 12 | D1 | 26 | A13 |
-| 13 | D2 | 27 | /PGM |
-| 14 | GND | 28 | VCC |
-
-### `DIP28_28C256` — JEDEC 28-pin 5V parallel EEPROM (28C256 family)
-
-VPP pin: none (5 V only)
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | A14 | 15 | D3 |
-| 2 | A12 | 16 | D4 |
-| 3 | A7 | 17 | D5 |
-| 4 | A6 | 18 | D6 |
-| 5 | A5 | 19 | D7 |
-| 6 | A4 | 20 | /CE |
-| 7 | A3 | 21 | A10 |
-| 8 | A2 | 22 | /OE |
-| 9 | A1 | 23 | A11 |
-| 10 | A0 | 24 | A9 |
-| 11 | D0 | 25 | A8 |
-| 12 | D1 | 26 | A13 |
-| 13 | D2 | 27 | /WE |
-| 14 | GND | 28 | VCC |
-
-### `DIP28_28C64` — JEDEC 28-pin 5V parallel EEPROM 8K (28C64 family)
-
-VPP pin: none (5 V only)
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | NC | 15 | D3 |
-| 2 | A12 | 16 | D4 |
-| 3 | A7 | 17 | D5 |
-| 4 | A6 | 18 | D6 |
-| 5 | A5 | 19 | D7 |
-| 6 | A4 | 20 | /CE |
-| 7 | A3 | 21 | A10 |
-| 8 | A2 | 22 | /OE |
-| 9 | A1 | 23 | A11 |
-| 10 | A0 | 24 | A9 |
-| 11 | D0 | 25 | A8 |
-| 12 | D1 | 26 | NC |
-| 13 | D2 | 27 | /WE |
-| 14 | GND | 28 | VCC |
-
-### `DIP28_JEDEC_SRAM_8K` — JEDEC 28-pin SRAM/FRAM 8K (6264/FM1608 family)
-
-VPP pin: none (5 V only)
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | NC | 15 | D3 |
-| 2 | A12 | 16 | D4 |
-| 3 | A7 | 17 | D5 |
-| 4 | A6 | 18 | D6 |
-| 5 | A5 | 19 | D7 |
-| 6 | A4 | 20 | /CE |
-| 7 | A3 | 21 | A10 |
-| 8 | A2 | 22 | /OE |
-| 9 | A1 | 23 | A11 |
-| 10 | A0 | 24 | A9 |
-| 11 | D0 | 25 | A8 |
-| 12 | D1 | 26 | NC |
-| 13 | D2 | 27 | /WE |
-| 14 | GND | 28 | VCC |
-
-### `DIP32_27C020` — JEDEC 32-pin UV-EPROM ≤256K (27C010/27C020 family — PGM on pin 31)
-
-VPP pin: yes — pin 1
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | VPP | 17 | D3 |
-| 2 | A16 | 18 | D4 |
-| 3 | A15 | 19 | D5 |
-| 4 | A12 | 20 | D6 |
-| 5 | A7 | 21 | D7 |
-| 6 | A6 | 22 | /CE |
-| 7 | A5 | 23 | A10 |
-| 8 | A4 | 24 | /OE |
-| 9 | A3 | 25 | A11 |
-| 10 | A2 | 26 | A9 |
-| 11 | A1 | 27 | A8 |
-| 12 | A0 | 28 | A13 |
-| 13 | D0 | 29 | A14 |
-| 14 | D1 | 30 | A17 |
-| 15 | D2 | 31 | /WE |
-| 16 | GND | 32 | VCC |
-
-### `DIP32_28C512_EEPROM` — JEDEC 32-pin 5V parallel EEPROM 64K (28C512 family)
-
-VPP pin: none (5 V only)
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | — | 17 | D3 |
-| 2 | — | 18 | D4 |
-| 3 | A15 | 19 | D5 |
-| 4 | A12 | 20 | D6 |
-| 5 | A7 | 21 | D7 |
-| 6 | A6 | 22 | /CE |
-| 7 | A5 | 23 | A10 |
-| 8 | A4 | 24 | /OE |
-| 9 | A3 | 25 | A11 |
-| 10 | A2 | 26 | A9 |
-| 11 | A1 | 27 | A8 |
-| 12 | A0 | 28 | A13 |
-| 13 | D0 | 29 | A14 |
-| 14 | D1 | 30 | /WE |
-| 15 | D2 | 31 | — |
-| 16 | GND | 32 | VCC |
-
-### `DIP32_SST39SF040` — JEDEC 32-pin 5V Flash (SST39SF040/AM29F040 family)
-
-VPP pin: none (5 V only)
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | A18 | 17 | D3 |
-| 2 | A16 | 18 | D4 |
-| 3 | A15 | 19 | D5 |
-| 4 | A12 | 20 | D6 |
-| 5 | A7 | 21 | D7 |
-| 6 | A6 | 22 | /CE |
-| 7 | A5 | 23 | A10 |
-| 8 | A4 | 24 | /OE |
-| 9 | A3 | 25 | A11 |
-| 10 | A2 | 26 | A9 |
-| 11 | A1 | 27 | A8 |
-| 12 | A0 | 28 | A13 |
-| 13 | D0 | 29 | A14 |
-| 14 | D1 | 30 | A17 |
-| 15 | D2 | 31 | /WE |
-| 16 | GND | 32 | VCC |
-
-### `DIP32_STD` — JEDEC 32-Pin Standard
-
-VPP pin: yes — pin 1
-
-| Pin | Signal | Pin | Signal |
-|---:|---|---:|---|
-| 1 | VPP | 17 | D3 |
-| 2 | A16 | 18 | D4 |
-| 3 | A15 | 19 | D5 |
-| 4 | A12 | 20 | D6 |
-| 5 | A7 | 21 | D7 |
-| 6 | A6 | 22 | /CE |
-| 7 | A5 | 23 | A10 |
-| 8 | A4 | 24 | /OE |
-| 9 | A3 | 25 | A11 |
-| 10 | A2 | 26 | A9 |
-| 11 | A1 | 27 | A8 |
-| 12 | A0 | 28 | A13 |
-| 13 | D0 | 29 | A14 |
-| 14 | D1 | 30 | A17 |
-| 15 | D2 | 31 | A18 |
-| 16 | GND | 32 | VCC |
-
----
-
-## RURP shield pin assignments
-
-Two Arduino analog inputs are read directly:
-
-| Arduino pin | Reads |
-|---|---|
-| A2 | VPP rail voltage, through the divider |
-| A3 | shield revision, through the R41 detect divider |
-
-The bus is driven through an 8-bit control register latch:
-
-| Bit | Mask | Signal |
+| Physical bit | Rev 0 and Rev 1 | Rev 2.0 to Rev 2.3 |
 |---:|---|---|
-| 0 | `0x01` | drop resistor in the VPP/VPE path |
-| 1 | `0x02` | VPP onto A9 (chip identification) |
-| 2 | `0x04` | VPE rail enable |
-| 3 | `0x08` | VPP onto pin 1 |
-| 4 | `0x10` | address line 17 |
-| 5 | `0x20` | address line 18 |
-| 6 | `0x40` | read / write direction |
-| 7 | `0x80` | VPP regulator enable |
+| 0 (`0x01`) | Drop resistor and address line 16 | Drop resistor |
+| 1 (`0x02`) | VPP onto A9 | VPP onto A9 |
+| 2 (`0x04`) | VPE onto OE/VPP | VPE onto OE/VPP |
+| 3 (`0x08`) | VPP onto pin 1 | VPP onto pin 1 and address line 18 |
+| 4 (`0x10`) | Address line 17 | Address line 17 |
+| 5 (`0x20`) | Address line 18 | Address line 16 |
+| 6 (`0x40`) | Read or write | Read or write |
+| 7 (`0x80`) | VPP regulator | VPP regulator |
 
-Two bits moved between shield generations. On Rev 1, address line 16 shares
-bit 0 with the drop resistor and address line 18 is bit 5. On Rev 2, address
-line 16 is bit 5 and address line 18 shares bit 3 with VPP-on-pin-1. The
-firmware selects the mapping from the revision detected on A3, so a wrong
-revision presents as addressing faults rather than an error.
+Two signals share one bit on each revision group. On Rev 0 and Rev 1, address line 16 and the drop
+resistor share bit 0. On Rev 2.x, address line 18 and VPP-onto-pin-1 share bit 3. The firmware
+selects the table from the revision that it reads on A3. The `hardware_revision` value in the
+stored configuration overrides that reading. For an unknown revision, the firmware writes 0 to the
+register, so it switches on no voltage.
 
-Definitions: `include/rurp_pinout.h`.
+> [!CAUTION]
+> A wrong revision gives a wrong bit map. The chip then gets wrong addresses. An address bit can
+> also set a voltage signal. On a Rev 1 board that the firmware reads as Rev 2, address line 18
+> sets bit 3, which is VPP onto pin 1 on Rev 1. Make sure that the revision is correct before you
+> program a chip.
 
----
-
-## DIP24-to-DIP32 adapter
-
-The AT28C04 and AT28C16 families are 24-pin 5 V EEPROMs that fit the 32-pin
-socket physically but land write-enable in the wrong place. Chip pin 21 is
-write enable; the socket carries write enable on pin 30. Dropped straight in,
-chip pin 21 meets the socket's D7 line — electrically harmless, but write
-enable can never be asserted, so the chip reads and never writes.
-
-All other pins map straight through, except chip pins 19, 22, 23 and 24, which
-shift to socket pins 23, 26, 27 and 32.
-
-Neither layout carries a VPP pin, so a mis-wired adapter cannot put a high
-voltage on the chip.
-
-**Pin 21 is not VPP on every 24-pin part.** On the UV families it is; on the
-5 V EEPROM families it is write enable. The two layouts are otherwise
-physically identical, which is why the distinction matters.
+The Rev 2 latch schematic is in [document/rurp_ctrl_reg_rev2.png](document/rurp_ctrl_reg_rev2.png).
+It shows the 74HC573 outputs Q0 to Q7 and the net names. The schematic names the bit 7 net
+`REG_DISABLE`.

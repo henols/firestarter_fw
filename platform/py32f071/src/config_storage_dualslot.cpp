@@ -224,8 +224,8 @@ extern "C" bool rurp_dualslot_save(const rurp_flash_primitives_t* primitives, co
     // The active slot was never touched, so an abort anywhere above leaves
     // it loadable, and an aborted program leaves the inactive slot
     // CRC-invalid, so a subsequent load() rejects it and returns the
-    // previous record -- exactly blob 4b1a441's "a failed or interrupted
-    // write must leave the previous record usable," reached without a
+    // previous record -- exactly DESIGN.md's "a failed or interrupted save
+    // leaves the previous record usable," reached without a
     // trailing-word commit this part cannot express.
     return primitives->program_page(primitives->ctx, inactive_slot, page);
 }
