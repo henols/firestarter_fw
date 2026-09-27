@@ -103,9 +103,10 @@ inventory -- this docstring is the only place a reader can discover them)
     the recorded outcome).
 
 CI coverage, stated CORRECTLY (not copied from the boolean-convention
-analog, whose own equivalent paragraph is stale in exactly the way Plan 05
-of this phase corrects in tests/test_check_size_baseline.py and
-tests/meta_presence.py -- see C-9 in .planning/v1.33/158-before-figures.md).
+analog, whose own equivalent paragraph was stale in exactly the way Plan 05
+of that phase corrected in tests/test_check_size_baseline.py and the former
+tests/meta_presence.py -- the latter deleted 2026-09-27 with the cross-repo
+read it mediated).
 `pytest tests/ -v` DOES fire on this milestone branch: it appears at
 .github/workflows/build.yml:161, ungated by any `if:`, and that workflow's
 own `on:` block filters `push: branches: ['**', '!beta']` -- `'**'` matches
