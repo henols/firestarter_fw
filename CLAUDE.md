@@ -378,28 +378,25 @@ The `ADC_BAND_R41_*` defines in `rurp_pinout.h` are the source of truth for thes
 "Detection bands" section of the `Shield Revisions` wiki page shows the same values. If you change
 the defines, update that wiki page in the same change. Nothing checks this automatically.
 
-### PY32F071 Flash-Path and PCB Record
+### PY32F071 Design Record
 
-`platform/py32f071/FLASH-PATH-AND-PCB.md` copies five sections of the authoritative record
-`platform/py32f071/v1.23-FLASH-PATH-DECISION.md`. That record was vendored from the meta
-repository on 2026-09-27, when its `.planning/` tree was retired; both copies now live in this
-repository, so the sync gate runs in CI instead of skipping. A marker names each shared section:
+`platform/py32f071/DESIGN.md` is the one design record for the port. It holds the flash map and
+config storage, the three-tier flash path, the PCB checklist (rows R1–R7), the flash budget and the
+USB identity. `platform/py32f071/README.md` gives the status and points to it.
 
-- `[SHARED:S1]` — the three-tier flash path.
-- `[SHARED:S2]` — the PCB checklist.
-- `[SHARED:S3]` — the flash budget.
-- `[SHARED:S4]` — the USB vendor and product identity.
-- `[SHARED:S5]` — the socket-empty instruction.
+Four tests read the record. Each has violating inputs:
 
-**If one of these sections changes in either copy, change the other copy in the same change.**
-`tests/test_flash_path_record_sync.py` compares the two copies. It is a legacy text comparison, not
-a guard. CI checks out this repository alone, so the meta copy is absent and the comparison tests
-skip there. Compare the copies by hand when you edit either one. Never say that CI compared them.
+- `tests/test_flash_path_record_sync.py` — the flash tiers, the PCB rows, the USB ship gate and the
+  socket-empty sentence (also required in the README).
+- `tests/test_flash_geometry_record_matches_linker.py` — the page, sector and flash values in the
+  record agree with `platform/py32f071/linker/PY32F071xB_FLASH.ld`.
+- `tests/test_config_storage_design_record.py` — the geometry citations, the commit steps, the
+  validation order and `CONFIG_MAGIC`.
+- `tests/test_py32_flash_map.py` — the linker cites the record, and the recorded host range agrees
+  with the linker regions.
 
-`FIRESTARTER_META_ROOT` sets the meta-repository root for that test. It changes the root only,
-never the marker name. `FIRESTARTER_FW_ROOT` and `FIRESTARTER_SIZE_BASELINE` are the other test
-variables. `tests/meta_presence.py` reads `FIRESTARTER_META_ROOT` at import, so set it in a child
-process. Do not monkeypatch it.
+**When you change a fact in `DESIGN.md`, change the linker script or source in the same commit.**
+Some tests plant a mutation of the real record under `tmp_path`, so they need a clean tree.
 
 ## Native (Host) Test Environment
 

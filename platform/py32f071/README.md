@@ -1,148 +1,104 @@
+<p align="left"><img src="https://raw.githubusercontent.com/henols/firestarter/main/images/branding/firestarter_logo_horizontal.png" alt="Firestarter EPROM Programmer" width="400"></p>
+
 # Firestarter on PY32F071
 
-This target builds the existing Firestarter PROM algorithms and command protocol with a native PY32F071 hardware backend.
+This target builds the shared Firestarter PROM handlers and the command protocol for the Puya
+PY32F071 microcontroller. It replaces the Arduino with a native hardware backend. The design
+record for the flash map, the configuration storage, the flash path and the PCB is in
+[DESIGN.md](DESIGN.md).
 
-## Implemented
+## Status
 
-- native CMake/Ninja GNU Arm build
-- pinned official Puya PY32F071 SDK
-- PY32F071 CMSIS startup and interrupt vector
-- C and C++ runtime initialization
-- 48 MHz clock configuration required by native USB
-- CherryUSB CDC transport without `SERIAL_ON_IO`
-- SysTick millisecond timing
-- TIM3 microsecond delays
-- safe active-low `/CE` and `/OE` startup levels
-- logical-control-to-physical-GPIO translation
-- contiguous eight-bit GPIO data bus
-- one-snapshot data reads through `IDR`
-- atomic data writes through `BSRR`
-- 12-bit ADC voltage measurement using VREFINT compensation
-- optional active-low user button support
-- unchanged shared PROM algorithms and packet framing
+- The target is beta only. A stable CLI does not offer the `py32f071` board.
+- CI builds the image. `py32f071.yml` builds it on each branch push except `main`, and on pull
+  requests that change ARM paths. `beta-build.yml` attaches `firestarter_py32f071.hex` to each
+  pre-release. An ARM build failure in `beta-build.yml` cannot stop the AVR assets.
+- No PCB exists. Nobody has run this image on a PY32F071 chip.
+- The pin map is provisional. The firmware therefore refuses every command that drives the chip
+  socket: read, write, erase, chip ID, the SDP commands and lock status. It sends
+  `MSG_ERR_NOT_SUPPORTED` for each of them. The version, configuration and voltage-read commands
+  stay available.
 
-## Provisional example pin map
+## What the port contains
 
-The implementation guide marks its GPIO values as examples, and no final PY32F071 Firestarter schematic or pin assignment is present in the repository or supplied documents. To allow the target to compile and evolve before the PCB mapping is finalized, the board header now contains this explicitly provisional example:
+- A CMake and Ninja build with the GNU Arm toolchain, and a pinned Puya PY32F071 SDK.
+- The PY32F071 CMSIS startup code and vector table.
+- A 48 MHz system clock from the internal HSI oscillator and the PLL. USB needs this clock.
+- USB CDC serial through CherryUSB. The target does not define `SERIAL_ON_IO`.
+- Millisecond timing from SysTick, and microsecond delays from TIM3.
+- Inactive (high) `/CE` and `/OE` levels at startup.
+- An eight-bit data bus on one GPIO port. A read takes one `IDR` snapshot. A write is one `BSRR`
+  store.
+- A 12-bit ADC voltage reading, corrected with the internal VREFINT reference.
+- Configuration storage in two flash slots. [DESIGN.md](DESIGN.md) describes it.
 
-| Signal | Example PY32F071 pin |
+## Pin map (provisional)
+
+| Signal | PY32F071 pin |
 |---|---|
-| PROM D0-D7 | PB0-PB7 |
-| LSB address-latch strobe | PA0 |
-| MSB address-latch strobe | PA1 |
+| PROM D0 to D7 | PB0 to PB7 |
+| Low address byte latch | PA0 |
+| High address byte latch | PA1 |
 | `/OE` | PA2 |
-| Control-register latch strobe | PA3 |
-| VPP measurement | PA4 / ADC channel 4 |
+| Control-register latch | PA3 |
+| VPP measurement | PA4, ADC channel 4 |
 | `/CE` | PA5 |
 | User button | Not fitted |
 
-PA4 / ADC channel 4 follows the official Puya PY32F071 ADC example. All other assignments are placeholders selected for a simple contiguous bus and must not be treated as verified PCB wiring.
+PA4 with ADC channel 4 follows the Puya ADC example. The other pins are placeholders that give a
+simple bus. Do not use them as PCB wiring.
 
-The single physical mapping point is:
-
-```text
-include/boards/py32f071_rurp_shield.h
-```
-
-The header defines:
-
-```cpp
-#define RURP_PY32F071_PINMAP_PROVISIONAL 1
-```
-
-Replace the mapping and remove or clear that marker when the final schematic is available.
+The only place that sets the pins is `include/boards/py32f071_rurp_shield.h`. That header defines
+`RURP_PY32F071_PINMAP_PROVISIONAL 1`. The flag makes `configure_memory()` refuse the socket
+commands. When a final schematic exists, change the pin definitions and clear the flag.
 
 ## Build
 
+Run from the repository root:
+
 ```sh
-cmake -S platform/py32f071 -B build/py32f071 -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release
+cmake -S platform/py32f071 -B build/py32f071 -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/py32f071
 ```
 
-Generated outputs are ELF, BIN, HEX, linker map and size report, all under
-`build/py32f071/`. Only `firestarter_py32f071.hex` is ever published — the rest
-are dev-environment artefacts, reproducible with the two commands above, and CI
-does not upload them.
+The build writes an ELF, BIN, HEX, linker map and size report to `build/py32f071/`. Only
+`firestarter_py32f071.hex` goes into a release. The host installer finds a release asset by the
+name `firestarter_<board>.hex`. `<board>` is the board name that the firmware reports, `py32f071`.
 
-The underscore in `firestarter_py32f071.*` is load-bearing. The host installer
-resolves release assets by the name `firestarter_<board>.hex`, where `<board>` is
-the `RURP_BOARD_NAME` the firmware reports over the wire (`py32f071`), so the
-CMake `TARGET_NAME` matches the convention `name_firmware.py` applies to the AVR
-targets.
+## Install over USB DFU
 
-## Release integration
+> [!WARNING]
+> **Before any PY32F071 firmware install — DFU, SWD or otherwise — the PROM socket must be empty.**
+> The pin map is provisional, and during a DFU install the factory bootloader controls the pins,
+> not Firestarter. [DESIGN.md](DESIGN.md) gives the full reason.
 
-`py32f071.yml` builds and validates this target on pull requests and on every
-`beta` push, but it does **not** cut releases, for one hard reason:
-`beta-build.yml` runs `.github/scripts/update_version.py`, which rewrites
-`include/version.h` and auto-commits it, *before* building. An image built in
-any other job compiles a stale `VERSION` string, and the host's whole update
-decision is a comparison of that string against the release tag. So the
-PY32F071 image has to be built in the same job as the AVR images, after the
-version bump — and it is reached through a **composite action** at
-`.github/actions/build-py32f071/`, called by both workflows, precisely because
-a composite action's steps run *in* the calling job. A reusable `workflow_call`
-workflow would instead run as a separate job with its own checkout, and would
-break that same-job ordering outright.
+1. Install a pre-release of the CLI with the `py32` extra: `pip install --pre "firestarter[py32]"`.
+   The extra adds `pyusb`. You also need a libusb backend. On Windows, you need a WinUSB driver
+   for the DFU device.
+2. Remove the chip from the socket.
+3. Set BOOT0 high and power-cycle the board. The factory bootloader starts only when the option
+   bit nBOOT1 is 1.
+4. Run `firestarter fw -i --pre -b py32f071`.
 
-The `Release` step's `files:` block, as shipped, has two entries:
+The CLI has its own DFU client, so you do not need `dfu-util` or a vendor tool. It refuses an image
+that reaches past the application region.
 
-```yaml
-          files: |
-            .pio/build/**/firestarter_*.hex
-            build/py32f071/firestarter_*.hex
-```
+## Flash path
 
-Two entries because PlatformIO writes its AVR `.hex` outputs under
-`.pio/build/`, while this CMake build writes its image under `build/py32f071/`
-— one glob cannot cover both trees. The second entry is a glob, not a literal
-filename.
+The design has three ways to write the flash. [DESIGN.md](DESIGN.md) has the detail.
 
-Why an absent py32 image does not fail the release: `softprops/action-gh-release`
-globs every `files:` entry — literal or glob alike — via `glob.sync()`, and
-decides severity purely from its `fail_on_unmatched_files` input, whose
-documented default is `false`. This step deliberately never sets that input, so
-an unmatched glob only warns; it never fails the run. The glob form above is
-still preferred over a literal path, but that preference is about
-rename-resilience and reading consistently with the AVR entry — a style
-argument, not a failure-mode argument.
+1. A self-flash bootloader over the USB CDC link. This is the intended main path. It does not
+   exist yet.
+2. The factory USB DFU bootloader. This is the recovery path, and the only path that the CLI
+   supports now.
+3. SWD, as the last resort.
 
-The ARM build itself has two roles, by design. `py32f071.yml` is the **LOUD**
-gate: it carries no `continue-on-error` and stays red when the ARM build
-breaks. `beta-build.yml`'s call site to the same composite action carries
-`continue-on-error: true` and exists only to produce the release asset —
-it can never block the three AVR assets. That containment is defensible only
-because `py32f071.yml` exists alongside it and does not hide the same failure.
-**Removal trigger:** the `continue-on-error` flag comes off once this target
-has been validated on real silicon. No PY32F071 PCB exists, so that trigger is
-unreachable this milestone and the flag stays, deliberately.
+## Before you connect a chip
 
-Immediately before the `Release` step, `scripts/check_release_assets.py` runs
-unconditionally and fails the build if any AVR `.hex` named by
-`scripts/baseline/size_baseline.json`'s `avr_targets` keys is missing or empty.
-It never requires the py32f071 image.
+Before you connect a PROM or apply a programming voltage, measure these items with test equipment:
 
-`beta-build.yml` also carries a permanent `rehearsal` boolean dispatch input.
-When set, it publishes a **draft** release under a `rehearsal-<run_id>` tag
-instead of a real pre-release, so a rehearsal run leaves no public footprint. A
-rehearsal dispatch must always supply `beta_version` explicitly — leaving it
-blank makes `update_version.py` take the stable-release path instead of the
-beta path.
-
-`build.yml` (the stable / `main` release workflow) is deliberately untouched.
-`py32f071` is in the host's `BETA_ONLY_BOARDS`, so a stable release carrying a
-py32f071 asset would advertise an image the stable CLI exits 2 on. **Graduation
-trigger:** fold the ARM build into `build.yml` when `py32f071` leaves
-`BETA_ONLY_BOARDS`.
-
-Everything above describes **publication**: nothing here says the published
-image runs, boots or installs, because no PY32F071 PCB exists.
-
-## Hardware validation still required
-
-Before connecting a PROM or applying programming voltage, validate the startup levels, complete `0x00`-`0xFF` data mapping, bus direction changes, every logical control signal, USB framing, voltage readings, and all PROM timing with appropriate test equipment. The provisional pin map is for compilation and early bring-up only.
-
-### Socket empty before any firmware install
-
-**Before any PY32F071 firmware install — DFU, SWD or otherwise — the PROM socket must be empty.** The pin map above is provisional, so a signal may be assigned the wrong direction, and a DFU install runs the factory bootloader, during which no Firestarter GPIO initialisation executes at all. See `FLASH-PATH-AND-PCB.md` §"Socket empty before any PY32F071 firmware install", in the same directory, for the full reasoning.
+- The startup pin levels.
+- All data values from `0x00` to `0xFF` on the data bus.
+- Each change of bus direction and each control signal.
+- The USB framing and the voltage readings.
+- All PROM timing.

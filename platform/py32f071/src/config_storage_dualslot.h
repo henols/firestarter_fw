@@ -34,9 +34,9 @@
  *   host g++. The `#error` platform guard belongs in the HAL glue TU
  *   (config_storage_flash.cpp), never here.
  *
- * RECORD FORMAT IS VENDORED:
- *   The six-field layout below comes verbatim from blob `4b1a441`
- *   (platform/py32f071/CONFIG-STORAGE.md), and `rurp_configuration_t` is
+ * RECORD FORMAT:
+ *   The six-field layout below is recorded in platform/py32f071/DESIGN.md
+ *   §"Configuration storage", and `rurp_configuration_t` is
  *   embedded byte-for-byte and unmodified -- which is what makes
  *   "schema unchanged" structurally true rather than merely
  *   asserted in prose. The wrapper's `version` field is NOT `CONFIG_VERSION`
@@ -50,7 +50,7 @@
  *   accepts exactly one value (`FLASH_TYPEPROGRAM_PAGE`); `FLASH_Program_Page`
  *   writes 64 32-bit words unconditionally; RM V0.2 §4.2.3.2 hard-faults on
  *   any non-32-bit write. There is no primitive that writes a single trailing
- *   word. The amended shape, recorded in CONFIG-STORAGE.md, is what this core
+ *   word. The amended shape, recorded in DESIGN.md, is what this core
  *   implements instead: erase the inactive slot, build the WHOLE 256-byte
  *   record (header and CRC included) in a 4-byte-aligned staging buffer, then
  *   issue ONE page program whose completion IS the commit. The active slot
@@ -97,9 +97,8 @@ extern "C" {
 /**
  * CONFIG_MAGIC -- ASCII 'R' 'U' 'R' 'P' ("RURP"), tying the record to the
  * shield name already used throughout the firmware. This is a
- * LOCAL CHOICE, explicitly NOT vendored: blob `4b1a441`
- * specifies the `magic` field but supplies no value for it, so this constant
- * must never be described as vendored.
+ * LOCAL CHOICE: the original design specifies the `magic` field but
+ * supplies no value for it.
  *
  * It satisfies two hard constraints: it is neither `0xFFFFFFFF` -- what
  * erased NOR flash reads back as, which would make a blank slot look like a
@@ -109,8 +108,8 @@ extern "C" {
 #define CONFIG_MAGIC ((uint32_t)0x52555250)
 
 /**
- * StoredConfiguration -- the vendored on-flash record, six fields in
- * blob `4b1a441`'s order:
+ * StoredConfiguration -- the on-flash record, six fields in the order
+ * platform/py32f071/DESIGN.md records:
  *   magic         -- separates "never written" and "garbage" from a real
  *                     record; validated first.
  *   version       -- written as the literal 1. No reader branches on this
