@@ -52,8 +52,21 @@ extern "C" {
 #define RURP_BANDGAP_MIN_MV 1000U
 #define RURP_BANDGAP_MAX_MV 1200U
 
-/* 10-bit ADC full scale, in counts. */
-#define RURP_ADC_FULL_SCALE 1024UL
+/*
+ * ADC full scale, in counts: 2^n, not 2^n-1, because the transfer function is
+ * count = V/Vref * 2^n.
+ *
+ * Platform-conditional because this header is linked into BOTH targets --
+ * src/proms/memory.cpp and src/firestarter.cpp call into this unit, so it is
+ * NOT an AVR-only translation unit however much the 10-bit arithmetic below
+ * looks like one. Getting this wrong on ARM would make a calibration wrong by
+ * a factor of four, silently.
+ */
+#if defined(RURP_PLATFORM_PY32F071)
+#define RURP_ADC_FULL_SCALE 4096UL /* 12-bit */
+#else
+#define RURP_ADC_FULL_SCALE 1024UL /* 10-bit */
+#endif
 
 /*
  * Guards that keep both products inside uint32 in rurp_scale_voltage_mv:
@@ -109,13 +122,14 @@ uint8_t rurp_calibration_is_plausible(uint32_t r1, uint32_t r2, uint32_t bandgap
 /*
  * Back-solve this MCU's bandgap from an operator meter reading of the supply.
  *
- *   Vbg = VCC_meter * bandgap_adc / 1024
+ *   Vbg = VCC_meter * bandgap_adc / adc_full_scale
  *
  * Returns 0 when the result is outside RURP_BANDGAP_MIN_MV..MAX_MV -- a
  * refusal, never a clamp. A stored bandgap is a value the firmware TRUSTS to
  * judge programming voltages, so an implausible one must not be written.
  */
-uint16_t rurp_bandgap_from_measured_vcc(uint32_t vcc_meter_mv, uint32_t bandgap_adc);
+uint16_t rurp_bandgap_from_measured_vcc(uint32_t vcc_meter_mv, uint32_t bandgap_adc,
+                                        uint32_t adc_full_scale);
 
 #ifdef __cplusplus
 }

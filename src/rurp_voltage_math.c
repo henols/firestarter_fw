@@ -44,17 +44,18 @@ uint16_t rurp_scale_vcc_mv(uint32_t bandgap_adc, uint32_t bandgap_mv) {
     return (uint16_t)((bandgap_mv * RURP_ADC_FULL_SCALE + bandgap_adc / 2) / bandgap_adc);
 }
 
-uint16_t rurp_bandgap_from_measured_vcc(uint32_t vcc_meter_mv, uint32_t bandgap_adc) {
+uint16_t rurp_bandgap_from_measured_vcc(uint32_t vcc_meter_mv, uint32_t bandgap_adc,
+                                        uint32_t adc_full_scale) {
     uint32_t bg;
-    if (bandgap_adc == 0 || vcc_meter_mv == 0) {
+    if (bandgap_adc == 0 || vcc_meter_mv == 0 || adc_full_scale == 0) {
         return 0;
     }
     /*
      * The ADC is ratiometric, so bandgap_adc = Vbg / VCC * 1024 and therefore
-     * Vbg = VCC_meter * bandgap_adc / 1024. One meter reading on the supply
+     * Vbg = VCC_meter * bandgap_adc / adc_full_scale. One meter reading on the supply
      * pin is the whole measurement -- no pot and no high voltage.
      */
-    bg = (vcc_meter_mv * bandgap_adc + RURP_ADC_FULL_SCALE / 2) / RURP_ADC_FULL_SCALE;
+    bg = (vcc_meter_mv * bandgap_adc + adc_full_scale / 2) / adc_full_scale;
     if (bg < RURP_BANDGAP_MIN_MV || bg > RURP_BANDGAP_MAX_MV) {
         return 0;  /* refuse, never clamp */
     }

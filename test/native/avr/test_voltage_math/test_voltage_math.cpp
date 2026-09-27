@@ -203,11 +203,29 @@ static void test_nominal_bandgap_is_the_identity(void) {
 }
 
 static void test_back_solve_from_a_measured_supply(void) {
-    // Vbg = VCC_meter * bandgap_adc / 1024, the whole of the measurement.
-    // The three boards measured on 2026-09-26, from BENCH-RECORD.md.
-    TEST_ASSERT_EQUAL_UINT16(1024, rurp_bandgap_from_measured_vcc(5090, 206));  // leonardo
-    TEST_ASSERT_EQUAL_UINT16(1100, rurp_bandgap_from_measured_vcc(4940, 228));  // uno
-    TEST_ASSERT_EQUAL_UINT16(1050, rurp_bandgap_from_measured_vcc(5120, 210));  // uno328pb
+    // Vbg = VCC_meter * bandgap_adc / adc_full_scale, the whole measurement.
+    // The three boards measured on 2026-09-26, from BENCH-RECORD.md, at the
+    // AVR's 10-bit full scale.
+    TEST_ASSERT_EQUAL_UINT16(1024, rurp_bandgap_from_measured_vcc(5090, 206, 1024));
+    TEST_ASSERT_EQUAL_UINT16(1100, rurp_bandgap_from_measured_vcc(4940, 228, 1024));
+    TEST_ASSERT_EQUAL_UINT16(1050, rurp_bandgap_from_measured_vcc(5120, 210, 1024));
+}
+
+static void test_back_solve_scales_with_the_adc_width(void) {
+    // This unit is linked into BOTH targets -- src/proms/memory.cpp and
+    // src/firestarter.cpp call into it -- so the 10-bit constant it used to
+    // hardcode was wrong by a factor of four on the PY32's 12-bit ADC, and
+    // silently: a calibration would simply have been four times off.
+    //
+    // A 12-bit ADC reading the SAME physical voltage gives four times the
+    // count, and must back-solve to the same bandgap.
+    TEST_ASSERT_EQUAL_UINT16(1024, rurp_bandgap_from_measured_vcc(5090, 206 * 4, 4096));
+    TEST_ASSERT_EQUAL_UINT16(1100, rurp_bandgap_from_measured_vcc(4940, 228 * 4, 4096));
+    // Non-vacuity: the same count under the WRONG scale does not give the same
+    // answer, which is what makes the pair above a real check.
+    TEST_ASSERT_NOT_EQUAL(1024, rurp_bandgap_from_measured_vcc(5090, 206 * 4, 1024));
+    // A zero scale is refused like any other unusable input.
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(5090, 206, 0));
 }
 
 static void test_back_solve_refuses_rather_than_clamps(void) {
@@ -215,16 +233,16 @@ static void test_back_solve_refuses_rather_than_clamps(void) {
     // not a calibration. A stored bandgap is trusted to judge programming
     // voltages, so it must be refused -- and 0 is distinguishable from any
     // in-band value, so the caller cannot mistake it for one.
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(509, 206));    // volts, not mV
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(50900, 206));  // 50.9 V
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(5090, 0));     // no reading
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(0, 206));
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(509, 206, 1024));    // volts, not mV
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(50900, 206, 1024));  // 50.9 V
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(5090, 0, 1024));     // no reading
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(0, 206, 1024));
     // Both boundaries land INSIDE and are kept -- the refusal is a band, not
     // a blanket.
     TEST_ASSERT_EQUAL_UINT16(RURP_BANDGAP_MIN_MV,
-                             rurp_bandgap_from_measured_vcc(1000UL * 1024 / 206, 206));
+                             rurp_bandgap_from_measured_vcc(1000UL * 1024 / 206, 206, 1024));
     TEST_ASSERT_EQUAL_UINT16(RURP_BANDGAP_MAX_MV,
-                             rurp_bandgap_from_measured_vcc(1200UL * 1024 / 206, 206));
+                             rurp_bandgap_from_measured_vcc(1200UL * 1024 / 206, 206, 1024));
 }
 
 static void test_an_out_of_band_bandgap_is_never_used(void) {
@@ -265,6 +283,7 @@ int main(int, char**) {
     RUN_TEST(test_vcc_readout_measures_the_bandgap_discrepancy);
     RUN_TEST(test_nominal_bandgap_is_the_identity);
     RUN_TEST(test_back_solve_from_a_measured_supply);
+    RUN_TEST(test_back_solve_scales_with_the_adc_width);
     RUN_TEST(test_back_solve_refuses_rather_than_clamps);
     RUN_TEST(test_an_out_of_band_bandgap_is_never_used);
     RUN_TEST(test_calibration_corrects_the_measured_leonardo);

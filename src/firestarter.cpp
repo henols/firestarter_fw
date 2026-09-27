@@ -120,7 +120,8 @@ bool parse_json(firestarter_handle_t* handle) {
             uint32_t bandgap_adc = (uint32_t)rurp_get_bandgap_adc_reading();
             rurp_set_communication_mode();
             uint16_t measured = rurp_bandgap_from_measured_vcc(
-                (uint32_t)json_config_measured_vcc_mv(), bandgap_adc);
+                (uint32_t)json_config_measured_vcc_mv(), bandgap_adc,
+                RURP_ADC_FULL_SCALE);
             if (measured == 0) {
                 LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
                 return false;
