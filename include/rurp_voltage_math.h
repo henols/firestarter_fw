@@ -70,13 +70,15 @@ extern "C" {
 
 /*
  * Guards that keep both products inside uint32 in rurp_scale_voltage_mv:
- * RURP_BANDGAP_NOMINAL_MV * (r1 + r2) needs r1 + r2 <= 3904515, and
- * adc * k needs k <= 4198404 for adc <= 1023. The shipped bounds sit just
- * below each true limit; RURP_SCALE_K_MAX is 0x3FFFFF so it compiles to a
- * shift test.
+ * bandgap_mv * (r1 + r2) needs r1 + r2 <= 3904515 at the nominal bandgap, and
+ * adc * k needs k <= UINT32_MAX / RURP_ADC_FULL_SCALE. RURP_DIVIDER_SUM_MAX
+ * sits just below the first limit at the nominal bandgap;
+ * rurp_calibration_is_plausible() also tests the product itself, which at the
+ * largest allowed bandgap (RURP_BANDGAP_MAX_MV) lowers the limit to 3579139.
+ * RURP_SCALE_K_MAX follows the ADC width: 4194303 for 10 bits, 1048575 for 12.
  */
 #define RURP_DIVIDER_SUM_MAX 3900000UL
-#define RURP_SCALE_K_MAX 4194303UL
+#define RURP_SCALE_K_MAX (0xFFFFFFFFUL / RURP_ADC_FULL_SCALE)
 
 /*
  * Convert a divider ADC reading to millivolts at the divider's input.
@@ -95,7 +97,8 @@ extern "C" {
  * suppress a high-side VPP error (which fires on an over-read); the only
  * possible effect is a spurious low-side warning within 5 mV of the edge.
  *
- * Returns 0 when the calibration cannot be evaluated. A caller on a
+ * Returns 0 when the calibration cannot be evaluated. A result above 65535
+ * saturates to 65535, so it still reads as a high rail. A caller on a
  * high-voltage path must not read 0 as "the rail is low" -- use
  * rurp_calibration_is_plausible() to refuse before energising anything.
  */
@@ -105,15 +108,15 @@ uint16_t rurp_scale_voltage_mv(uint32_t adc, uint32_t bandgap_adc, uint32_t r1, 
 /*
  * Convert a bandgap ADC reading to the supply voltage in millivolts.
  *
- *   VCC_mV = (bandgap_mv * 1024) / bandgap_adc
+ *   VCC_mV = (bandgap_mv * RURP_ADC_FULL_SCALE) / bandgap_adc
  *
- * Returns 0 when bandgap_adc is 0.
+ * Returns 0 when bandgap_adc is 0. A result above 65535 saturates to 65535.
  */
 uint16_t rurp_scale_vcc_mv(uint32_t bandgap_adc, uint32_t bandgap_mv);
 
 /*
- * True when r1/r2 can be evaluated by rurp_scale_voltage_mv without a guard
- * returning 0. This is the same test the conversion applies, exposed so a
+ * True when r1/r2 and the bandgap can be evaluated by rurp_scale_voltage_mv
+ * without a guard returning 0, and without any product overflowing uint32. This is the same test the conversion applies, exposed so a
  * pre-flight check can refuse an unusable calibration before any
  * high-voltage bit is set, instead of reading a 0 mV result as a low rail.
  */
@@ -124,8 +127,9 @@ uint8_t rurp_calibration_is_plausible(uint32_t r1, uint32_t r2, uint32_t bandgap
  *
  *   Vbg = VCC_meter * bandgap_adc / adc_full_scale
  *
- * Returns 0 when the result is outside RURP_BANDGAP_MIN_MV..MAX_MV -- a
- * refusal, never a clamp. A stored bandgap is a value the firmware TRUSTS to
+ * Returns 0 when the result is outside RURP_BANDGAP_MIN_MV..MAX_MV, or when
+ * VCC_meter * bandgap_adc would overflow uint32 -- a refusal, never a clamp.
+ * A stored bandgap is a value the firmware TRUSTS to
  * judge programming voltages, so an implausible one must not be written.
  */
 uint16_t rurp_bandgap_from_measured_vcc(uint32_t vcc_meter_mv, uint32_t bandgap_adc,
