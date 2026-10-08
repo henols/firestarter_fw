@@ -12,18 +12,21 @@
 #include "rurp_pinout.h"
 #include "version.h"
 
+#if !defined(RURP_PLATFORM_PY32F071)
 // Plausible internal-VCC band, in millivolts. USB VBUS is specified
 // 4.75-5.25 V (USB 2.0 section 7.2.2) and the board derives VCC from it
 // through a series switch, so a reported value outside this band is the
-// bandgap constant being wrong, not the supply.
+// bandgap constant being wrong, not the supply. The band is for a 5 V
+// supply. A PY32F071 board runs from 3.3 V, so it has no such check.
 #define HW_VCC_PLAUSIBLE_MIN_MV 4400
 #define HW_VCC_PLAUSIBLE_MAX_MV 5250
 
-// The VCC warning is emitted ONCE per command, not once per reading. The
+// The VCC warning is emitted once per command, not once per reading. The
 // condition cannot change between samples of one command, and a frame
 // interleaved with every DATA frame is noise the host read loop has to step
 // around on every iteration.
 static bool s_vcc_warned = false;
+#endif
 
 bool hw_read_voltage(firestarter_handle_t* handle) {
     // State 0: Initialization. This runs only once per command.
@@ -49,7 +52,9 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
         }
         delay(100);                     // Allow voltage to stabilize.
         rurp_set_communication_mode();  // Switch back to communication mode to send the ready signal.
+#if !defined(RURP_PLATFORM_PY32F071)
         s_vcc_warned = false;           // re-arm the once-per-command VCC warning
+#endif
         handle->operation_state = 1;    // Transition to the reading state.
 
         // Send a ready signal to the client to prompt it for the first ACK.
@@ -68,8 +73,8 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
     op_message_type msg_type = op_get_message(handle);
     if (msg_type == OP_MSG_DONE) {
         // The host has signaled it is done sampling. Finish the command
-        // cleanly instead of leaving it dangling for the 1s watchdog to
-        // reap (mirrors eprom_write's OP_MSG_DONE handling, eprom_operations.cpp).
+        // cleanly instead of leaving it dangling for the 1 s watchdog to
+        // reap.
         return true;
     }
     if (msg_type != OP_MSG_ACK) {
@@ -83,20 +88,21 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
     uint16_t vcc_mv = rurp_read_vcc_mv();
     uint16_t voltage_mv = rurp_read_voltage_mv();
 
+#if !defined(RURP_PLATFORM_PY32F071)
     // An internal VCC outside what the board can physically run at is an
-    // INSTRUMENT fault, not a supply fault. rurp_scale_vcc_mv returns
+    // instrument fault, not a supply fault. rurp_scale_vcc_mv returns
     // supply * RURP_BANDGAP_NOMINAL_MV / bandgap_true, so a figure the
-    // hardware cannot reach measures how far this chip's real bandgap is from
-    // the assumed 1100 mV -- and that same error scales every VPP/VPE reading
-    // this command prints. Bounds: USB VBUS is specified 4.75-5.25 V and the
-    // board takes a MOSFET drop off it, so anything outside the band below
+    // hardware cannot reach measures how far this chip's real bandgap is
+    // from the stored bandgap_mv, and that same error scales every VPP/VPE
+    // reading this command prints. USB VBUS is specified 4.75-5.25 V and the
+    // board takes a MOSFET drop off it, so a value outside the band below
     // cannot be a real supply.
     if (!s_vcc_warned &&
         (vcc_mv < HW_VCC_PLAUSIBLE_MIN_MV || vcc_mv > HW_VCC_PLAUSIBLE_MAX_MV)) {
         s_vcc_warned = true;
         LOG_WARN_ID_U16(MSG_WARN_VCC_IMPLAUSIBLE, vcc_mv);
-        handle->response_code = RESPONSE_CODE_WARNING;
     }
+#endif
 
     // Compute pre-rounded integer/decimal tenths for each voltage (catalog expects 4 x u16).
     uint16_t v_int  = (uint16_t)((voltage_mv + 50) / 1000);
@@ -120,9 +126,7 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
 
 bool fw_get_version(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_FW_VERSION);
-    // Lone surviving text-format emit. F("OK: FW: ") keeps the literal in
-    // PROGMEM with no named symbol -- same exemption class as MAGIC_PREAMBLE /
-    // CRC8_TABLE.
+    // The only text-format emit. F("OK: FW: ") keeps the literal in PROGMEM.
     SERIAL_PORT.print(F("OK: FW: "));
     SERIAL_PORT.println(FW_VERSION);
     SERIAL_PORT.flush();
@@ -136,7 +140,7 @@ bool hw_get_version(firestarter_handle_t* handle) {
     uint8_t physical  = (uint8_t)rurp_get_physical_hardware_revision();
     uint8_t effective = (rurp_config->hardware_revision < 0xFF)
                         ? (uint8_t)rurp_config->hardware_revision
-                        : 0xFF;  // P-02 sentinel: no override active
+                        : 0xFF;  // 0xFF: no override active
     LOG_OK_ID_U8_U8(MSG_OK_REV, physical, effective);
     return true;
 }
