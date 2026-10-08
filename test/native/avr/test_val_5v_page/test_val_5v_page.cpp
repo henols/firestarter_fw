@@ -40,7 +40,7 @@ using namespace fakeit;
 extern "C" void clear_bus_recording();
 extern "C" int  bus_recording_count();
 extern "C" uint8_t recorded_reg(int i);
-extern "C" uint8_t recorded_data(int i);
+extern "C" rurp_register_t recorded_data(int i);
 extern "C" bool bus_recording_saturated();
 
 static std::vector<uint8_t> s_wire_bytes;

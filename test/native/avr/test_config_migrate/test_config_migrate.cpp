@@ -4,15 +4,12 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * rurp_config_migrate: the per-field migration that replaced the
- * version-gated wipe.
+ * rurp_config_migrate: the per-field configuration migration.
  *
- * Two defects motivate every case below. The old policy reset
- * hardware_revision on any version change, destroying an operator's shield
- * override. And it only ever ran on a version MISMATCH, so a board carrying
- * the pre-Phase-44 r1 of 1000 under a matching version string kept that value
- * forever -- the stranding defect in
- * .planning/todos/pending/config-version-not-bumped-strands-stale-eeprom-calibration.md
+ * The migration runs on every load, not only on a version mismatch. It keeps
+ * the operator's hardware_revision override across a version change and
+ * replaces each out-of-band field with its default. The return value is true
+ * when the record changed and must be written back.
  */
 
 #include <unity.h>
@@ -48,8 +45,8 @@ static void test_a_current_config_is_left_alone(void) {
 }
 
 static void test_the_stranded_r1_is_corrected(void) {
-    // The stranding defect, reproduced: version string ALREADY current, so the
-    // old version gate could never have reached this value.
+    // The version string is already current, and the migration still corrects
+    // an out-of-band r1.
     rurp_configuration_t c = good();
     c.r1 = 1000;
     TEST_ASSERT_TRUE(rurp_config_migrate(&c));
@@ -57,8 +54,7 @@ static void test_the_stranded_r1_is_corrected(void) {
 }
 
 static void test_an_operator_override_survives_a_version_bump(void) {
-    // The regression the old wipe caused. An old version string must migrate
-    // the version WITHOUT touching hardware_revision.
+    // An old version string must migrate the version WITHOUT touching hardware_revision.
     rurp_configuration_t c = good();
     strcpy(c.version, "VER06");
     c.hardware_revision = 4;
@@ -116,7 +112,7 @@ static void test_the_r_bands_keep_plausible_values_and_reject_others(void) {
         const auto& c1 = r1_cases[i];
         rurp_configuration_t c = good();
         c.r1 = c1.v;
-        rurp_config_migrate(&c);
+        TEST_ASSERT_EQUAL(!c1.kept, rurp_config_migrate(&c));
         if (c1.kept) {
             TEST_ASSERT_EQUAL_INT32(c1.v, c.r1);
         } else {
@@ -131,7 +127,7 @@ static void test_the_r_bands_keep_plausible_values_and_reject_others(void) {
         const auto& c2 = r2_cases[i];
         rurp_configuration_t c = good();
         c.r2 = c2.v;
-        rurp_config_migrate(&c);
+        TEST_ASSERT_EQUAL(!c2.kept, rurp_config_migrate(&c));
         if (c2.kept) {
             TEST_ASSERT_EQUAL_INT32(c2.v, c.r2);
         } else {

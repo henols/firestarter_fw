@@ -28,12 +28,10 @@
  * files under test/. Production builds (env:uno, env:leonardo) never see
  * this file because their src_filter excludes test/.
  *
- * Behavioural contract: every stub here is intentionally a no-op (or
- * returns 0). The dispatch tests only verify that configure_memory()
- * routes to the correct configure_*() function — they never assert on
- * hardware-register side effects. If a future test starts caring about
- * register writes, the stubs can grow to record calls; today they are
- * deliberately minimal.
+ * Behavioural contract: most stubs are no-ops that return 0. The register,
+ * bus and timing stubs record calls for suites that assert on hardware side
+ * effects. The dispatch suites only verify that configure_memory() routes to
+ * the correct configure_*() function.
  */
 
 /* rurp_shield register I/O — the dispatch path's only direct hardware use
@@ -172,7 +170,7 @@ extern "C" void rurp_set_control_pin(uint8_t pin, uint8_t state) {
 
 struct bus_record_entry_t {
     uint8_t reg;
-    uint8_t data;
+    rurp_register_t data;
 };
 static bus_record_entry_t s_bus_recording[HOST_STUBS_MAX_RECORDING];
 static int s_bus_recording_count = 0;
@@ -180,13 +178,13 @@ static int s_bus_recording_count = 0;
 extern "C" void clear_bus_recording() { s_bus_recording_count = 0; }
 extern "C" int  bus_recording_count() { return s_bus_recording_count; }
 extern "C" uint8_t recorded_reg(int i)  { return s_bus_recording[i].reg; }
-extern "C" uint8_t recorded_data(int i) { return s_bus_recording[i].data; }
+extern "C" rurp_register_t recorded_data(int i) { return s_bus_recording[i].data; }
 extern "C" bool bus_recording_saturated() { return s_bus_recording_count >= HOST_STUBS_MAX_RECORDING; }
 
 extern "C" void rurp_write_to_register(uint8_t reg, rurp_register_t data) {
     if (s_bus_recording_count < HOST_STUBS_MAX_RECORDING) {
         s_bus_recording[s_bus_recording_count].reg  = reg;
-        s_bus_recording[s_bus_recording_count].data = (uint8_t)data;
+        s_bus_recording[s_bus_recording_count].data = data;
         s_bus_recording_count++;
     }
 }
@@ -282,12 +280,10 @@ extern "C" {
 // At the nominal, mem_util_warn_if_uncalibrated fires on every voltage-gated
 // operation and sets RESPONSE_CODE_WARNING by itself -- which made every
 // "this voltage warns" assertion pass even with the VPP window check entirely
-// removed. Proven by planting exactly that break: all nine cases in
-// test_flash_intel_vpp still passed. Modelling a calibrated board puts the
+// removed. Modelling a calibrated board puts the
 // response code back under the control of the thing being tested.
 //
-// 1019 is the leonardo's real measured reference (v1.43 bench), not a number
-// picked to be different.
+// 1019 is a plausible calibrated value, not the nominal 1100.
 static rurp_configuration_t s_host_config = {CONFIG_VERSION, VALUE_R1, VALUE_R2, 0, 1019};
 extern "C" rurp_configuration_t* rurp_get_config() {
     return &s_host_config;
@@ -303,7 +299,7 @@ extern "C" void rurp_validate_config(rurp_configuration_t* config) {
 
 extern "C" void op_reset_timeout() {}
 
-/* Communication API — Phase 6 widened the [env:native] src_filter to pull
+/* Communication API — the [env:native] src_filter pulls
  * src/boards/rurp_serial_utils.cpp into the test binary (so test_messages
  * can exercise the real frame emitter end-to-end). That TU provides the
  * production rurp_communication_* implementations, so the dispatch suite no
