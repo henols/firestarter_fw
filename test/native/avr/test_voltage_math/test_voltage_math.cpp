@@ -42,6 +42,13 @@ static uint32_t reference_v64(uint32_t adc, uint32_t bandgap_adc, uint32_t r1, u
     return (uint32_t)((numerator + denominator / 2ULL) / denominator);
 }
 
+// The reference narrowed the way rurp_scale_voltage_mv narrows: a result above
+// 65535 saturates to 65535.
+static uint16_t reference_v64_saturated(uint32_t adc, uint32_t bandgap_adc, uint32_t r1, uint32_t r2) {
+    uint32_t v = reference_v64(adc, bandgap_adc, r1, r2);
+    return v > 0xFFFFUL ? 0xFFFF : (uint16_t)v;
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -73,12 +80,12 @@ static void test_named_single_reading(void) {
 
 static void test_bit_identity_over_the_full_bandgap_range(void) {
     // 0 mismatches over bandgap 1..1023 crossed with adc 0..1023 at the
-    // shipped calibration. Both forms narrow to 16 bits, so the comparison
+    // shipped calibration. Both forms saturate at 65535, so the comparison
     // covers results above 65535 too.
     uint32_t mismatches = 0;
     for (uint32_t bg = 1; bg < 1024; bg++) {
         for (uint32_t adc = 0; adc < 1024; adc++) {
-            uint16_t expected = (uint16_t)reference_v64(adc, bg, kR1, kR2);
+            uint16_t expected = reference_v64_saturated(adc, bg, kR1, kR2);
             if (rurp_scale_voltage_mv(adc, bg, kR1, kR2, RURP_BANDGAP_NOMINAL_MV) != expected) {
                 mismatches++;
             }
@@ -87,12 +94,12 @@ static void test_bit_identity_over_the_full_bandgap_range(void) {
     TEST_ASSERT_EQUAL_UINT32(0, mismatches);
 }
 
-static void test_a_result_above_sixteen_bits_matches_the_reference(void) {
+static void test_a_result_above_sixteen_bits_saturates(void) {
     // adc 1023 at bandgap count 1 gives 8,030,550 mV in the reference form.
-    // The reading is meaningless, and both forms narrow it the same way.
+    // The reading is meaningless; it saturates to 65535 so it still reads as
+    // a high rail and never wraps to a small, plausible value.
     TEST_ASSERT_TRUE(reference_v64(1023, 1, kR1, kR2) > 0xFFFFUL);
-    TEST_ASSERT_EQUAL_UINT16((uint16_t)reference_v64(1023, 1, kR1, kR2),
-                             rurp_scale_voltage_mv(1023, 1, kR1, kR2, RURP_BANDGAP_NOMINAL_MV));
+    TEST_ASSERT_EQUAL_UINT16(0xFFFF, rurp_scale_voltage_mv(1023, 1, kR1, kR2, RURP_BANDGAP_NOMINAL_MV));
 }
 
 static void test_worst_deviation_is_five_and_never_over_reads(void) {
@@ -275,7 +282,7 @@ int main(int, char**) {
     RUN_TEST(test_scale_factor_is_exact_at_the_shipped_calibration);
     RUN_TEST(test_named_single_reading);
     RUN_TEST(test_bit_identity_over_the_full_bandgap_range);
-    RUN_TEST(test_a_result_above_sixteen_bits_matches_the_reference);
+    RUN_TEST(test_a_result_above_sixteen_bits_saturates);
     RUN_TEST(test_worst_deviation_is_five_and_never_over_reads);
     RUN_TEST(test_divider_sum_guard_boundary);
     RUN_TEST(test_scale_factor_guard_boundary);
