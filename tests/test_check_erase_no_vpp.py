@@ -19,13 +19,6 @@ control: a brace-matched negative scan of that function's own body. This
 module's job is to prove that scan is reachable -- both directions -- not
 merely present.
 
-This module runs in NO CI leg on this branch, the same standing disclosure
-as `check_erase_no_vpp.py` itself and as `tests/test_check_size_baseline.py`:
-`build.yml` and `beta-build.yml` invoke only `pio test -e native` and
-`pio test -e native_nodevtools`, neither of which runs `pytest` over
-`firestarter/tests/` at all. This plan's SUMMARY.md, recording a local run,
-is the only evidence any of the seven legs below were ever exercised.
-
 Self-contained path resolution below -- NOT in conftest.py
 (`firestarter/tests/` has no conftest.py anywhere in the repo; a recorded
 house-rule pattern, per test_checker_convention.py's own precedent, not an

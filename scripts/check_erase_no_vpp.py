@@ -89,13 +89,6 @@ repo's `check_dispatch.py` stays byte-unchanged by this phase;
 `git diff --quiet -- tools/check_dispatch.py`, run from that repository,
 must hold at phase end, independently of this checker's own result.
 
-**No CI leg.** This module -- and its paired pytest -- executes in NO CI
-leg on this branch: `build.yml` and `beta-build.yml` run only
-`pio test -e native` and `pio test -e native_nodevtools`; neither invokes
-`pytest` over `firestarter/tests/` at all. The phase record (this plan's
-SUMMARY.md) is the only evidence this checker was ever exercised, exactly
-like `check_size_baseline.py`'s own standing disclosure.
-
 Path resolution is always relative to this script's own location, never to
 the caller's current working directory -- `--source` (default
 `src/proms/eeprom_28c.cpp`) and any value passed to it are resolved against

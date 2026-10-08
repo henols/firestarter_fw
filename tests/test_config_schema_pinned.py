@@ -49,11 +49,6 @@ cherry-pick of that shape is exactly what this gate exists to catch, which is
 why the field list and the version literal are asserted together, not
 separately.
 
-This module executes in NO CI leg on this branch: `pytest tests/` runs only
-in build.yml (push/PR to main) and beta-build.yml (push to beta); py32f071.yml
-has no pytest step at all. The local run recorded in this phase's SUMMARY is
-the only evidence this module's assertions were ever exercised.
-
 This module invokes no compiler -- every assertion below is a textual gate
 over committed source, following tests/test_vpp_seam_manual_on_every_board.py
 and tests/test_config_storage_seam_shape.py's plain read_text() idiom,
