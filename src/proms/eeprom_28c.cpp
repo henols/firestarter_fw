@@ -15,6 +15,7 @@
 #include "memory_utils.h"
 #include "operation_utils.h"
 #include "rurp_pinout.h"
+#include "rurp_shield.h"
 
 /* Conservative page-size floor, used when the host delivers no page_size.
  * Do NOT replace it with a density-derived band table: AT28MC010 and AT28C010
@@ -129,17 +130,24 @@ const byte_flip_t EEPROM_SDP_ENABLE[3] = {
     {0x5555, 0xA0},
 };
 
+// AT28C software chip erase: 6-write sequence, terminal byte 0x10.
+static const byte_flip_t EEPROM_CHIP_ERASE[6] = {
+    {0x5555, 0xAA},
+    {0x2AAA, 0x55},
+    {0x5555, 0x80},
+    {0x5555, 0xAA},
+    {0x2AAA, 0x55},
+    {0x5555, 0x10},
+};
+
 void configure_eeprom28c(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CONFIGURING_EEPROM_28C);
     // AT28C page write timing requires fast consecutive writes; no pulse delay needed
     handle->pulse_delay = 0;
     // Do NOT add a default: arm here. configure_memory pre-sets the generic
-    // main for CMD_READ/CMD_WRITE before calling this, so a blanket default
-    // would overwrite it and refuse read on every 0x0D chip. (This comment
-    // used to also name the verify command's wire ordinal here, retired in
-    // 3.1.0; configure_memory's switch pre-sets only CMD_READ and CMD_WRITE
-    // now.) Unsupported commands are refused generically by the operation
-    // layer's NULL-main guard instead.
+    // main for CMD_READ and CMD_WRITE before calling this, so a blanket default
+    // would overwrite it and refuse read on every 0x0D chip. The operation
+    // layer's NULL-main guard refuses unsupported commands.
     switch (handle->cmd) {
         case CMD_WRITE:
             handle->firestarter_operation_init = eeprom28c_write_init;
@@ -158,11 +166,14 @@ void configure_eeprom28c(firestarter_handle_t* handle) {
 }
 
 // A9-12V chip-identification check for the AT28C EEPROM family.
-// Mirrors eprom_get_chip_id (eprom.cpp:186-197) for the read mechanism and
-// flash_intel_check_chip_id (flash_intel.cpp) for compare + response.
 // Read addresses are derived from mem_size: AT28C256 = 0x7FC0/0x7FC1,
 // AT28C64 = 0x1FC0/0x1FC1, etc. Caller-visible via response_code only;
-// no declaration in eeprom_28c.h (static — internal linkage only).
+// static, so no declaration in eeprom_28c.h.
+//
+// The regulator is asserted alone and measured before A9 is raised. A rail
+// outside the VPP window, or a calibration that cannot be evaluated, refuses
+// the read. Rev 0 cannot measure the rail, and a handle without a vpp_mv has no
+// target to compare with, so both skip the measurement.
 static void eeprom28c_check_chip_id(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CHECK_CHIP_ID_28C);
     // Underflow guard: mem_size < 64 would wrap mfr_addr to ~0xFFFFFFC0 and drive
@@ -178,8 +189,24 @@ static void eeprom28c_check_chip_id(firestarter_handle_t* handle) {
         }
         return;
     }
+    bool measure = handle->vpp_mv != 0;
+#ifdef HARDWARE_REVISION
+    if (rurp_get_hardware_revision() == REVISION_0) {
+        measure = false;
+    }
+#endif
+    if (measure && mem_util_refuse_bad_calibration(handle)) {
+        return;
+    }
     handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE, 1);
     delay(50);
+    if (measure) {
+        mem_util_check_vpp_window(handle, rurp_read_voltage_mv());
+        if (handle->response_code == RESPONSE_CODE_ERROR) {
+            handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE, 0);
+            return;
+        }
+    }
     handle->firestarter_set_control_register(handle, CTRL_VPP_A9_ENABLE, 1);
     delay(100);
     uint32_t mfr_addr = handle->mem_size - 64;  // 0x7FC0 (AT28C256) / 0x1FC0 (AT28C64) / ...
@@ -194,16 +221,13 @@ static void eeprom28c_check_chip_id(firestarter_handle_t* handle) {
 // address remap and rewrites CONTROL_REGISTER on each address change --
 // unlike flash_utils.cpp's path, which writes raw address bytes only.
 //
-// HARD CONSTRAINT: nothing bus-visible in this body beyond the data-direction
-// call and the set_data loop. The recorded goldens come from a bare set_data
-// loop, so any extra bus-visible call -- a set_control_register bracket in
-// particular -- appends strobes and breaks full-stream equality. No LOG_ calls
-// either: report lines go before or after the sequence, never inside it.
+// Nothing bus-visible belongs in this body beyond the set_data loop. An extra
+// bus-visible call, a set_control_register bracket in particular, adds strobes
+// inside the t_BLC window. No LOG_ calls either: report lines go before or
+// after the sequence, never inside it.
 static void eeprom28c_emit_command_sequence(firestarter_handle_t* handle, const byte_flip_t* sequence, size_t length) {
-    // Required: memory_set_data never sets the bus direction, memory_get_data
-    // sets INPUT, and the chip-id reads sit immediately upstream. Without this
-    // the OUTPUT direction would be correct only incidentally.
-    rurp_set_data_output();
+    // memory_set_data drives the bus through rurp_write_data_buffer, which sets
+    // the data direction to output on every board.
     for (size_t i = 0; i < length; i++) {
         handle->firestarter_set_data(handle, sequence[i].address, sequence[i].byte);
     }
@@ -246,14 +270,13 @@ static void eeprom28c_wait_for_sdp_completion(firestarter_handle_t* handle) {
 // The micros() reads bracket ONLY the emit call, so they do not perturb
 // inter-byte timing. The completion wait that follows a sequence stays at each
 // call site -- the unlock polls, the lock just delays t_WC, and
-// check_no_log_in_sdp_window.py needs the wait anchor inside the caller's body.
+// the wait anchor must stay inside the caller's body.
 //
 // The budget is derived from `length`, never a literal: 6 writes gives 600 us,
-// 3 gives 300 us. A bench run measured 572 us against the unlock's 600 us, so
-// this check is live, not latent.
+// 3 gives 300 us. The six-byte unlock runs close to its budget, so the check
+// can fire.
 //
-// LOG_ calls belong here BY DESIGN. Do not add this function as a scanned
-// window in check_no_log_in_sdp_window.py -- the real timing window is
+// LOG_ calls belong here by design. The real timing window is
 // eeprom28c_emit_command_sequence's body.
 static void eeprom28c_emit_sdp_sequence_timed(firestarter_handle_t* handle, const byte_flip_t* sequence, size_t length,
                                                uint8_t emitted_msg_id, uint8_t done_us_msg_id) {
@@ -299,8 +322,8 @@ static void eeprom28c_sdp_lock_execute(firestarter_handle_t* handle) {
 
 // Six-byte SOFTWARE chip erase [Atmel AN "Software Chip Erase" Rev
 // 0544B-10/98]. Drives every byte to 0xFF; the device times the cycle
-// internally (t_EC), so no completion poll is permitted. SDP remains ENABLED
-// afterwards -- this does not lock or unlock as a side effect.
+// internally (t_EC), so no completion poll is permitted. The SDP-disable prefix
+// below leaves SDP disabled; this handler does not lock the chip again.
 //
 // NOT the datasheet's HARDWARE chip-erase mode, which drives 12V onto OE
 // (DIP28_28C256 pin 22). This handler energises no programming rail at all.
@@ -317,17 +340,7 @@ static void eeprom28c_sdp_lock_execute(firestarter_handle_t* handle) {
 static void eeprom28c_erase_execute(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CHIP_ERASE);
     eeprom28c_sdp_unlock_execute(handle);
-    // eeprom28c_wait_for_sdp_completion (inside the prefix above) ends in
-    // reads through handle->firestarter_get_data, which leaves the data bus
-    // configured as an input. Re-arm it for output before the first erase
-    // write below, or every erase byte is silently dropped.
-    rurp_set_data_output();
-    handle->firestarter_set_data(handle, 0x5555, 0xAA);
-    handle->firestarter_set_data(handle, 0x2AAA, 0x55);
-    handle->firestarter_set_data(handle, 0x5555, 0x80);
-    handle->firestarter_set_data(handle, 0x5555, 0xAA);
-    handle->firestarter_set_data(handle, 0x2AAA, 0x55);
-    handle->firestarter_set_data(handle, 0x5555, 0x10);
+    eeprom28c_emit_command_sequence(handle, EEPROM_CHIP_ERASE, sizeof(EEPROM_CHIP_ERASE) / sizeof(EEPROM_CHIP_ERASE[0]));
     delay(AT28C_TEC_MAX_MS);
 }
 
@@ -371,13 +384,9 @@ void eeprom28c_write_init(firestarter_handle_t* handle) {
         // sequence emitted there is no internal write cycle to wait for.
         LOG_WARN_ID(MSG_WARN_SDP_UNLOCK_SKIPPED);
     }
-    // No pre-write blank check on this protocol: the silicon auto-erases per page
-    // during the write, and verify_page_readback checks every page afterwards. A
-    // blank check here was a false precondition that made a non-blank part
-    // un-writable without a flag. As of release 3.1.0 the host owns this
-    // refusal instead -- do not restore a firmware-side conditional here; the
-    // control flag that used to gate it is retired and gone.
-    // `blank` remains available as its own step.
+    // No pre-write blank check on this protocol: the silicon erases each page
+    // during the write, and verify_page_readback checks every page afterwards.
+    // The host owns the refusal to write a non-blank part.
 }
 
 // Resolve the validated flush mask from a delivered page-size. Returns
