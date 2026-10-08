@@ -512,6 +512,41 @@ void test_negative_value_on_a_non_address_field_is_unchanged(void) {
         "author widens the refusal beyond the address field");
 }
 
+/* A memory command with no "algorithm" is refused: json_parse resets
+ * protocol to 0 for every frame, and 0 is not a protocol any handler runs. */
+void test_memory_command_without_algorithm_is_refused(void) {
+    firestarter_handle_t h = make_handle(CMD_READ);
+    TEST_ASSERT_EQUAL_INT(-1, parse_json("{\"cmd\":1,\"memory-size\":65536}", &h));
+}
+
+/* A command that configures no memory needs no algorithm. */
+void test_non_memory_command_without_algorithm_is_accepted(void) {
+    firestarter_handle_t h = make_handle(CMD_READ_VPP);
+    TEST_ASSERT_EQUAL_INT(0, parse_json("{\"cmd\":11}", &h));
+}
+
+/* protocol and vpp_mv from one frame never reach the next frame. */
+void test_protocol_and_vpp_reset_between_two_parses_on_the_same_handle(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    TEST_ASSERT_EQUAL_INT(0, parse_json("{\"cmd\":2,\"algorithm\":7,\"vpp_mv\":12500}", &h));
+    TEST_ASSERT_EQUAL_INT(-1, parse_json("{\"cmd\":2}", &h));
+    TEST_ASSERT_EQUAL_UINT8(0, h.protocol);
+    TEST_ASSERT_EQUAL_UINT16(0, h.vpp_mv);
+}
+
+/* 25000 mV is the highest VPP in the chip database; one millivolt above it
+ * is refused. */
+void test_vpp_mv_at_the_database_maximum_is_accepted(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    TEST_ASSERT_EQUAL_INT(0, parse_json("{\"cmd\":2,\"algorithm\":7,\"vpp_mv\":25000}", &h));
+    TEST_ASSERT_EQUAL_UINT16(25000, h.vpp_mv);
+}
+
+void test_vpp_mv_above_the_database_maximum_is_refused(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    TEST_ASSERT_EQUAL_INT(-1, parse_json("{\"cmd\":2,\"algorithm\":7,\"vpp_mv\":25001}", &h));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -540,5 +575,10 @@ int main(int argc, char** argv) {
     RUN_TEST(test_negative_address_is_refused_not_clamped_to_zero);
     RUN_TEST(test_positive_address_still_parses_to_its_value);
     RUN_TEST(test_negative_value_on_a_non_address_field_is_unchanged);
+    RUN_TEST(test_memory_command_without_algorithm_is_refused);
+    RUN_TEST(test_non_memory_command_without_algorithm_is_accepted);
+    RUN_TEST(test_protocol_and_vpp_reset_between_two_parses_on_the_same_handle);
+    RUN_TEST(test_vpp_mv_at_the_database_maximum_is_accepted);
+    RUN_TEST(test_vpp_mv_above_the_database_maximum_is_refused);
     return UNITY_END();
 }
