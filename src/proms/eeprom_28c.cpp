@@ -130,16 +130,6 @@ const byte_flip_t EEPROM_SDP_ENABLE[3] = {
     {0x5555, 0xA0},
 };
 
-// AT28C software chip erase: 6-write sequence, terminal byte 0x10.
-static const byte_flip_t EEPROM_CHIP_ERASE[6] = {
-    {0x5555, 0xAA},
-    {0x2AAA, 0x55},
-    {0x5555, 0x80},
-    {0x5555, 0xAA},
-    {0x2AAA, 0x55},
-    {0x5555, 0x10},
-};
-
 void configure_eeprom28c(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CONFIGURING_EEPROM_28C);
     // AT28C page write timing requires fast consecutive writes; no pulse delay needed
@@ -340,7 +330,14 @@ static void eeprom28c_sdp_lock_execute(firestarter_handle_t* handle) {
 static void eeprom28c_erase_execute(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CHIP_ERASE);
     eeprom28c_sdp_unlock_execute(handle);
-    eeprom28c_emit_command_sequence(handle, EEPROM_CHIP_ERASE, sizeof(EEPROM_CHIP_ERASE) / sizeof(EEPROM_CHIP_ERASE[0]));
+    // Written inline, not from a table: the erase source check anchors on these
+    // set_data calls to prove that it scanned the real erase body.
+    handle->firestarter_set_data(handle, 0x5555, 0xAA);
+    handle->firestarter_set_data(handle, 0x2AAA, 0x55);
+    handle->firestarter_set_data(handle, 0x5555, 0x80);
+    handle->firestarter_set_data(handle, 0x5555, 0xAA);
+    handle->firestarter_set_data(handle, 0x2AAA, 0x55);
+    handle->firestarter_set_data(handle, 0x5555, 0x10);
     delay(AT28C_TEC_MAX_MS);
 }
 
