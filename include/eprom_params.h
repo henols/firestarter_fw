@@ -18,9 +18,6 @@
  *
  * NO PULSE-WIDTH COLUMN. Pulse width is handle->pulse_delay; the per-protocol
  * fallbacks stay in configure_eprom's switch and are not duplicated here.
- *
- * Per-cell datasheet attribution lives in the gate-enforced sidecar
- * tests/golden/eprom_params_citations.json, not here.
  */
 #ifndef __EPROM_PARAMS_H__
 #define __EPROM_PARAMS_H__
@@ -38,11 +35,11 @@ enum { VERIFY_PER_PULSE = 0, VERIFY_PER_PULSE_PLUS_FINAL = 1 };
  * this dependency-free header to pull in the shield's register header. */
 enum { VPP_PATH_DROP_RESISTOR = 0, VPP_PATH_DIRECT_VPE = 1 };
 
-/* Six columns, largest-first (see (b) above). No pulse-width field of any
- * name exists here -- no pulse_delay, no pulse_width_us, no
+/* Six columns, largest-first (see the field-order note above). No
+ * pulse-width field of any name exists here -- no pulse_delay, no pulse_width_us, no
  * fallback_pulse_us. */
 typedef struct {
-    uint32_t overprogram_cap_us;  /* clamp for min(3 x overprogram_factor x pulse, cap) */
+    uint32_t overprogram_cap_us;  /* clamp for overprogram_factor x pulse_count x pulse_us */
     uint32_t energy_cap_us;       /* accumulated per-byte program-time budget; 0 = uncapped */
     uint8_t  max_pulses;          /* structural retry/backstop ceiling */
     uint8_t  overprogram_factor;  /* margin-pulse multiplier; 0 = no overprogram */
@@ -53,7 +50,7 @@ typedef struct {
 /* Compile-time sizeof check only -- NOT the rejected __attribute__((used)) / force-the-table-into-the-image pattern; do not delete this thinking it is one. */
 #ifdef __cplusplus
 static_assert(sizeof(eprom_params_t) == 12,
-              "sizeof(eprom_params_t) must be 12 on every target -- Pitfall 2: "
+              "sizeof(eprom_params_t) must be 12 on every target: "
               "field order is largest-first because avr-gcc gives every type "
               "1-byte alignment while a 64-bit host does not.");
 #endif
