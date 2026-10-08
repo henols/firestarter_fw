@@ -20,15 +20,13 @@ extern "C" {
  * Bring a stored configuration up to date, field by field, and report whether
  * anything changed. Pure: it touches no storage, so it is natively testable.
  *
- * Range-checking each field rather than gating on the version string is what
- * makes this reach a stale value the old policy never could. A board whose
- * EEPROM carried the pre-Phase-44 r1 of 1000 kept it forever, because the
- * version string already matched and the wipe only ran on a mismatch.
+ * Each field is range-checked on its own, not gated on the version string, so
+ * a stale out-of-range value is corrected on every call. A field that is out
+ * of range is replaced by its default.
  *
- * hardware_revision is preserved unconditionally. Every value including 0xFF
- * ("no override") is meaningful, so there is no band to test it against -- and
- * the previous policy reset it on every version bump, silently destroying an
- * operator's shield-revision override.
+ * hardware_revision keeps any known revision (0 to 5) and 0xFF ("no
+ * override"). Any other value is replaced by 0xFF, so a version bump never
+ * clears an operator's shield-revision override.
  */
 bool rurp_config_migrate(rurp_configuration_t* config);
 
