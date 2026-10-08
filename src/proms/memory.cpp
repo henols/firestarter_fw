@@ -30,7 +30,7 @@
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #endif
 
-// AVR delayMicroseconds() accurate ceiling -- see mem_util_delay_us /
+// AVR delayMicroseconds() accurate ceiling. See mem_util_delay_us and
 // mem_util_split_delay below.
 #define MEM_UTIL_DELAY_US_MAX 16383UL
 
@@ -55,9 +55,8 @@ void configure_memory(firestarter_handle_t* handle) {
     // board header), refuse every command that can energise the PROM bus, BEFORE
     // any handler is configured. The three operation pointers are still NULL here,
     // so this early return leaves the handle exactly as configure_not_implemented()
-    // would. The payload is the COMMAND ordinal, not the protocol ordinal -- this
-    // is a command-admission refusal, not a protocol-dispatch one. On AVR targets
-    // RURP_PINMAP_PROVISIONAL is never defined, so this compiles to nothing.
+    // would. The payload is the COMMAND ordinal, not the protocol ordinal. On AVR
+    // targets RURP_PINMAP_PROVISIONAL is never defined, so this compiles to nothing.
     if (rurp_pinmap_refuses(handle->cmd)) {
         LOG_ERROR_ID_U8(MSG_ERR_NOT_SUPPORTED, (uint8_t)handle->cmd);
         handle->response_code = RESPONSE_CODE_ERROR;
@@ -81,52 +80,32 @@ void configure_memory(firestarter_handle_t* handle) {
     handle->firestarter_set_control_register = memory_set_control_register;
     handle->firestarter_get_control_register = memory_get_control_register;
 
-    mem_util_set_address(handle, 0);
-
+    // Pick the handler first. A protocol that reaches no handler is refused
+    // before the bus is touched. FWH and GAL/PLD (0x11, 0x2A-0x2C) are
+    // infeasible on RURP; every other unrecognised value, including 0, takes
+    // the same refusal.
+    void (*configure)(firestarter_handle_t*) = NULL;
     if (handle->protocol == PROTO_FLASH_INTEL) {
-        configure_flash_intel(handle);
-        return;
+        configure = configure_flash_intel;
+    } else if (handle->protocol == PROTO_EEPROM_PARALLEL) {
+        configure = configure_eeprom28c;
+    } else if (handle->protocol == PROTO_FLASH_NOR_UNLOCK) {
+        configure = configure_flash_nor_unlock;
+    } else if (handle->protocol == PROTO_FLASH_5V_PAGE || handle->protocol == PROTO_PHANTOM_0x35 || handle->protocol == PROTO_PHANTOM_0x39) {
+        configure = configure_flash_5v_page;
+    } else if (handle->protocol == PROTO_EPROM_28PIN || handle->protocol == PROTO_EPROM_32PIN || handle->protocol == PROTO_EPROM_24PIN) {
+        configure = configure_eprom;
+    } else if (handle->protocol == PROTO_SRAM_32PIN || handle->protocol == PROTO_SRAM_24PIN ||
+               handle->protocol == PROTO_SRAM_28PIN || handle->protocol == PROTO_SRAM_32PIN_NVRAM) {
+        configure = configure_sram;
     }
-
-    if (handle->protocol == PROTO_EEPROM_PARALLEL) {
-        configure_eeprom28c(handle);
-        return;
-    }
-
-    if (handle->protocol == PROTO_FLASH_NOR_UNLOCK) {
-        configure_flash_nor_unlock(handle);
-        return;
-    }
-
-    if (handle->protocol == PROTO_FLASH_5V_PAGE || handle->protocol == PROTO_PHANTOM_0x35 || handle->protocol == PROTO_PHANTOM_0x39) {
-        configure_flash_5v_page(handle);
-        return;
-    }
-
-    if (handle->protocol == PROTO_EPROM_28PIN || handle->protocol == PROTO_EPROM_32PIN || handle->protocol == PROTO_EPROM_24PIN) {
-        configure_eprom(handle);
-        return;
-    }
-
-    if (handle->protocol == PROTO_SRAM_32PIN || handle->protocol == PROTO_SRAM_24PIN ||
-        handle->protocol == PROTO_SRAM_28PIN || handle->protocol == PROTO_SRAM_32PIN_NVRAM) {
-        configure_sram(handle);
-        return;
-    }
-
-    // Named infeasibility arms: FWH and GAL/PLD — infeasible on RURP,
-    // and explicitly recognized as such rather than falling through.
-    if (handle->protocol == 0x11 || handle->protocol == 0x2A ||
-        handle->protocol == 0x2B || handle->protocol == 0x2C) {
+    if (configure == NULL) {
         configure_not_implemented(handle);
         return;
     }
 
-    // Generic fail-closed guard: every remaining protocol value — including
-    // protocol == 0 — is unrecognized and reaches not-implemented. Trusts
-    // only handle->protocol end to end; no backward-compat fallback axis
-    // remains -- dispatch is protocol-only.
-    configure_not_implemented(handle);
+    mem_util_set_address(handle, 0);
+    configure(handle);
 }
 
 void memory_set_control_register(firestarter_handle_t* handle, rurp_register_t bit, bool state) {
@@ -150,11 +129,9 @@ rurp_register_t mem_util_calculate_msb_register(firestarter_handle_t* handle, ui
 rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* handle, uint32_t address) {
     rurp_register_t top_address = ((uint32_t)address >> 16) & (CTRL_ADDRESS_LINE_16 | CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18 | CTRL_READ_WRITE);
     // CTRL_VPE_ENABLE, CTRL_VPP_P1_ENABLE, CTRL_VPP_A9_ENABLE and CTRL_VPP_REGULATOR_ENABLE are
-    // UNCONDITIONALLY preserved below — this is why VPE survives a per-byte verify read. It is
-    // NOT because the verify read leaves the control register alone: every address write (the
-    // one caller of this function) writes CONTROL_REGISTER unconditionally on every byte, for
-    // both the pulse and the verify; the unconditional preserve mask is what carries the route
-    // bit across that write.
+    // always preserved below. Every address write (the one caller of this function) writes
+    // CONTROL_REGISTER on every byte, for both the pulse and the verify; the preserve mask is
+    // what carries the route bit across that write.
     rurp_register_t mask = CTRL_VPP_A9_ENABLE | CTRL_VPE_ENABLE | CTRL_VPP_P1_ENABLE | CTRL_VPP_REGULATOR_ENABLE;
     // CTRL_VPP_VPE_DROP_ENABLE selects a VPP LEVEL -- VPE dropped through the
     // resistor to ~13 V -- and nothing else. Do NOT exclude pins >= 32 from the
@@ -178,22 +155,16 @@ rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* ha
         case REVISION_2_1:
         case REVISION_2_2:
         case REVISION_2_3:
-            // The arm's nominal reach widens to every 32-pin protocol on Rev 2-class (0x0E, 0x29,
-            // 0x10, 32-pin flash), not just the EPROM family -- but none of them ever SETS the
-            // drop bit, so there is nothing for this preserve to leak. Proven, not argued:
-            // test_vpp_eprom_v131.cpp's 32-pin non-EPROM byte-identity case
-            // (test_vpp01_dip32_nonEprom_0x10_route_is_byte_identical_before_and_after) and its
-            // "preserve, never introduce" leg
-            // (test_vpp01_truthtable_pins32_rev2_2_preserve_never_introduces).
+            // This arm reaches every 32-pin protocol on Rev 2-class (0x0E, 0x29, 0x10, 32-pin
+            // flash), not just the EPROM family. None of them sets the drop bit, so the
+            // preserve introduces nothing.
             mask |= CTRL_VPP_VPE_DROP_ENABLE;
             break;
         default:
             // Fail-safe direction: REVISION_0, REVISION_1, REVISION_UNKNOWN (0xFE) and any
-            // unrecognised byte keep TODAY'S stripping -- adds nothing. Matches
-            // rurp_hw_rev_utils.h:33-37's own `default` leaving ctrl_reg = 0. Deliberately an
-            // explicit four-case set above, never a `>= REVISION_2_0` range test:
-            // rurp_shield.h:25-31 numbers revisions 0..5, and a range test would silently swallow
-            // a future REVISION_2_4.
+            // unrecognised byte add nothing. The set above is explicit, never a
+            // `>= REVISION_2_0` range test, because a range test would silently include a
+            // future REVISION_2_4.
             break;
         }
     }
@@ -206,16 +177,9 @@ rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* ha
     return top_address;
 }
 
-/* Shared VPP-mismatch report:
- *   [measured_V u16 BE][measured_tenths u16 BE][expected_V u16 BE][expected_tenths u16 BE]
- *
- * Severity rides entirely in msg_id -- every LOG_{WARN,ERROR}_ID_BYTES macro is
- * the same alias of LOG_ID_BYTES.
- *
- * Both millivolt parameters are uint16_t DELIBERATELY: at every call site the
- * operands are uint16_t, so `(x + 50)` promotes to 16-bit and `/1000` compiles
- * to __udivmodhi4. Widening either to uint32_t swaps in the 32-bit
- * __udivmodsi4 and moves the wrap point above 65485 mV. Do not widen them. */
+// Applies the VPP acceptance window to a measured reading. HIGH is a refusal
+// above target + max(500 mV, 3 %), downgraded to a warning by FLAG_FORCE. LOW is
+// a warning below 95 % of target.
 void mem_util_check_vpp_window(firestarter_handle_t* handle, uint16_t vpp_mv) {
     uint32_t target = (uint32_t)handle->vpp_mv;
     uint32_t headroom = target * RURP_VPP_HIGH_HEADROOM_PCT / 100;
@@ -235,15 +199,28 @@ void mem_util_check_vpp_window(firestarter_handle_t* handle, uint16_t vpp_mv) {
     }
 }
 
+// Warns when the stored bandgap is the nominal value, which is what an
+// uncalibrated board holds. A board whose measured bandgap is exactly nominal
+// reads the same, and the two cannot be told apart.
+//
+// A no-op on PY32F071: its voltage readings do not use the bandgap calibration,
+// so the warning would be false there.
 void mem_util_warn_if_uncalibrated(firestarter_handle_t* handle) {
+#if defined(RURP_PLATFORM_PY32F071)
+    (void)handle;
+#else
     rurp_configuration_t* cfg = rurp_get_config();
     if (cfg->bandgap_mv != (uint16_t)RURP_BANDGAP_NOMINAL_MV) {
         return;
     }
     LOG_WARN_ID(MSG_WARN_NOT_CALIBRATED);
     handle->response_code = RESPONSE_CODE_WARNING;
+#endif
 }
 
+// Refuses when the stored divider calibration is not plausible. Emits
+// MSG_ERR_CALIBRATION with the two resistor values and sets
+// RESPONSE_CODE_ERROR. Returns true when it refused.
 bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle) {
     rurp_configuration_t* cfg = rurp_get_config();
     if (rurp_calibration_is_plausible((uint32_t)cfg->r1, (uint32_t)cfg->r2, cfg->bandgap_mv)) {
@@ -265,6 +242,16 @@ bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle) {
     return true;
 }
 
+/* Shared VPP-mismatch report:
+ *   [measured_V u16 BE][measured_tenths u16 BE][expected_V u16 BE][expected_tenths u16 BE]
+ *
+ * Severity rides entirely in msg_id -- every LOG_{WARN,ERROR}_ID_BYTES macro is
+ * the same alias of LOG_ID_BYTES.
+ *
+ * Both millivolt parameters are uint16_t on purpose: at every call site the
+ * operands are uint16_t, so `(x + 50)` promotes to 16-bit and `/1000` compiles
+ * to __udivmodhi4. Widening either to uint32_t swaps in the 32-bit
+ * __udivmodsi4 and moves the wrap point above 65485 mV. Do not widen them. */
 void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
                               uint16_t expected_mv, uint8_t msg_id, uint8_t response_code) {
     uint16_t _v0 = (uint16_t)((measured_mv + 50) / 1000);
@@ -287,8 +274,7 @@ void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
 /* Shared chip-ID-mismatch report:
  *   [actual_id_hi u8][actual_id_lo u8][expected_id_hi u8][expected_id_lo u8]
  *
- * Matching ids emit nothing -- the early return is the mismatch guard hoisted
- * out of the four former call sites.
+ * Matching ids emit nothing.
  *
  * Severity is the CALLER's decision, passed as warn_only, and must stay that
  * way: eprom.cpp's standalone CMD_CHECK_CHIP_ID path refuses unconditionally,
@@ -376,8 +362,8 @@ uint8_t memory_get_data(firestarter_handle_t* handle, uint32_t address) {
      * point). Knob: "read-settling-delay" JSON field -> handle->read_settling_us.
      * Read-timing cap: value already clamped at parse time (READ_TIMING_MAX_US=1000µs);
      * guard here catches any future path that bypasses the parser.
-     * Note: values < 3µs are below delayMicroseconds() accuracy on 16 MHz AVR
-     * (Pitfall 5) — the sweep should start at 3µs for clean step response.
+     * Note: values < 3µs are below delayMicroseconds() accuracy on 16 MHz AVR,
+     * so a sweep should start at 3µs for a clean step response.
      */
     if (handle->read_settling_us) {
         uint32_t settling = handle->read_settling_us > 1000UL ? 1000UL : handle->read_settling_us;
@@ -469,12 +455,10 @@ uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t
     return reorg_address;
 }
 
-/* The single resolution point for D-04's "0 = absent = whole device"
- * fallback and for the fail-closed clamp. A host or a corrupted frame
- * cannot widen a scan past the device: region_end above mem_size clamps
- * down to mem_size exactly like region_end == 0 does. See
- * include/memory_utils.h for why this is a function rather than an
- * inline ternary. */
+/* The single resolution point for the "0 = absent = whole device" fallback and
+ * for the fail-closed clamp. A host or a corrupted frame cannot widen a scan
+ * past the device: region_end above mem_size clamps down to mem_size exactly
+ * like region_end == 0 does. */
 uint32_t mem_util_operation_end(const firestarter_handle_t* handle) {
     if (handle->region_end == 0 || handle->region_end > handle->mem_size) {
         return handle->mem_size;
