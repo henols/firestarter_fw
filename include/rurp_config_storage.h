@@ -15,13 +15,11 @@
  * common policy layer.
  *
  * Do NOT include this from rurp_shield.h. That header is reachable from 46
- * translation units, 14 of them native host_stubs.cpp files, and ONE added
- * #include there was measured to take `pio test -e native` from 141 cases
- * passing to 0.
+ * translation units, 14 of them native host_stubs.cpp files, and one added
+ * #include there breaks the native test build.
  *
- * AVR behaviour is unchanged: the AVR load returns true unconditionally after
- * the typed EEPROM.get(), and the policy layer calls rurp_validate_config()
- * either way -- exactly as before the seam existed.
+ * The AVR load returns true unconditionally after the typed EEPROM.get(). The
+ * policy layer calls rurp_validate_config() either way.
  */
 
 #include <stdbool.h>

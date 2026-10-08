@@ -30,9 +30,8 @@ typedef struct rurp_configuration {
      * is the designed recovery path. On AVR the `version` string still
      * discriminates at the same EEPROM offset.
      *
-     * Defaults to RURP_BANDGAP_NOMINAL_MV, which reproduces the pre-
-     * calibration arithmetic exactly, so an uncalibrated board behaves as it
-     * always did.
+     * Defaults to RURP_BANDGAP_NOMINAL_MV, so an uncalibrated board uses the
+     * nominal bandgap.
      */
     uint16_t bandgap_mv;
 } rurp_configuration_t;

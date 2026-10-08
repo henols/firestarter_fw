@@ -8,13 +8,9 @@
 #include "rurp_vpp.h"
 
 /*
- * The VPP control capability
- * seam's implementation. Dependency-free by construction: the only include
- * is rurp_vpp.h itself. Zero production callers today -- these
- * three bodies exist so the seam compiles and its guards can be proven to
- * fire; nothing under src/ or platform/ calls them yet.
- *
- * Fire-proof: tests/test_vpp_seam_manual_on_every_board.py.
+ * The VPP control capability seam's implementation. Dependency-free: the only
+ * include is rurp_vpp.h. The three functions are refusal-shaped, because every
+ * board adjusts VPP by hand. Nothing under src/ or platform/ calls them.
  */
 
 #if RURP_HAS_VPP_DAC

@@ -28,6 +28,9 @@
 #define RX 0
 #define TX 1
 
+// Largest supply voltage, in millivolts, a calibration frame may report.
+#define CONFIG_MEASURED_VCC_MAX_MV 10000
+
 bool init_programmer_framed(firestarter_handle_t* handle);
 bool parse_json(firestarter_handle_t* handle);
 void command_done(firestarter_handle_t* handle);
@@ -38,10 +41,13 @@ unsigned long timeout = 0;
 
 void setup() {
     rurp_load_config();
+    rurp_board_setup();
 #ifdef HARDWARE_REVISION
+    // Detect after rurp_board_setup: serial is then up, so the detection's
+    // REVISION_UNKNOWN warning reaches the host, and every rail is off.
+    // rurp_board_setup does not touch the two analog detect pins.
     rurp_detect_hardware_revision();
 #endif
-    rurp_board_setup();
 
     handle.cmd = CMD_IDLE;
     LOG_DEBUG_ID_SUB(DBG_FIRESTARTER_STARTED);
@@ -74,16 +80,16 @@ bool parse_json(firestarter_handle_t* handle) {
 
     LOG_DEBUG_ID_SUB_U8(DBG_CMD, (uint8_t)handle->cmd);
     if (is_memory_cmd(handle->cmd) || handle->cmd < CMD_READ_VPP) {
-        json_parse(handle->data_buffer, tokens, token_count, handle);
-        // Neither this `if` nor its `else` carries a build conditional; only the two
-        // debug log lines inside the `else` do, because the flags they name have no
-        // meaning outside a DEV_TOOLS build. In a release build that body compiles
-        // empty, which is intended.
+        if (json_parse(handle->data_buffer, tokens, token_count, handle) < 0) {
+            LOG_ERROR_ID(MSG_ERR_BAD_JSON);
+            return false;
+        }
+        // Only the two debug log lines in the `else` carry a build conditional:
+        // the flags they name have no meaning outside a DEV_TOOLS build.
         //
-        // The test is predicate-first (`is_memory_cmd(handle->cmd) ||`) with the cheap
-        // ordinal test as fallback, so a memory command above ordinal 11 is admitted
-        // exactly as one below 11 already was. Re-ordering the CMD_* enum instead was
-        // rejected: it breaks wire compatibility with every shipped firmware and host.
+        // The test is predicate-first (`is_memory_cmd(handle->cmd) ||`) with the
+        // ordinal test as fallback, so a memory command above ordinal 11 is
+        // admitted like one below it.
         if (is_memory_cmd(handle->cmd)) {
             LOG_DEBUG_ID_SUB_U8(DBG_FLAG_FORCE, is_flag_set(FLAG_FORCE));
             LOG_DEBUG_ID_SUB_U8(DBG_FLAG_CAN_ERASE, is_flag_set(FLAG_CAN_ERASE));
@@ -100,8 +106,10 @@ bool parse_json(firestarter_handle_t* handle) {
 #endif
         }
     } else if (handle->cmd == CMD_CONFIG) {
-        rurp_configuration_t* config = rurp_get_config();
-        int res = json_parse_config(handle->data_buffer, tokens, token_count, config, handle);
+        // Edits go into a staged copy. The live configuration changes, and is
+        // saved, only when the whole frame is accepted.
+        rurp_configuration_t staged = *rurp_get_config();
+        int res = json_parse_config(handle->data_buffer, tokens, token_count, &staged, handle);
         if (res < 0) {
             LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
             return false;
@@ -110,31 +118,37 @@ bool parse_json(firestarter_handle_t* handle) {
             // Back-solve this MCU's bandgap from the operator's meter reading
             // of the supply pin. Refused, never clamped: a stored bandgap is
             // a value the firmware trusts to judge programming voltages.
-            // Sample in PROGRAMMER mode, because that is the mode every
-            // real measurement is taken in: hw_read_voltage and
-            // eprom_check_vpp both switch to it before reading. The I/O state
-            // differs between the two modes and moves the bandgap count by a
-            // whole count on a SERIAL_ON_IO board -- about 0.5 %, stored
-            // permanently. Calibrate under the conditions you measure under.
+            // Sample in PROGRAMMER mode, as eprom_check_vpp does when it
+            // judges a programming voltage. The I/O state differs between
+            // the two modes and moves the bandgap count by a whole count on
+            // a SERIAL_ON_IO board, about 0.5 %.
+            long vcc_mv = json_config_measured_vcc_mv();
+            if (vcc_mv <= 0 || vcc_mv > CONFIG_MEASURED_VCC_MAX_MV) {
+                LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
+                return false;
+            }
             rurp_set_programmer_mode();
             uint32_t bandgap_adc = (uint32_t)rurp_get_bandgap_adc_reading();
             rurp_set_communication_mode();
             uint16_t measured = rurp_bandgap_from_measured_vcc(
-                (uint32_t)json_config_measured_vcc_mv(), bandgap_adc,
-                RURP_ADC_FULL_SCALE);
+                (uint32_t)vcc_mv, bandgap_adc, RURP_ADC_FULL_SCALE);
             if (measured == 0) {
                 LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
                 return false;
             }
-            config->bandgap_mv = measured;
+            staged.bandgap_mv = measured;
             res |= JSON_CFG_FIELD_CHANGED;
         }
         if (res & JSON_CFG_FIELD_CHANGED) {
-            // Range-check whatever was just written before it is stored, so a
-            // bad r1/r2/bandgap never reaches the conversion. Refuses by
-            // correcting to the default, which is the same policy boot applies.
-            (void)rurp_config_migrate(config);
-            rurp_save_config(config);
+            // rurp_config_migrate corrects any out-of-range field. A change
+            // means the frame carried a bad value: refuse the whole frame
+            // and leave the live configuration as it was.
+            if (rurp_config_migrate(&staged)) {
+                LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
+                return false;
+            }
+            *rurp_get_config() = staged;
+            rurp_save_config(rurp_get_config());
         }
     }
     return true;
@@ -145,8 +159,7 @@ bool init_programmer_framed(firestarter_handle_t* handle) {
     handle->operation_state = 0;
 
     /* data_buffer and data_size are pre-filled by the CMD_IDLE COBS decode
-     * step (the rurp_communication_read_bytes call is deleted).
-     * data_buffer[data_size] is already NUL-terminated by the CMD_IDLE branch. */
+     * step. data_buffer[data_size] is already NUL-terminated there. */
     handle->ctrl_flags = 0x80;
     LOG_DEBUG_ID_SUB_U16(DBG_BUFFER_SIZE, (uint16_t)handle->data_size);
     if (handle->data_size == 0) {
@@ -157,24 +170,20 @@ bool init_programmer_framed(firestarter_handle_t* handle) {
 
     if (!parse_json(handle)) {
         return false;
-    };
+    }
 
-    // A SECOND, independent ordinal-range guard, deliberately NOT converted to
-    // is_memory_cmd(). It gates diagnostic output only -- three DBG_* lines --
-    // never hardware configuration, so the admission gate's safety argument does
-    // not apply. Converting it would silently drop those lines for cmd 7/8 in a
-    // DEV_TOOLS build for no safety gain.
+    // This ordinal-range test is separate from is_memory_cmd(). It gates
+    // diagnostic output only (three DBG_* lines), never hardware configuration.
     //
-    // CMD_LOCK_STATUS (16) is above CMD_READ_VPP (11) and so falls outside this
-    // range by construction -- this is a CHOICE, not an oversight, so
-    // `dev lock-status` emits none of the three DBG_* diagnostic lines below.
+    // CMD_LOCK_STATUS (16) is above CMD_READ_VPP (11), so it falls outside
+    // this range and emits none of the three DBG_* lines below.
     if (handle->cmd > CMD_IDLE && handle->cmd < CMD_READ_VPP) {
         LOG_DEBUG_ID_SUB_U32(DBG_MEM_SIZE, (uint32_t)handle->mem_size);
         LOG_DEBUG_ID_SUB_U32(DBG_ADDR_MASK, (uint32_t)handle->bus_config.address_mask);
         LOG_DEBUG_ID_SUB_U16(DBG_MATCH_LINES, (uint16_t)handle->bus_config.matching_lines);
     }
     // Per-command identity echo (INFO severity, FLAG_VERBOSE-gated at the
-    // macro level — visible in host verbose mode, filtered out of the
+    // macro level; visible in host verbose mode, filtered out of the
     // OK/ERROR ack chain).
     LOG_INFO_ID_ASTR(MSG_INFO_FW, FW_VERSION);
 #ifdef HARDWARE_REVISION
@@ -182,34 +191,27 @@ bool init_programmer_framed(firestarter_handle_t* handle) {
     LOG_INFO_ID_U8(MSG_INFO_HW, (uint8_t)rurp_get_hardware_revision());
 #endif
     LOG_INFO_ID_U8(MSG_INFO_CMD, (uint8_t)handle->cmd);
-    // Wire layout -- three length-discriminated extensions of one variable blob:
+    // Wire layout, three length-discriminated extensions of one variable blob:
     //   [buffer_size u16 BE][hw_revision u8][ver_len u8][ver bytes][write_budget_s u16 BE]
     //
-    // MSG_OK_READY's catalog entry is a variable-length byte blob, so extending it
-    // needs no messages.toml edit and no codegen run.
+    // Emit this for every command, so the ack has the same shape for each
+    // command and a length-discriminating host decoder keeps its discriminator.
+    // write_budget_s is 0 for a command that is not a memory command, and for
+    // a protocol that is not an EPROM protocol. The host then leaves its
+    // attribute unset and uses its fallback.
     //
-    // Emit this for EVERY command, not just CMD_WRITE: the ack's shape must not
-    // vary by command, or a length-discriminating host decoder loses its only
-    // discriminator. eprom_block_budget_s returns 0 for a non-EPROM protocol, and
-    // the host's plausibility clamp then leaves its attribute unset and falls back
-    // -- which also covers the non-memory-command case where configure_memory
-    // never ran and pulse_delay is still 0.
-    //
-    // The budget is already PADDED by the firmware: only the firmware knows the
+    // The budget is already padded by the firmware: only the firmware knows the
     // once-per-block VPE settle, the verify passes, the per-pulse settle and the
     // transport time, so the host applies no multiplier. include/eprom_budget.h
     // has the padding rule.
     //
-    // Backward compatibility is a LENGTH test and degrades rather than misparses:
-    // a host predating the identity extension tests `len(params) == 2`, misses, and
-    // falls back to
-    // its 512-byte chunk floor.
+    // A host that tests `len(params) == 2` does not match the longer blob and
+    // falls back to its 512-byte chunk floor.
     //
-    // Emitting identity HERE is safe: configure_memory has run, but every
-    // configure_* handler is pure function-pointer assignment and the VPP
-    // regulator is not engaged until firestarter_operation_init, behind
-    // op_wait_for_ack(). A host that reads this ack and refuses stops with the rail
-    // still DOWN -- the compatibility gate cannot energise the part it protects.
+    // The identity is safe to emit here: configure_memory has run, but every
+    // configure_* handler only assigns function pointers, and the VPP regulator
+    // is not engaged until firestarter_operation_init, behind op_wait_for_ack().
+    // A host that reads this ack and refuses stops with the rail still down.
     {
         const char* _ver = FW_VERSION;
         uint8_t _vlen = (uint8_t)strlen(_ver);
@@ -220,12 +222,14 @@ bool init_programmer_framed(firestarter_handle_t* handle) {
 #ifdef HARDWARE_REVISION
         _ready[2] = (uint8_t)rurp_get_hardware_revision();
 #else
-        _ready[2] = 0xFE;  // REVISION_UNKNOWN -- the symbol lives inside that same #ifdef
+        _ready[2] = 0xFE;  // REVISION_UNKNOWN; its symbol is defined only under HARDWARE_REVISION
 #endif
         _ready[3] = _vlen;
         memcpy(_ready + 4, _ver, _vlen);
-        uint16_t _budget = eprom_block_budget_s(handle->protocol, handle->pulse_delay,
-                                                 (uint32_t)DATA_BUFFER_SIZE);
+        uint16_t _budget = is_memory_cmd(handle->cmd)
+                               ? eprom_block_budget_s(handle->protocol, handle->pulse_delay,
+                                                      (uint32_t)DATA_BUFFER_SIZE)
+                               : 0;
         _ready[4 + _vlen]     = (uint8_t)((_budget >> 8) & 0xFF);
         _ready[4 + _vlen + 1] = (uint8_t)(_budget & 0xFF);
         LOG_OK_ID_BYTES(MSG_OK_READY, _ready, (uint8_t)(4 + _vlen + 2));
@@ -242,6 +246,9 @@ void command_done(firestarter_handle_t* handle) {
     rurp_write_to_register(LEAST_SIGNIFICANT_BYTE, 0x00);
     rurp_write_to_register(MOST_SIGNIFICANT_BYTE, 0x00);
     handle->cmd = CMD_IDLE;
+    handle->firestarter_operation_init = NULL;
+    handle->firestarter_operation_main = NULL;
+    handle->firestarter_operation_end = NULL;
     rurp_set_communication_mode();
 }
 
@@ -251,36 +258,32 @@ void loop() {
         command_done(&handle);
     } else if (handle.cmd == CMD_IDLE) {
         if (rurp_communication_available() > 0) {
-            /* COBS frame decode; there is no '{'-peek /
-             * discard-non-'{' loop.
+            /* rurp_communication_read_data() reads through the 0x00 delimiter,
+             * COBS-decodes in place, verifies CRC8 before any JSON byte is
+             * examined, and on any COBS/CRC/overflow failure drains to the
+             * delimiter and returns negative.
              *
-             * rurp_communication_read_data() reads through the 0x00 delimiter,
-             * COBS-decodes in place, verifies CRC8 BEFORE any JSON parse byte
-             * is examined (V5 / ADR section 4.4), and on any
-             * COBS/CRC/overflow failure calls _drain_to_delimiter() internally
-             * and returns negative — NO additional drain logic needed here.
-             *
-             * Gate STRICTLY on n > 0: a zero-length decode is not a valid
-             * command.  On n <= 0: log the frame error and stay CMD_IDLE
-             * (bounded recovery is fully handled by the decoder). */
+             * Gate on n > 0: a zero-length decode is not a valid command.
+             * On n <= 0: log the frame error and stay CMD_IDLE. */
             int n = rurp_communication_read_data(handle.data_buffer, DATA_BUFFER_SIZE - 1);
             if (n > 0) {
                 handle.data_size = (uint32_t)n;
-                /* Belt-and-suspenders: the decoder caps n at
-                 * DATA_BUFFER_SIZE-1 (PUSH guard), so n < DATA_BUFFER_SIZE
-                 * always holds and data_buffer[n] is in-bounds.
-                 * This guard documents the invariant at the write site and
-                 * protects against any future caller that forgets the cap. */
+                /* The decoder caps n at DATA_BUFFER_SIZE-1, so n < DATA_BUFFER_SIZE
+                 * always holds and data_buffer[n] is in bounds. This guard
+                 * keeps the write in bounds if that cap ever changes. */
                 if (n < DATA_BUFFER_SIZE) {
                     handle.data_buffer[n] = '\0';
                 }
                 if (init_programmer_framed(&handle)) {
                     return;
                 }
+                // A refused command must not run, and must not wait for the
+                // timeout to be reaped.
+                command_done(&handle);
             } else {
                 /* CRC mismatch, COBS violation, overflow, or read underrun.
-                 * MSG_ERR_EMPTY_INPUT reused (messages.h is codegen; adding
-                 * MSG_ERR_BAD_FRAME requires a TOML catalog update — deferred). */
+                 * There is no frame-error message id, so MSG_ERR_EMPTY_INPUT
+                 * is used. */
                 LOG_ERROR_ID(MSG_ERR_EMPTY_INPUT);
             }
         }
@@ -302,33 +305,19 @@ void loop() {
         case CMD_CHECK_CHIP_ID:
             finished = eprom_check_chip_id(&handle);
             break;
-        // Corrected form: with init/end left NULL
-        // (configure_eeprom28c), these phases are NOT skipped --
-        // _execute_operation_house_keeping_func still calls op_wait_for_ack()
-        // and still emits the INIT and END frame pairs, so each costs a host
-        // ACK round-trip. What is genuinely absent for a payload-free command
-        // is the DONE round-trip (which lives only in
-        // eprom_operations.cpp::_process_incoming_data, the write path) and
-        // any '#' data frame. Traced shape: 4 host ACKs, 7 framed lines, zero
-        // '#' frames, zero DONE string -- CMD_ERASE (above) is the working
-        // precedent and the host's generic _run_state_machine already
-        // supplies all four ACKs today, so no host change is needed for this
-        // firmware half. Both arms sit outside any preprocessor conditional.
+        // Payload-free commands (the SDP commands, whose protocol handler
+        // leaves init and end NULL) still run the INIT and END phases:
+        // _execute_operation_house_keeping_func calls op_wait_for_ack() and
+        // emits the INIT and END frame pairs, so each phase costs a host ACK
+        // round-trip. They send no DONE round-trip and no '#' data frame.
         // op_wait_for_ack has a 1000 ms timeout and emits MSG_ERR_TIMEOUT on
-        // expiry, so a standalone lock issued by a host that does not ACK
-        // times out rather than hangs (not this call site's concern).
+        // expiry, so a host that does not ACK times out instead of hanging.
         case CMD_SDP_UNLOCK:
             finished = eprom_sdp_unlock(&handle);
             break;
         case CMD_SDP_LOCK:
             finished = eprom_sdp_lock(&handle);
             break;
-        // CMD_LOCK_STATUS, in the same one-line shape
-        // as every other arm in this switch. eprom_lock_status is
-        // eprom_check_chip_id's single-step shape with no LOG_DEBUG_ID_SUB
-        // line -- see that function's own comment for why. This sits outside every
-        // preprocessor conditional, exactly like CMD_SDP_UNLOCK/CMD_SDP_LOCK
-        // above.
         case CMD_LOCK_STATUS:
             finished = eprom_lock_status(&handle);
             break;

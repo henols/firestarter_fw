@@ -1,4 +1,5 @@
-#pragma once
+#ifndef RURP_VPP_H
+#define RURP_VPP_H
 
 /*
  * VPP control capability seam: declares whether a board has a VPP DAC or is
@@ -14,8 +15,8 @@
  * supply it fails at the preprocessor rather than silently inheriting manual
  * control near an unregulated rail.
  *
- * PERMANENT, not provisional: no Arduino-class RURP board carries a VPP DAC
- * and none will -- the rail is set by the operator's potentiometer.
+ * No Arduino-class RURP board carries a VPP DAC: the operator sets the rail
+ * with a potentiometer.
  *
  * Uses __AVR__ rather than the tree's RURP_PLATFORM_AVR deliberately. __AVR__
  * is compiler-supplied and unconditional, which keeps this header
@@ -29,8 +30,8 @@
 
 #if !defined(RURP_HAS_VPP_DAC)
 #  if defined(__AVR__)
-/* Permanent, not provisional: no Arduino/AVR-class RURP board carries a
- * VPP DAC -- the rail is set by the operator's pot. Operator, 2026-07-31. */
+/* No Arduino/AVR-class RURP board carries a VPP DAC: the operator sets the
+ * rail with a potentiometer. */
 #    define RURP_HAS_VPP_DAC 0
 #  else
 #    error "RURP_HAS_VPP_DAC must be supplied by the board/platform build (for py32f071: platform/py32f071/CMakeLists.txt's target_compile_definitions), not by this header."
@@ -58,3 +59,5 @@ void rurp_disable_vpp_control(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif  // RURP_VPP_H
