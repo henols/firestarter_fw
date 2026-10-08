@@ -28,6 +28,17 @@
 static bool s_vcc_warned = false;
 #endif
 
+// Highest known hardware revision identifier (REVISION_2_3). Only a stored
+// value from 0 to this is an override; any other value, 0xFF included, means
+// "no override". rurp_get_hardware_revision uses the same rule.
+#define HW_REVISION_OVERRIDE_MAX 5
+
+static uint8_t hw_stored_override(const rurp_configuration_t* config) {
+    return (config->hardware_revision <= HW_REVISION_OVERRIDE_MAX)
+               ? (uint8_t)config->hardware_revision
+               : 0xFF;
+}
+
 bool hw_read_voltage(firestarter_handle_t* handle) {
     // State 0: Initialization. This runs only once per command.
     if (handle->operation_state == 0) {
@@ -138,9 +149,7 @@ bool hw_get_version(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_HW_VERSION);
     rurp_configuration_t* rurp_config = rurp_get_config();
     uint8_t physical  = (uint8_t)rurp_get_physical_hardware_revision();
-    uint8_t effective = (rurp_config->hardware_revision < 0xFF)
-                        ? (uint8_t)rurp_config->hardware_revision
-                        : 0xFF;  // 0xFF: no override active
+    uint8_t effective = hw_stored_override(rurp_config);  // 0xFF: no override active
     LOG_OK_ID_U8_U8(MSG_OK_REV, physical, effective);
     return true;
 }
@@ -152,9 +161,7 @@ bool hw_get_config(firestarter_handle_t* handle) {
     // u32 r1 + u32 r2 + u8 override (0xFF = no override) + u16 bandgap_mv = 11 bytes.
     // Widening a fixed-length frame: an older host rejects it on length rather
     // than misreading it, and firmware ships before the host that needs it.
-    uint8_t override_byte = (rurp_config->hardware_revision < 0xFF)
-                            ? (uint8_t)rurp_config->hardware_revision
-                            : 0xFF;
+    uint8_t override_byte = hw_stored_override(rurp_config);
     uint8_t _cfg[11];
     _cfg[0] = (uint8_t)((rurp_config->r1 >> 24) & 0xFF);
     _cfg[1] = (uint8_t)((rurp_config->r1 >> 16) & 0xFF);
