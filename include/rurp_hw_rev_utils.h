@@ -32,8 +32,8 @@ uint8_t rurp_map_ctrl_reg_for_hardware_revision(rurp_register_t data) {
         break;
     default:
         // REVISION_UNKNOWN + any unrecognized byte fall through to ctrl_reg = 0
-        // (fail-safe — no VPP enables, no VPE enables; EEPROM override is the
-        // operator escape hatch).
+        // (fail-safe — no VPP enables, no VPE enables; the EEPROM override
+        // sets a revision).
         break;
     }
 
@@ -47,8 +47,7 @@ uint8_t rurp_get_physical_hardware_revision() {
 // 8-sample averaging on a single ADC pin — pure shift-divide, no library call.
 // Robustifies the A3 detect-divider read against AVcc switching noise (the
 // RURP shield's AVcc plane carries data-buffer + control-register switching
-// loads — not a quiet ADC reference). ~104 µs added boot latency,
-// ~30 B added Flash — well within the [20, 300] B delta band.
+// loads — not a quiet ADC reference).
 static uint16_t analog_read_avg8(uint8_t pin) {
     uint16_t sum = 0;
     for (uint8_t i = 0; i < 8; i++) {
@@ -62,8 +61,7 @@ void rurp_detect_hardware_revision() {
     pinMode(PIN_HW_REVISION_DETECT_ADC, INPUT);
     pinMode(PIN_VPP_VOLTAGE_ADC, INPUT);
 
-    // 8-sample averaging on the A3 detect divider to robustify against AVcc
-    // switching noise.
+    // Average the A3 detect divider to reduce AVcc switching noise.
     uint16_t adc_a3 = analog_read_avg8(PIN_HW_REVISION_DETECT_ADC);
 
     if (adc_a3 < ADC_BAND_R41_4K7_HIGH) {
@@ -79,8 +77,7 @@ void rurp_detect_hardware_revision() {
         revision = REVISION_2_3;
     } else if (adc_a3 >= ADC_BAND_R41_10K_HIGH) {
         // High band — no R41 (pre-detect-resistor era). Disambiguate Rev 0 vs
-        // Rev 1 via the legacy A2 divider check (preserved from prior code —
-        // already correct, already shipped).
+        // Rev 1 via the A2 divider check.
         revision = analogRead(PIN_VPP_VOLTAGE_ADC) < 1000 ? REVISION_1 : REVISION_0;
     } else {
         // adc_a3 in the [ADC_BAND_R41_4K7_HIGH, ADC_BAND_R41_10K_LOW) guard gap —
@@ -90,17 +87,19 @@ void rurp_detect_hardware_revision() {
         revision = REVISION_UNKNOWN;
     }
 
-    // Hard-fail-loud: a one-shot boot-time warn surfaces detect-inconclusive;
-    // the dispatcher's silent ctrl_reg=0 fail-safe and the EEPROM override
-    // escape hatch are both preserved. Re-uses MSG_INFO_HW (0x5B).
-    if (revision == REVISION_UNKNOWN && rurp_get_config()->hardware_revision == 0xFF) {
+    // One-shot boot-time warning when detection is inconclusive and no valid
+    // override is stored. The control-register map falls back to 0 (no
+    // high-voltage enables) and the EEPROM override stays available.
+    if (revision == REVISION_UNKNOWN && rurp_get_config()->hardware_revision > REVISION_2_3) {
         LOG_WARN_ID_U8(MSG_INFO_HW, (uint8_t)REVISION_UNKNOWN);
     }
 }
 
 uint8_t rurp_get_hardware_revision() {
     rurp_configuration_t* rurp_config = rurp_get_config();
-    if (rurp_config->hardware_revision < 0xFF) {
+    // A stored value above REVISION_2_3 is not a known revision: treat it as
+    // "no override" and use the detected one.
+    if (rurp_config->hardware_revision <= REVISION_2_3) {
         return rurp_config->hardware_revision;
     }
     return rurp_get_physical_hardware_revision();

@@ -14,8 +14,6 @@
 
 #define USER_BUTTON 0x10             // USER BUTTON
 
-constexpr int INPUT_RESOLUTION = 1023;
-
 bool com_mode = true;
 
 // Deferred-log buffer.
@@ -43,10 +41,11 @@ void rurp_board_setup() {
     // Set control pins on PORTB to output.
     // PB0-3 are register select lines, PB5 is Chip Enable.
     // PB4 is User Button input.
-    // NOTE: The original code included `CTRL_READ_WRITE` (0x40), which would attempt to control PB6.
-    // On a standard Uno, PB6 is a crystal pin and should not be used for I/O. It has been removed.
+    // PB6 is a crystal pin on a standard Uno, so it is not used for I/O.
+    // Write the port latch first so CE and OE are already high (chip disabled,
+    // outputs off) when the pins become outputs, and the button pull-up is set.
+    PORTB = USER_BUTTON | OUTPUT_ENABLE | CHIP_ENABLE;
     DDRB = LEAST_SIGNIFICANT_BYTE | MOST_SIGNIFICANT_BYTE | CONTROL_REGISTER | OUTPUT_ENABLE | CHIP_ENABLE;
-    PORTB = USER_BUTTON;
 
     rurp_chip_disable();
     rurp_chip_input();
@@ -76,7 +75,7 @@ void rurp_set_communication_mode() {
     com_mode = true;
 
     // Flush frames deferred during the programmer-mode window now that the UART is
-    // up and the wire is safe to drive (#transport-protocol-verify).
+    // up and the wire is safe to drive.
     for (uint8_t i = 0; i < deferred_count; i++) {
         _firestarter_emit_frame(deferred_log[i].id, deferred_log[i].params, deferred_log[i].len);
     }
@@ -98,10 +97,11 @@ void rurp_log_id(uint8_t id, const uint8_t* params, uint8_t param_count) {
         _firestarter_emit_frame(id, params, param_count);
         return;
     }
-    // Programmer mode: the wire is the data bus — defer instead of dropping, then
-    // flush in rurp_set_communication_mode (#transport-protocol-verify).
+    // Programmer mode: the wire is the data bus. Defer the frame and flush it in
+    // rurp_set_communication_mode. A frame with more parameters than a slot
+    // holds is dropped: truncating it would send a valid-CRC frame with wrong data.
     if (param_count > DEFERRED_PARAM_MAX) {
-        param_count = DEFERRED_PARAM_MAX;  // truncate; no narrow frame exceeds this
+        return;
     }
     if (deferred_count < DEFERRED_LOG_MAX) {
         deferred_log[deferred_count].id = id;
@@ -111,11 +111,10 @@ void rurp_log_id(uint8_t id, const uint8_t* params, uint8_t param_count) {
         }
         deferred_count++;
     }
-    // else: buffer full (should not happen in production — see DEFERRED_LOG_MAX);
-    // drop excess rather than risk emitting on the active bus.
+    // else: buffer full; drop the frame rather than risk emitting on the active bus.
 }
 
-// Uno strong override for rurp_log_id_wide (W-04 MSG_DATA_CHUNK path).
+// Uno strong override for rurp_log_id_wide (MSG_DATA_CHUNK path).
 // Same com_mode discipline as rurp_log_id; calls the wide frame emitter.
 void rurp_log_id_wide(uint8_t id, const uint8_t* params, uint16_t param_count) {
     if (com_mode) {
@@ -127,7 +126,6 @@ void rurp_log_id_wide(uint8_t id, const uint8_t* params, uint16_t param_count) {
 void rurp_set_control_pin(uint8_t pin, uint8_t state) {
     // This function modifies only the specified control pin on PORTB,
     // leaving other bits (like the USER_BUTTON pull-up) untouched.
-    // The original implementation was flawed and could clear other bits.
     if (state) {
         PORTB |= pin;
     } else {
@@ -156,8 +154,7 @@ void rurp_set_data_input() {
     // Clear PORTD before switching to input so internal pullups are disabled
     // on every data line. Without this, residual PORTD bits from the last
     // register-strobe or rurp_set_communication_mode (PORTD bit 0 = 1) leave
-    // 1..2 data pins weakly biased HIGH against the chip's drive. Defensive
-    // — does not on its own fix the FM1608 byte-0 read failure on Uno.
+    // 1..2 data pins weakly biased HIGH against the chip's drive.
     PORTD = 0x00;
     DDRD = 0x00;
 }

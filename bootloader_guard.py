@@ -21,6 +21,8 @@ DEVICE_FLASH_BYTES = 32768
 
 
 def _image_size(target):
+    # Flash use is .text plus .data: the initialised data is stored in flash
+    # and copied to RAM at start-up.
     sections = (".text", ".data")
     size_tool = env.subst("$SIZETOOL")
     if not size_tool:
@@ -53,15 +55,21 @@ def check_bootloader_margin(source, target, env):
     env_name = env["PIOENV"]
     reserved = BOOTLOADER_BYTES.get(env_name)
     if reserved is None:
-        return
+        if env.get("PIOPLATFORM") != "atmelavr":
+            return
+        raise SystemExit(
+            f"\nbootloader-guard: BUILD REFUSED for {env_name}.\n"
+            f"  no bootloader size is listed for this environment.\n"
+            f"Add it to BOOTLOADER_BYTES in bootloader_guard.py.\n"
+        )
 
     used = _image_size(target[0])
     if used is None:
-        print(
-            f"bootloader-guard: WARNING -- could not measure the {env_name} image; "
-            "the bootloader margin was NOT checked."
+        raise SystemExit(
+            f"\nbootloader-guard: BUILD REFUSED for {env_name}.\n"
+            f"  the image size could not be measured, so the bootloader margin\n"
+            f"  was not checked.\n"
         )
-        return
 
     safe_ceiling = DEVICE_FLASH_BYTES - reserved
     margin = safe_ceiling - used

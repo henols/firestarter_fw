@@ -114,7 +114,7 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
      * new `last_byte`.  Drains and returns -2 on overflow.
      *
      * The overflow guard uses a caller-supplied `cap` instead of a
-     * hardcoded DATA_BUFFER_SIZE-1 literal.
+     * fixed DATA_BUFFER_SIZE-1 limit.
      *   CMD_IDLE path (firestarter.cpp): cap = DATA_BUFFER_SIZE-1  (NUL-slot
      *       preserved; data_buffer[n] = '\0' is always in-bounds).
      *   MAIN data path (operation_utils.cpp): cap = DATA_BUFFER_SIZE  (full block;
@@ -141,16 +141,15 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
          * arrive here with at least the first byte already consumed).
          * On host silence past TIMEOUT_MS: drain (bounded) + return negative.
          * This prevents a truncated frame (host kills connection mid-frame)
-         * from hanging the programmer until physical reset (mitigated).
+         * from hanging the programmer until physical reset.
          * The truly-idle path is unaffected: loop() guards entry on
          * rurp_communication_available()>0, so no timer runs while idle. */
         if (rurp_communication_available() <= 0) {
             unsigned long start = millis();
             while (rurp_communication_available() <= 0) {
                 if (millis() - start >= TIMEOUT_MS) {
-                    /* 53-04: silence already proven + buffer empty -> drain without a
-                     * second redundant TIMEOUT_MS wait (brings a dropped-delimiter
-                     * frame error from ~2 s to ~1 s). */
+                    /* Silence is already proven and the buffer is empty, so drain
+                     * without a second TIMEOUT_MS wait. */
                     _drain_to_delimiter(false);
                     return -1;             /* mid-frame inter-byte deadline exceeded */
                 }
@@ -210,7 +209,7 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
     uint8_t rcvd_crc = last_byte; /* 1-byte lookahead holds the CRC8 */
 
     /* Recompute CRC8-CCITT over the decoded payload using the EXISTING PROGMEM
-     * table accessor (UNCHANGED, no new CRC routine). */
+     * table accessor. */
     uint8_t computed_crc = 0;
     for (size_t i = 0; i < out; i++) {
         computed_crc = crc8_ccitt(computed_crc, (uint8_t)buffer[i]);
@@ -223,17 +222,15 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
     return (int)out;
 }
 
-// COBS streaming encoder — the dormant mirror of
-// rurp_communication_read_data above. Dead code in all shipping envs, kept
-// for contract symmetry and Unity round-trip coverage.
+// COBS streaming encoder — the mirror of rurp_communication_read_data above.
+// Its only caller handles RESPONSE_CODE_DATA, which no operation returns.
 //
 // Emit [COBS(payload + CRC8(payload))][0x00] directly to SERIAL_PORT.
 // ~6 B stack: run_start, run_len, crc.  No second buffer: run data bytes are
 // emitted via SERIAL_PORT.write(buffer+run_start, run_len) from the source
 // buffer; the single CRC byte is held in a 1-byte local.
 //
-// CRC8 uses the EXISTING crc8_ccitt PROGMEM table accessor.
-// No size>>8 / size&0xFF len_u16 prefix and no XOR checksum.
+// CRC8 uses the crc8_ccitt PROGMEM table accessor.
 size_t rurp_communication_write(const char* buffer, size_t size) {
     /* Step 1: compute CRC8-CCITT over raw payload. */
     uint8_t crc = 0;
@@ -252,7 +249,7 @@ size_t rurp_communication_write(const char* buffer, size_t size) {
      * The CRC byte is treated as a virtual (size)th index: value = crc,
      * handled after the payload loop.
      *
-     * Pitfall 2 (RESEARCH): 254-run code is 0xFF; no implicit zero follows.
+     * The 254-run code is 0xFF; no implicit zero follows it.
      * The loop variable `i` walks 0..size-1 (payload) then we handle CRC.
      */
     size_t run_start = 0;
@@ -282,7 +279,7 @@ size_t rurp_communication_write(const char* buffer, size_t size) {
         }
     }
 
-    /* Handle the CRC byte as the (N+1)th payload byte (ADR §4.3).
+    /* Handle the CRC byte as the (N+1)th payload byte.
      * Post-loop invariant: run_len is 0..253 (never 254; the loop resets it
      * when the 254-run boundary fires).  Only two cases remain. */
     if (crc == 0x00) {
@@ -346,31 +343,18 @@ static uint8_t crc8_ccitt(uint8_t crc, uint8_t b) {
     return pgm_read_byte(&CRC8_TABLE[crc ^ b]);
 }
 
-// Board-agnostic frame emitter — same line discipline as Phase-9-deleted
-// text-prefix log helpers (single-byte writes, .flush() at end). Does NOT
+// Board-agnostic frame emitter: single-byte writes, .flush() at end. Does NOT
 // consult com_mode; the strong override on Uno gates this call. Leonardo's
 // USB-CDC has no PORTD aliasing risk so it uses the weak default of
 // rurp_log_id which calls this unconditionally.
 void _firestarter_emit_frame(uint8_t id, const uint8_t* params, uint8_t param_count) {
-    // Wire-frame budget guard: `len = 1 (id) + param_count + 1 (crc)` must
-    // fit in a uint8_t. With param_count >= 254 the `len` byte wraps silently
-    // and the host decoder reads a shorter body than we actually emit — frame
-    // desync. The catalog enforces a 24-byte PARAM_BUDGET cap upstream, but
-    // this is the wire boundary; refuse oversize frames here regardless so
-    // callers (including future LOG_ID_BYTES users) cannot trip the wrap.
-    // Silent drop is deliberate — we cannot emit a valid frame on the same
-    // serial channel without risking the desync we are trying to prevent.
-    if (param_count > 65533) {   // u16 max (65535) - 2 (for id + crc)
-        return;
-    }
-
     // Magic preamble (4 bytes from PROGMEM).
     SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[0]));
     SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[1]));
     SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[2]));
     SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[3]));
 
-    // Length field (u16 big-endian, W-04): counts id + params + crc;
+    // Length field (u16 big-endian): counts id + params + crc;
     // excludes the len field itself and the trailing 0x0A anchor.
     uint16_t len_u16 = (uint16_t)(1 + param_count + 1);
     SERIAL_PORT.write((uint8_t)(len_u16 >> 8));    // MSB
@@ -414,7 +398,7 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
     SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[2]));
     SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[3]));
 
-    // Length field (u16 big-endian, W-04).
+    // Length field (u16 big-endian).
     uint16_t len_u16 = (uint16_t)(1 + param_count + 1);
     SERIAL_PORT.write((uint8_t)(len_u16 >> 8));    // MSB
     SERIAL_PORT.write((uint8_t)(len_u16 & 0xFF));  // LSB
@@ -448,10 +432,8 @@ __attribute__((weak)) void rurp_log_id(uint8_t id, const uint8_t* params, uint8_
     _firestarter_emit_frame(id, params, param_count);
 }
 
-// Fixed-shape packers. Each LOG_*_ID_U{8,16,24,32} macro previously inlined
-// the byte-array build at every call site (~10-30 instructions × ~30 sites).
-// Sharing the pack here keeps the call site to a single CALL and reduces
-// Flash use by ~200-400 B on AVR. No com_mode gate needed; rurp_log_id
+// Fixed-shape packers. Each LOG_*_ID_U{8,16,24,32} macro calls one of these,
+// so the call site is a single CALL. No com_mode gate needed; rurp_log_id
 // itself routes through the strong override on Uno.
 void rurp_log_id_u8(uint8_t id, uint8_t v) {
     uint8_t b[1] = { v };
@@ -486,10 +468,8 @@ void rurp_log_id_u32(uint8_t id, uint32_t v) {
 }
 
 // Weak default for rurp_log_id_wide — wide variant for large payloads
-// (W-04 MSG_DATA_CHUNK). Uno's strong override in uno_rurp_shield.cpp should
-// also provide rurp_log_id_wide; until it does, this weak default works for
-// both boards (Leonardo has no com_mode gate; Uno should not call this path
-// outside communication mode, which the operation-loop already ensures).
+// (MSG_DATA_CHUNK). Leonardo uses this default and has no com_mode gate. Uno
+// overrides it in uno_rurp_shield.cpp to gate on com_mode.
 __attribute__((weak)) void rurp_log_id_wide(uint8_t id, const uint8_t* params, uint16_t param_count) {
     _firestarter_emit_frame_wide(id, params, param_count);
 }
