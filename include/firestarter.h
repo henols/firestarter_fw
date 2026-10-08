@@ -18,16 +18,14 @@
 #endif
 
 // Value semantics for DEV_TOOLS, shared so the directive means the same thing
-// on every target. Under a presence-based #ifdef, DEV_TOOLS=0 would perversely
-// ENABLE dev tools on ARM.
+// on every target. Under a presence-based #ifdef, DEV_TOOLS=0 would enable
+// dev tools on ARM.
 //
-// Must stay INSIDE the include guard: above it, the host parity test's guard
-// detection misidentifies the real guard.
+// Must stay inside the include guard.
 //
-// Not syntactically in scope in include/dev_tools.h or src/dev_tools.cpp, which
-// test DEV_TOOLS before including anything. They are still correct, because an
-// undefined identifier evaluates to 0 in a preprocessor #if -- but enabling
-// -Wundef would require pulling this default into a header they include.
+// This default is not in scope in include/dev_tools.h or src/dev_tools.cpp,
+// which test DEV_TOOLS before including anything. They are correct anyway,
+// because an undefined identifier evaluates to 0 in a preprocessor #if.
 #ifndef DEV_TOOLS
 #define DEV_TOOLS 0
 #endif
@@ -35,12 +33,12 @@
 /* CMD_FRAME_MAX: largest legitimate JSON command frame payload (bytes).
  * Worst-case JSON command is ~422 B; 512 B gives headroom.
  * Equals DATA_BUFFER_SIZE — the decoder's internal overflow cap.
- * Mirrors constants.py CMD_FRAME_MAX per CLAUDE.md parity. */
+ */
 #define CMD_FRAME_MAX DATA_BUFFER_SIZE
 
 /* FW identity string: "<version>:<board>" only.
- * Buffer capacity (DATA_BUFFER_SIZE) is no longer carried in the identity
- * string — it is advertised as a u16 bytes param on every MSG_OK_READY ack. */
+ * Buffer capacity (DATA_BUFFER_SIZE) is advertised as a u16 bytes param on
+ * every MSG_OK_READY ack. */
 #define FW_VERSION VERSION ":" RURP_BOARD_NAME
 
 #define TIMEOUT_MS 1000
@@ -50,52 +48,38 @@
 #define CMD_WRITE 2
 #define CMD_ERASE 3
 
-// Ordinal 4 -- the standalone blank-check command -- retired in 3.1.0
-// (Phase 204). The host side -- firestarter_app/firestarter/constants.py's
-// COMMAND_BLANK_CHECK and its COMMAND_NAMES row -- was retired in the same
-// commit pair. This ordinal must NEVER be reused for any new command, flag
-// or reserved meaning: an already-shipped host still composes it, and
-// reassigning the number would make that stale host silently drive a
-// different operation. A frame carrying ordinal 4 now falls through
-// firestarter.cpp's dispatch switch default: arm, which answers
-// MSG_ERR_UNKNOWN_CMD rather than running any handler.
+// Ordinal 4 (the standalone blank-check command) is retired. Never reuse it
+// for a new command, flag or reserved meaning: an already-shipped host still
+// composes it, and reassigning the number would make that host drive a
+// different operation. A frame with ordinal 4 reaches the default arm of
+// firestarter.cpp's dispatch switch, which answers MSG_ERR_UNKNOWN_CMD.
 
 #define CMD_CHECK_CHIP_ID 5
 
-// Ordinal 6 -- the verify command -- retired in 3.1.0 (Phase 204). The host
-// side -- firestarter_app/firestarter/constants.py's COMMAND_VERIFY and its
-// COMMAND_NAMES row -- was retired in the same commit pair. This ordinal
-// must NEVER be reused for any new command, flag or reserved meaning: an
-// already-shipped host still composes it, and reassigning the number would
-// make that stale host silently drive a different operation. A frame
-// carrying ordinal 6 now falls through firestarter.cpp's dispatch switch
-// default: arm, which answers MSG_ERR_UNKNOWN_CMD rather than running any
-// handler.
+// Ordinal 6 (the verify command) is retired. Never reuse it for a new
+// command, flag or reserved meaning, for the same reason as ordinal 4. A frame
+// with ordinal 6 reaches the default arm of firestarter.cpp's dispatch switch,
+// which answers MSG_ERR_UNKNOWN_CMD.
 
 #if DEV_TOOLS
 #define CMD_DEV_ADDRESS 7
 #define CMD_DEV_REGISTER 8
 
-// 17 is the next unused integer: 0-16 are allocated and ordinals 4 and 6 are
-// retired and must never be reused. Dev-gated, so it exists only under
+// 18 is the next unused integer: 0-17 are allocated and ordinals 4 and 6 are
+// retired and must never be reused. CMD_DEV_ADC exists only under
 // -D DEV_TOOLS, which the beta channel injects and the stable build does not.
-// It is NOT a memory command -- it configures no protocol handler and is
-// deliberately absent from is_memory_cmd() below.
+// It is not a memory command: it configures no protocol handler and is absent
+// from is_memory_cmd() below.
 #define CMD_DEV_ADC 17
 #endif
 
 // Standalone SDP (Software Data Protection) enable/disable commands on
-// protocol 0x0D (eeprom_28c.cpp). Unlike CMD_READ/CMD_WRITE/etc these carry
-// no payload and no MAIN/END round-trip. Slots 9 and 10
-// were the only two free command values, and BOTH sit above
-// CMD_DEV_ADDRESS (7): that is exactly why the #ifdef DEV_TOOLS-conditional
-// ordinal admission guard had to be replaced by is_memory_cmd() (below)
-// BEFORE these could be defined -- with the old guard in place, a
-// DEV_TOOLS build would have
-// routed 9/10 into the dev-tools branch and never called configure_memory,
-// leaving the new commands with no bus configuration at all.
-// Both defines are UNCONDITIONAL (never DEV_TOOLS-gated): they are real
-// user-facing operations in every build.
+// protocol 0x0D (eeprom_28c.cpp). Unlike CMD_READ/CMD_WRITE/etc they carry
+// no payload and no MAIN/END round-trip. Both sit above CMD_DEV_ADDRESS (7),
+// so admission to configure_memory() is decided by is_memory_cmd() (below)
+// and not by an ordinal range.
+// Both defines are unconditional: they are user-facing operations in every
+// build.
 #define CMD_SDP_UNLOCK 9
 #define CMD_SDP_LOCK 10
 
@@ -105,39 +89,30 @@
 #define CMD_CONFIG 14
 #define CMD_HW_VERSION 15
 
-// 16 is the next unused integer -- no slot below 11 was free
-// (CMD_READ_VPP..CMD_HW_VERSION occupy 11-15, and slots 9 and 10 were the
-// only two free command values below that, per the
-// CMD_SDP_UNLOCK/CMD_SDP_LOCK comment above). This IS a memory command: the
-// protection-status read is issued through handle->firestarter_get_data,
-// a protocol-handler function pointer only configure_memory() sets, so it
-// needs a protocol handler exactly as CMD_READ/CMD_WRITE/etc do.
+// CMD_LOCK_STATUS is a memory command: the protection-status read is issued
+// through handle->firestarter_get_data, a protocol-handler function pointer
+// only configure_memory() sets, so it needs a protocol handler as
+// CMD_READ/CMD_WRITE/etc do.
 #define CMD_LOCK_STATUS 16
 
-// ACCESS-CONTROL GATE, not hygiene: this decides which commands may call
-// configure_memory() and so configure the hardware bus. configure_eprom(),
-// reachable only through this gate, enables the 12V VPP boost regulator --
-// a hazard on a 5V part. Admitting a command here is a hardware-safety
-// decision.
+// Access-control gate: this decides which commands may call configure_memory()
+// and so configure the hardware bus. configure_eprom(), reachable only
+// through this gate, enables the 12 V VPP boost regulator, a hazard on a 5 V
+// part. Admitting a command here is a hardware-safety decision.
 //
-// It enumerates the memory commands BY NAME rather than testing an ordinal
-// range, which is what lets it be unconditional: the old guard had to be
-// #ifdef'd because it named CMD_DEV_ADDRESS/CMD_DEV_REGISTER, which exist only
-// under -D DEV_TOOLS. rurp_pinmap_guard.h delegates to this predicate rather
-// than re-listing the set.
+// It lists the memory commands by name instead of testing an ordinal range.
+// firestarter.cpp (the admission test in parse_json), json_parser.c (the
+// algorithm requirement) and rurp_pinmap_guard.h use this predicate and do
+// not list the set again.
 //
 // Hard constraints:
-//  - NO preprocessor conditional of any kind in this function's body. All seven
-//    named macros are unconditionally defined. There is no source-scan gate
-//    that checks this -- a tree-wide search finds none -- and the only
-//    consumer of this predicate outside this header is
-//    test/native/avr/test_cmd_admission/test_cmd_admission.cpp's truth table.
-//  - static inline, IN THIS HEADER. [env:native]'s build_src_filter compiles
-//    only src/proms/, rurp_serial_utils.cpp and json_parser.c, so a definition
-//    elsewhere would not link into the native test binary.
-//  - MUST NOT name CMD_DEV_ADDRESS or CMD_DEV_REGISTER -- they do not exist in
-//    a no-DEV_TOOLS build, and naming them recreates the divergence this
-//    predicate exists to remove.
+//  - No preprocessor conditional in this function's body. All seven named
+//    macros are unconditionally defined.
+//  - static inline, in this header. [env:native]'s build_src_filter compiles
+//    only src/proms/, rurp_serial_utils.cpp and json_parser.c, so a
+//    definition elsewhere would not link into the native test binary.
+//  - It must not name CMD_DEV_ADDRESS or CMD_DEV_REGISTER: they do not exist
+//    in a build without DEV_TOOLS.
 static inline bool is_memory_cmd(uint8_t cmd) {
     switch (cmd) {
         case CMD_READ:
@@ -163,15 +138,10 @@ static inline bool is_memory_cmd(uint8_t cmd) {
 #define FLAG_CAN_ERASE 0x02
 #define FLAG_SKIP_ERASE 0x04
 
-// The skip-blank-check control flag, 0x08 -- retired in 3.1.0 (Phase 205).
-// The host side -- firestarter_app/firestarter/constants.py's flag block --
-// was retired in the same commit pair. This value must NEVER be reused for
-// any new control flag: an already-shipped host still composes 0x08 on
-// every `write -b` and on `dev test`'s masked UV slot writes, and
-// reassigning the bit would make that stale host silently turn on whatever
-// new behaviour took the number. While it existed, the flag selected
-// whether write-init's blank check ran; that check itself left the
-// firmware in the same phase (FWBLANK-01..03).
+// The skip-blank-check control flag, 0x08, is retired. Never reuse this value
+// for a new control flag: an already-shipped host still composes 0x08 on
+// every `write -b` and on `dev test`'s masked UV slot writes, and reassigning
+// the bit would turn on whatever new behaviour took the number.
 
 #define FLAG_VPE_AS_VPP 0x10
 
@@ -183,9 +153,7 @@ static inline bool is_memory_cmd(uint8_t cmd) {
 // Declines the SDP (Software Data Protection) auto-unlock command sequence
 // on protocol 0x0D (eeprom_28c.cpp), so a write against an SDP-protected
 // AT28C part will not land -- an honest tradeoff reported via
-// MSG_WARN_SDP_UNLOCK_SKIPPED rather than a silent no-op. Firmware-only in
-// this milestone phase: the host CLI surface (--skip-sdp-unlock /
-// constants.py) is delivered separately, firmware-before-host.
+// MSG_WARN_SDP_UNLOCK_SKIPPED rather than a silent no-op.
 #define FLAG_SKIP_SDP_UNLOCK 0x100
 
 #define is_flag_set(flag) \
@@ -206,8 +174,8 @@ typedef struct firestarter_handle {
     uint8_t cmd;
     uint8_t operation_state;
     uint8_t response_code;
-    uint8_t protocol;            /* largest dispatched value is 0x39 (PROTO_PHANTOM_0x39,
-                                   * include/proto_constants.h) -- fits uint8_t */
+    uint8_t protocol;            /* largest dispatched value is 0x39 (PROTO_PHANTOM_0x39),
+                                   * which fits uint8_t */
     uint8_t pins;
     uint32_t mem_size;
     uint32_t address;
@@ -219,8 +187,7 @@ typedef struct firestarter_handle {
                                    * 0xFFFF needs this field widened. */
     uint16_t chip_id;
     uint16_t page_size;          /* per-chip page-write size delivered by the host over the wire;
-                                   * 0 = absent. Reset per command in json_parse,
-                                   * exactly like chip_id above. */
+                                   * 0 = absent. Reset per command in json_parse. */
     uint32_t region_end;         /* absolute, EXCLUSIVE end address of the operation's region,
                                    * delivered by the host over the wire; 0 = absent. Unlike
                                    * page_size above, absent means the WHOLE DEVICE -- the
@@ -228,8 +195,7 @@ typedef struct firestarter_handle {
                                    * write, so refusing on absence is the safe direction, while
                                    * this field guards a relaxation of an existing check, so
                                    * falling back to the stricter whole-device behaviour is the
-                                   * safe direction instead. Reset per command in json_parse,
-                                   * exactly like page_size above. */
+                                   * safe direction instead. Reset per command in json_parse. */
     char data_buffer[DATA_BUFFER_SIZE];
     uint32_t data_size;
     bus_config_t bus_config;
