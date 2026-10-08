@@ -48,16 +48,16 @@
 #define CMD_WRITE 2
 #define CMD_ERASE 3
 
-// Ordinal 4 (the standalone blank-check command) is retired. Never reuse it
-// for a new command, flag or reserved meaning: an already-shipped host still
-// composes it, and reassigning the number would make that host drive a
-// different operation. A frame with ordinal 4 reaches the default arm of
+// Ordinal 4 (the standalone blank-check command) was retired in 3.1.0. Never
+// reuse it for a new command, flag or reserved meaning: an already-shipped
+// host still composes it, and reassigning the number would make that host
+// drive a different operation. A frame with ordinal 4 reaches the default arm of
 // firestarter.cpp's dispatch switch, which answers MSG_ERR_UNKNOWN_CMD.
 
 #define CMD_CHECK_CHIP_ID 5
 
-// Ordinal 6 (the verify command) is retired. Never reuse it for a new
-// command, flag or reserved meaning, for the same reason as ordinal 4. A frame
+// Ordinal 6 (the verify command) was retired in 3.1.0. Never reuse it for a
+// new command, flag or reserved meaning, for the same reason as ordinal 4. A frame
 // with ordinal 6 reaches the default arm of firestarter.cpp's dispatch switch,
 // which answers MSG_ERR_UNKNOWN_CMD.
 
@@ -138,10 +138,10 @@ static inline bool is_memory_cmd(uint8_t cmd) {
 #define FLAG_CAN_ERASE 0x02
 #define FLAG_SKIP_ERASE 0x04
 
-// The skip-blank-check control flag, 0x08, is retired. Never reuse this value
-// for a new control flag: an already-shipped host still composes 0x08 on
-// every `write -b` and on `dev test`'s masked UV slot writes, and reassigning
-// the bit would turn on whatever new behaviour took the number.
+// The skip-blank-check control flag, 0x08, was retired in 3.1.0. Never reuse
+// this value for a new control flag: an already-shipped host still composes
+// 0x08 on every `write -b` and on `dev test`'s masked UV slot writes, and
+// reassigning the bit would turn on whatever new behaviour took the number.
 
 #define FLAG_VPE_AS_VPP 0x10
 
