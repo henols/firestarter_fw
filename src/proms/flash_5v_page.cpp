@@ -13,10 +13,14 @@
 #include "flash_utils.h"
 #include "logging_id.h"
 #include "memory_utils.h"
-#include "operation_utils.h"
 #include "rurp_pinout.h"
 
 #define FLASH_5V_PAGE_SIZE_MAX 512
+
+// Data-polling bit. During an internal page write a read of the LAST BYTE
+// WRITTEN returns the complement of that byte's DQ7; on completion DQ7
+// matches. Compare only this bit, never the whole byte.
+#define FLASH_5V_PAGE_DQ7_MASK 0x80
 
 static bool flash_5v_page_mask(uint16_t requested, uint32_t* out_mask) {
     if (requested == 0) {
@@ -34,8 +38,6 @@ void flash_5v_page_write_execute(firestarter_handle_t* handle);
 void flash_5v_page_check_chip_id_execute(firestarter_handle_t* handle);
 static bool flash_5v_page_wait_for_page_write(firestarter_handle_t* handle, uint32_t address, uint8_t expected);
 
-uint16_t flash_5v_page_get_chip_id(firestarter_handle_t* handle);
-
 void configure_flash_5v_page(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CONFIGURING_FLASH4);
     switch (handle->cmd) {
@@ -47,32 +49,24 @@ void configure_flash_5v_page(firestarter_handle_t* handle) {
             handle->firestarter_operation_init = NULL;
             handle->firestarter_operation_main = flash_5v_page_check_chip_id_execute;
             break;
-        // A second query arm, modelled on CMD_CHECK_CHIP_ID just above.
-        // Unlike flash_nor_unlock.cpp, this
-        // file assigns no firestarter_operation_init before the switch, so
-        // this arm does not null it -- there is nothing to null. The 0x01
-        // force ctrl flag is deliberately not read on this path, for the
-        // same reason flash_nor_unlock.cpp's CMD_LOCK_STATUS arm states:
-        // elsewhere that bit means "downgrade a chip-ID mismatch to a
-        // warning", this read performs no chip-ID check, and honouring the
-        // bit here would give one flag two unrelated meanings.
+        // Unlike flash_nor_unlock.cpp, this file assigns no
+        // firestarter_operation_init before the switch, so this arm has
+        // nothing to null. The 0x01 force ctrl flag is deliberately not read
+        // on this path: elsewhere that bit means "downgrade a chip-ID
+        // mismatch to a warning", this read performs no chip-ID check, and
+        // honouring the bit here would give one flag two unrelated meanings.
         case CMD_LOCK_STATUS:
             handle->firestarter_operation_main = flash_5v_page_read_protection_execute;
             break;
     }
 }
 
+// Nothing to prepare: the chip erases each page during the write, so there is
+// no erase step, and the host owns the refusal to write a non-blank part. The
+// init hook stays so the write has the same init/main/end shape as the other
+// protocols.
 void flash_5v_page_write_init(firestarter_handle_t* handle) {
-    if (!is_operation_in_progress(handle)) {
-        if (handle->response_code == RESPONSE_CODE_ERROR) {
-            return;
-        }
-    }
-    // No pre-write blank check: flash4 auto-erases per page during the write loop,
-    // so it was a false precondition, not a safety net. As of release 3.1.0 the
-    // host owns this refusal instead -- do not restore a firmware-side
-    // conditional here; the control flag that used to gate it is retired and
-    // gone.
+    (void)handle;
 }
 
 void flash_5v_page_write_execute(firestarter_handle_t* handle) {
@@ -121,13 +115,19 @@ void flash_5v_page_write_execute(firestarter_handle_t* handle) {
 }
 
 static bool flash_5v_page_wait_for_page_write(firestarter_handle_t* handle, uint32_t address, uint8_t expected) {
-    // poll the last byte written until it's correct.
+    // Poll the last byte written until DQ7 matches. The match must hold on two
+    // consecutive reads, so one transient sample cannot end the poll early. The
+    // data itself is not compared: this answers "is the cycle done".
     uint8_t observed = 0;
     for (uint16_t j = 0; j < 1024; j++) {
         delayMicroseconds(10);
         observed = handle->firestarter_get_data(handle, address);
-        if (observed == expected) {
-            return true;
+        if ((observed & FLASH_5V_PAGE_DQ7_MASK) == (expected & FLASH_5V_PAGE_DQ7_MASK)) {
+            uint8_t confirm = handle->firestarter_get_data(handle, address);
+            if ((confirm & FLASH_5V_PAGE_DQ7_MASK) == (expected & FLASH_5V_PAGE_DQ7_MASK)) {
+                return true;
+            }
+            observed = confirm;
         }
     }
 
@@ -170,17 +170,12 @@ void flash_5v_page_read_protection_execute(firestarter_handle_t* handle) {
         _b[1] = 0x01;
         handle->response_code = RESPONSE_CODE_OK;
     } else {
-        // Unrecognised raw value: an observation the host must classify,
-        // not an error this firmware can adjudicate (151-DESIGN.md §1's
-        // 0xFF sentinel convention, reusing hw_get_version's precedent).
-        // The DATA frame is emitted either way so the raw byte still
-        // reaches the host -- never coerce this into 0x00 or 0x01.
+        // Unrecognised raw value: an observation the host must classify, not
+        // an error this firmware can adjudicate. 0xFF is the sentinel, as in
+        // hw_get_version. The DATA frame is emitted either way so the raw byte
+        // still reaches the host -- never coerce this into 0x00 or 0x01.
         _b[1] = 0xFF;
         handle->response_code = RESPONSE_CODE_WARNING;
     }
     LOG_DATA_ID_BYTES(MSG_DATA_PROTECTION_STATUS, _b, 2);
-}
-
-uint16_t flash_5v_page_get_chip_id(firestarter_handle_t* handle) {
-    return flash_util_get_chip_id(handle);
 }
