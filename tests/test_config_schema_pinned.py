@@ -4,138 +4,75 @@ Copyright (c) 2026 Henrik Olsson
 
 Permission is hereby granted under MIT license.
 
-Phase 126 Plan 10 -- CFG-07's two-halved gate: the configuration schema pinned
-as a field list and a version literal, and PR #48's deleted
-platform/py32f071/src/config.cpp pinned by absence from the tree.
+The configuration schema pinned as a field list and a version literal, and
+the deleted platform/py32f071/src/config.cpp pinned by absence from the tree.
 
-Requirements: CFG-07
-Decisions covered: D-01, D-07, D-17
+Two separate properties, both asserted:
+  (a) rurp_configuration_t has five fields, in order (version, r1, r2,
+      hardware_revision, bandgap_mv), and CONFIG_VERSION is the literal
+      "VER07";
+  (b) platform/py32f071/src/config.cpp is absent from the tree.
+A diff cannot prove either half. A diff can be satisfied on a wrong path, and
+it shows only that something moved, not that a field was added, reordered or
+removed. This module turns both halves into path and text assertions.
 
-Criterion 5 asks for two separate things, both load-bearing on their own:
-  (a) rurp_configuration_t's four fields, in order, and CONFIG_VERSION's
-      literal, unchanged;
-  (b) platform/py32f071/src/config.cpp verified absent from the tree.
-Neither half is provable by a diff. A diff can be satisfied on a wrong path
-(124-VERIFICATION.md recorded exactly that shape passing vacuously), and a
-schema diff shows only that something moved, not that a field was added, a
-field was reordered, or a fifth member appeared. This module turns both halves
-into path/text assertions that either hold or produce an exit code.
+The absence assertion protects against a second copy of the common policy.
+The deleted file had a private static `configuration` instead of the shared
+`rurp_config` global, a second `rurp_validate_config` with a different
+condition, no write-back in `rurp_load_config`, and a `rurp_save_config` that
+persisted nothing. test_the_four_public_functions_are_defined_exactly_once
+keeps a reappearance of any of those functions under platform/ a test failure.
 
-WHAT THE ABSENCE ASSERTION PROTECTS:
-platform/py32f071/src/config.cpp (Plan 126-08, PR #48) was a second, drifted
-copy of the common policy, with four recorded drift points: a private static
-`configuration` in an unnamed namespace instead of the shared `rurp_config`
-global; a second `rurp_validate_config` whose condition added `|| r2 == 0`
-and whose body opened with a `memset`, neither of which the common policy
-has; no write-back call at all inside its `rurp_load_config` (a virgin
-part's defaults were computed but never persisted); and a `rurp_save_config`
-that validated, assigned to the private static, and persisted nothing at
-all -- a function whose name promised persistence and delivered none.
-Criterion 5 asks for the deletion to be verified by absence from the tree,
-which a diff cannot do -- a path-scoped diff can pass on a wrong path, the
-shape 124-VERIFICATION.md recorded live. That drift record now exists only
-in 126-08-SUMMARY.md; this module's docstring and its
-test_the_four_public_functions_are_defined_exactly_once assertion are what
-keep a reappearance of any of those four functions under platform/ an exit
-code rather than something a reviewer has to notice.
+The schema pin guards against a layout change while the version string stays
+"VER07". Every board that already stores a record would misparse the new
+layout with no migration signal. The field list and the version literal are
+asserted together for that reason. Add a field at the end of the struct and
+bump CONFIG_VERSION in the same change.
 
-WHY THE SCHEMA PIN OUTLIVES THIS PHASE:
-rurp_configuration_t is precisely the struct the closed calibration PR's
-`768580f` adds fields to BEFORE its CONFIG_VERSION bump -- a silent layout
-change while the version string still reads "VER07". That is strictly worse
-than a visible version bump, because every board already storing a record
-would misparse the new layout with no migration signal at all. A future
-cherry-pick of that shape is exactly what this gate exists to catch, which is
-why the field list and the version literal are asserted together, not
-separately.
+The module invokes no compiler. Every assertion is a textual gate over
+committed source. Each check is a module-level helper that takes text (or, for
+the two filesystem checks, a repo root) and returns a list of violations, so
+the positive tests and the planted-copy demonstrations run the same code. No
+blob SHA literal appears here. The planted-copy demonstrations compare a
+file's hash before and after their own mutation, never to a stored value.
 
-This module invokes no compiler -- every assertion below is a textual gate
-over committed source, following tests/test_vpp_seam_manual_on_every_board.py
-and tests/test_config_storage_seam_shape.py's plain read_text() idiom,
-deliberately not parsed into a structure.
-
-Self-contained path resolution below -- NOT in conftest.py (firestarter/tests/
-has no conftest.py anywhere in the repo, and none of pytest.ini,
-pyproject.toml, setup.cfg or tox.ini exist either; a recorded house-rule
-pattern decision, not an omission). Stdlib and pytest only.
-
-Every check below is factored into a module-level helper taking text (or, for
-the two filesystem-tree checks, a repo root) and returning a list of
-violations, so the positive tests and the planted-copy RED demonstrations
-exercise the identical code path -- a parallel second implementation inside a
-RED test would prove nothing about the gate (Phase 124 D-14: "a guard that
-supplies the answer it tests is structurally dead"). No blob SHA literal
-appears anywhere in this module: a committed gate pinning a shared header by
-hash would break the first time a later milestone legitimately edits it --
-the blob-SHA pins for include/rurp_types.h and include/rurp_shield.h are a
-plan-level record instead (this plan's SUMMARY), re-executed by
-126-NONREGRESSION.md. The one blob-SHA comparison this module does make (the
-planted-copy demonstrations below) is entirely self-referential -- before vs.
-after this module's own mutation demos, never against a hardcoded historical
-value.
-
-VALIDATION CEILING: this module reads source text and compiles nothing. It
-makes no build or runtime claim; see .planning/REQUIREMENTS.md's "Validation
-Ceiling" section for the claims this phase is not permitted to make.
+This module reads source text and makes no build or runtime claim.
 
 Coverage:
-  1. test_rurp_configuration_t_has_exactly_the_pinned_fields -- the
-     struct's member list is exactly version (char[6]), r1 (long), r2 (long),
-     hardware_revision (uint8_t), in that order, with no fifth member and no
-     size or offset literal.
+  1. test_rurp_configuration_t_has_exactly_the_pinned_fields -- the struct's
+     members are exactly version (char[6]), r1 (long), r2 (long),
+     hardware_revision (uint8_t) and bandgap_mv (uint16_t), in that order.
   2. test_config_version_literal_is_current -- CONFIG_VERSION in
-     include/rurp_shield.h is still the literal "VER07".
+     include/rurp_shield.h is the literal "VER07".
   3. test_default_resistance_values_are_unchanged -- VALUE_R1 is 270000 and
-     VALUE_R2 is 44000 -- rurp_validate_config's write-back writes both, so a
-     silent change would alter every defaulting board's stored record with no
-     version signal.
-  4. test_stored_configuration_embeds_the_struct_whole -- D-17: the vendored
-     StoredConfiguration wrapper embeds rurp_configuration_t as a single named
-     member (making "schema unchanged" structural rather than merely
-     asserted), and the wrapper's own `version` member is a uint16_t distinct
-     from the char[6] CONFIG_VERSION literal living inside the embedded
-     struct.
-  5. test_pr48_config_cpp_is_absent_from_the_tree -- Criterion 5's
-     verified-by-absence: a path-existence check, never a diff.
+     VALUE_R2 is 44000. The write-back stores both, so a silent change would
+     alter every defaulting board's stored record with no version signal.
+  4. test_stored_configuration_embeds_the_struct_whole -- the vendored
+     StoredConfiguration wrapper embeds rurp_configuration_t as one named
+     member, and the wrapper's own `version` member is a uint16_t distinct
+     from the char[6] CONFIG_VERSION literal inside the embedded struct.
+  5. test_pr48_config_cpp_is_absent_from_the_tree -- a path-existence check,
+     never a diff.
   6. test_the_four_public_functions_are_defined_exactly_once -- each of
      rurp_get_config, rurp_load_config, rurp_save_config and
-     rurp_validate_config has exactly one definition anywhere under src/,
-     platform/ or lib/, that one definition lives in
-     src/rurp_config_utils.cpp, and none lives anywhere under platform/ --
-     the standing guard against PR #48's drift reappearing.
+     rurp_validate_config has exactly one definition under src/, platform/ or
+     lib/. That definition is in src/rurp_config_utils.cpp, and none is under
+     platform/.
   7. test_the_four_public_functions_are_declared_in_rurp_shield_h -- all four
      declarations are present there.
-  8. RETIRED (v1.43). The C-14 consumer census -- a hand-pinned tuple of
-     (file, line, function) call sites -- is removed, not repaired. It had
-     already drifted once (Phase 143 Plan 03 shifted three sites by +1 when
-     an #include was added above them) and drifted again when v1.43 rewrote
-     src/boards/rurp_common.cpp. A test that goes red because a line moved
-     reports on the shape of the source text, not on behaviour, which is
-     what agent-os/standards/testing/no-source-introspection.md forbids;
-     that standard also says to remove such a contract when you touch it.
-     Nothing else in this module used its helper, so the six planted-copy
-     RED demonstrations below are unaffected.
-  9. test_helper_reports_violations_on_planted_copies -- the RED
-     demonstration: six independently planted mutations, each built as a real
-     file in tmp_path (never a committed file) and fed to the same
-     module-level helper the corresponding positive test calls, each
-     producing a non-empty violation list. Confirms no committed file was
-     mutated by re-hashing include/rurp_types.h, include/rurp_shield.h and
-     src/rurp_config_utils.cpp before and after each case.
- 10. test_absence_check_fires_when_config_cpp_is_planted -- a dedicated
-     second RED demonstration for Coverage 5 specifically (an absence
-     assertion is the easiest kind to write vacuously): a scratch
-     platform/py32f071/src/config.cpp is planted under tmp_path and the same
-     absence helper the positive test calls is shown to fire on it.
- 11. test_module_has_no_pio_libdeps_dependency -- C-12: this module's own
-     text contains no path under the gitignored PlatformIO build-artifacts
-     directory.
- 12. test_no_skip_call_or_conditional_skip_marker_present -- adapted from the
-     analog's self-enforcing no-skip leg
-     (test_vpp_seam_manual_on_every_board.py:447-468), copied verbatim
-     including its concatenation trick: this module invokes no compiler, so
-     the leg asserts only that no skip call or conditional-skip marker
-     appears anywhere in this module's own text.
+  8. test_helper_reports_violations_on_planted_copies -- six planted
+     mutations, each built as a real file in tmp_path and fed to the same
+     helper the positive test calls, each producing a non-empty violation
+     list. No committed file is mutated; the module re-hashes
+     include/rurp_types.h, include/rurp_shield.h and src/rurp_config_utils.cpp
+     before and after each case.
+  9. test_absence_check_fires_when_config_cpp_is_planted -- a scratch
+     platform/py32f071/src/config.cpp is planted under tmp_path and the
+     absence helper is shown to fire on it.
+ 10. test_module_has_no_pio_libdeps_dependency -- this module's text contains
+     no path under the gitignored PlatformIO build-artifacts directory.
+ 11. test_no_skip_call_or_conditional_skip_marker_present -- no skip call or
+     conditional-skip marker appears in this module's text.
 """
 
 import hashlib
