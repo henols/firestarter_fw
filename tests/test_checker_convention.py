@@ -14,10 +14,10 @@ zero-match or shrunken glob fail instead of passing vacuously.
 
 SCOPE: `CHECKER_GLOB` globs `check_*.py` in `scripts/` only, non-recursively.
 
-FLOOR = 3: `check_cmake_manifest.py`, `check_orphan_provisional.py` and
+FLOOR = 4: `check_cmake_manifest.py`, `check_orphan_provisional.py` and
 `check_erase_no_vpp.py`.
 
-FIXTURE_FLOOR = 4: `planted_cmake_manifest_excluded_no_reason/`,
+FIXTURE_FLOOR = 5: `planted_cmake_manifest_excluded_no_reason/`,
 `planted_cmake_manifest_missing_source/`, `planted_erase_no_vpp_ctrl_write.cpp`
 and `planted_orphan_provisional_macro/`.
 
@@ -61,8 +61,8 @@ CHECKER_GLOB = "check_*.py"
 
 # Hardcoded floors -- see module docstring for what each counts and why a
 # future checker addition must raise these in the same commit.
-FLOOR = 3
-FIXTURE_FLOOR = 4
+FLOOR = 4
+FIXTURE_FLOOR = 5
 
 def _discovered_checkers():
     """Single-level, non-recursive glob of check_*.py in
