@@ -38,7 +38,6 @@ on:
     - '.gitignore'
     - 'docs/**'
     - 'documents/**'
-    - 'test/**'
     - 'images/**'
     # Keep .github/** here. Without it a workflow- or template-only push to
     # main starts the STABLE publisher, which carries make_latest. main has
@@ -74,20 +73,12 @@ jobs:
       contents: write
 
     steps:
-      # fetch-depth: 0 is REQUIRED, not hygiene. `pytest tests/ -v` below runs
-      # the Phase-123/129 history gates (check_landing_range, the flash-geometry
-      # ordering pair, the PR-45 ancestry pair). Every one of them walks git
-      # history: they resolve a fork SHA, and they assert that a commit touching
-      # a given path exists strictly after another commit. Under checkout's
-      # default shallow depth-1 clone those SHAs are not in the repository at
-      # all, and the gates fail with "does not resolve to a commit" rather than
-      # with anything about the code.
-      #
-      # This was invisible while the workflow ran on main only: main lags beta
-      # by a long way and does not carry those test files, so the step passed
-      # there for want of anything to run. Opening the trigger to every branch
-      # is what surfaced it. beta-build.yml already sets fetch-depth: 0 for the
-      # same reason -- this brings build.yml in line with it.
+      # fetch-depth: 0 is required. `pytest tests/ -v` below runs tests that
+      # walk git history. They resolve a commit SHA and assert the order of
+      # commits that touch a path. Under checkout's default shallow depth-1
+      # clone those SHAs are not in the repository, and the tests fail with
+      # "does not resolve to a commit". beta-build.yml sets fetch-depth: 0 for
+      # the same reason.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -100,6 +91,8 @@ jobs:
           key: ${{ runner.os }}-pio
 
       - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
       - name: Install PlatformIO Core
         run: pip install --upgrade platformio
@@ -133,7 +126,7 @@ jobs:
       - name: Install pytest for script tests
         run: pip install pytest
 
-      - name: Run update_version.py tests
+      - name: Run Python tests
         run: pytest tests/ -v
 
       # --- Version bump + tag commit now gated by everything above ---
@@ -202,6 +195,12 @@ jobs:
             ELF="${MATCHES[0]}"
             STRINGS_OUT="$NEEDLE_DIR/$ENV.txt"
             strings "$ELF" > "$STRINGS_OUT"
+            # A string every stable image carries. If it is absent, the
+            # needle check below proves nothing.
+            if ! grep -Fq -- 'vpp_mv' "$STRINGS_OUT"; then
+              echo "::error::$ENV image lacks the stable control string 'vpp_mv' -- the dev-commands needle check cannot be trusted"
+              exit 2
+            fi
             if grep -Fq -- 'CTRL remapped' "$STRINGS_OUT"; then
               echo "::error::$ENV image implements the dev commands -- the stable publisher must not gain dev tools"
               exit 1

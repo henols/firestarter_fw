@@ -29,12 +29,6 @@ D-05 adds a seventh, independent known-answer vector
 themselves -- an implementation asserted against itself proves nothing (the
 HOST-06 discipline).
 
-This module executes in NO CI leg on this branch: `pytest tests/` runs only
-in build.yml (push/PR to main) and beta-build.yml (push to beta);
-py32f071.yml has no pytest step at all. The local run recorded in
-126-NONREGRESSION.md is the only evidence this module's assertions were ever
-exercised.
-
 Self-contained path resolution below -- NOT in conftest.py (firestarter/tests/
 has no conftest.py anywhere in the repo, and none of pytest.ini,
 pyproject.toml, setup.cfg or tox.ini exist either; a recorded house-rule
@@ -113,15 +107,9 @@ _KV_RE = re.compile(r"(\w+)=(\S+)")
 def _resolve_compiler():
     """Resolve the host C++ compiler, fail-closed.
 
-    Deliberately never bypassed via any decorator or runtime call that would
-    mark this outcome as skipped, anywhere in this module: doing so would
-    recreate the exact BASE-02/BASE-03 absence-proxy failure class this
-    milestone's Phase 123 removed. If $CXX (or 'g++') cannot be resolved via
-    shutil.which, this raises via a plain assert, which the test runner
-    reports as a FAILURE, never a skipped outcome. This module's harness
-    runs in NO CI leg on this branch -- the local run is the only evidence,
-    which makes the fail-closed contract here even more load-bearing than in
-    the CI-covered precedent.
+    Never skip this test with a decorator or a runtime call. If $CXX (or
+    'g++') cannot be resolved via shutil.which, this raises via a plain
+    assert, and the test runner reports a FAILURE.
     """
     compiler = shutil.which(os.environ.get("CXX", "g++"))
     assert compiler is not None, (

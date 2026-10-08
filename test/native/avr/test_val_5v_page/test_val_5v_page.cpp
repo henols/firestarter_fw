@@ -40,7 +40,7 @@ using namespace fakeit;
 extern "C" void clear_bus_recording();
 extern "C" int  bus_recording_count();
 extern "C" uint8_t recorded_reg(int i);
-extern "C" uint8_t recorded_data(int i);
+extern "C" rurp_register_t recorded_data(int i);
 extern "C" bool bus_recording_saturated();
 
 static std::vector<uint8_t> s_wire_bytes;
@@ -788,7 +788,7 @@ void test_5v_page_write_execute_positive_control_valid_page_size(void) {
         "positive control: a valid write must perform at least one register write");
 }
 
-void test_5v_page_write_init_no_blank_check_erase02(void) {
+void test_5v_page_write_init_does_not_blank_check(void) {
     firestarter_handle_t h = make_write_init_handle_blank_check_enabled();
     configure_memory(&h);
     clear_bus_recording();
@@ -1019,7 +1019,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_5v_page_write_execute_refuses_page_size_transport_saturated);
     RUN_TEST(test_5v_page_write_execute_positive_control_valid_page_size);
 
-    RUN_TEST(test_5v_page_write_init_no_blank_check_erase02);
+    RUN_TEST(test_5v_page_write_init_does_not_blank_check);
     RUN_TEST(test_5v_page_write_init_no_vpp_with_flag_can_erase_set);
 
     RUN_TEST(test_5v_page_lock_status_dispatch);

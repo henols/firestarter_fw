@@ -4,97 +4,44 @@ Copyright (c) 2024 Henrik Olsson
 
 Permission is hereby granted under MIT license.
 
-Phase 123 Plan 06 — BASE-08's convention-derived meta-test.
+Convention meta-test for the checker scripts.
 
-Requirements: BASE-08
-Decisions covered: D-06, D-08
+Every `scripts/check_<X>.py` must have a paired `tests/test_check_<X>.py` and
+at least one `planted_<X>*` fixture in `tests/fixtures/`. The filesystem
+convention is the only source of truth: no registry file lists the checkers,
+and no allow-list grandfathers an exception. Hardcoded floors make a
+zero-match or shrunken glob fail instead of passing vacuously.
 
-BASE-08 requires that every checker introduced in v1.23 ships with a
-committed planted-violation fixture and a pytest proving the checker's
-non-zero exit against it. D-08 makes the filesystem convention the single
-source of truth for that requirement -- no registry file lists the
-checkers, and no allow-list grandfathers an exception -- with a hardcoded
-floor so a zero-match (or shrunken) glob FAILS rather than passing
-vacuously.
+SCOPE: `CHECKER_GLOB` globs `check_*.py` in `scripts/` only, non-recursively.
 
-SCOPE (the load-bearing decision of this module): `CHECKER_GLOB` globs
-`check_*.py` in `firestarter/scripts/` ONLY, non-recursively -- a single
-directory level, never a recursive descent. It never reaches into
-`firestarter_app/tools/`.
+FLOOR = 4: `check_cmake_manifest.py`, `check_orphan_provisional.py` and
+`check_erase_no_vpp.py`.
 
-This scope is deliberate: the glob covers `firestarter/scripts/` only, and
-never reaches `firestarter_app/tools/`. The host repo's own checker family
-was retired wholesale in v1.37 Phase 188, so there is nothing left there for
-a repo-wide version of this meta-test to measure.
+FIXTURE_FLOOR = 5: `planted_cmake_manifest_excluded_no_reason/`,
+`planted_cmake_manifest_missing_source/`, `planted_erase_no_vpp_ctrl_write.cpp`
+and `planted_orphan_provisional_macro/`.
 
-FLOOR = 4 -- the number of `check_*.py` files actually shipped into
-`firestarter/scripts/` and still present: `check_cmake_manifest.py`,
-`check_orphan_provisional.py`, `check_landing_range.py` and
-`check_erase_no_vpp.py`. The size-baseline, build-warnings, release-assets
-and no-heap/64-bit checkers that this list once also named were retired on
-2026-09-13 as never-run gates, taking the floor from 8 to 4 (as the rule
-below requires, in reverse).
+Both floors are counted on the tree. The assertions are `>=`. Add a checker in
+the same commit that raises both floors. Lowering a floor is correct only when
+a checker is deliberately deleted. It is never the response to a red gate.
 
-path). FIXTURE_FLOOR = 5 -- the number of `planted_*` entries actually
-present in `firestarter/tests/fixtures/` at this commit:
-`planted_cmake_manifest_excluded_no_reason/`,
-`planted_cmake_manifest_missing_source/`,
-`planted_erase_no_vpp_ctrl_write.cpp`,
-`planted_landing_range_replayed_history/` and
-`planted_orphan_provisional_macro/`. The release-assets, size-baseline,
-build-warnings and no-heap/64-bit fixtures this list once also named went
-with their checkers on 2026-09-13.
+Tests:
 
-**Both floors are counted on the tree, never transcribed from a plan's
-prose.** `ls scripts/check_*.py | wc -l` gives **4** and
-`ls -d tests/fixtures/planted_* | wc -l` gives **5** at this commit, which
-is what `FLOOR` and `FIXTURE_FLOOR` below carry. The assertions are `>=`.
+  1. test_glob_is_non_vacuous -- at least FLOOR checkers are found.
+  2. test_every_checker_has_paired_test_module -- every checker has a test
+     module. All missing pairs are reported in one message.
+  3. test_every_checker_has_planted_fixture -- every checker has at least one
+     `planted_<X>*` entry (file or directory) in `tests/fixtures/`.
+  4. test_fixture_directory_is_non_vacuous -- the `planted_*` count is
+     `>= FIXTURE_FLOOR`.
+  5. test_paired_test_module_names_its_checker -- each paired test module
+     names its checker's filename.
+  6. test_paired_test_module_asserts_nonzero_exit -- each paired test module
+     contains a `returncode != 0` assertion. This is a coarse textual check.
+  7. test_scope_is_firmware_only -- the glob directory is the repo `scripts/`
+     directory, and no checker path contains `firestarter_app`.
 
-A floor moving DOWN is not the normal case and is not a way to silence a
-red gate -- it is correct only when checkers are deliberately retired, as
-on 2026-09-13, when four never-run gates were deleted and the floors went
-8 -> 4 and 31 -> 5 in that same commit. A later phase
-that adds a firmware checker under `firestarter/scripts/` raises both
-floors deliberately in the SAME commit that adds the checker; lowering a
-floor is never the correct response to a red gate here -- it means a
-checker, test, or fixture went missing.
-
-Tests (one named function each):
-
-  1. test_glob_is_non_vacuous -- at least FLOOR checkers are found via
-     CHECKER_GLOB, asserted with the observed count and the floor in the
-     failure message.
-  2. test_every_checker_has_paired_test_module -- for each
-     `scripts/check_<X>.py`, `tests/test_check_<X>.py` must exist. Every
-     missing pair is collected and reported in ONE assertion message
-     rather than failing on the first found.
-  3. test_every_checker_has_planted_fixture -- for each `check_<X>.py`, at
-     least one entry in `tests/fixtures/` must match `planted_<X>*`,
-     counting directories as well as files (two of this phase's fixtures,
-     `planted_cmake_manifest_missing_source` and
-     `planted_orphan_provisional_macro`, are trees, not plain files).
-  4. test_fixture_directory_is_non_vacuous -- the total `planted_*` count
-     in `tests/fixtures/` is `>= FIXTURE_FLOOR`.
-  5. test_paired_test_module_names_its_checker -- each paired test
-     module's source text must contain its checker's exact filename. A
-     pairing that exists by name alone but tests something else entirely
-     would satisfy tests 2-4 while proving nothing -- the hollow shape
-     this whole requirement targets.
-  6. test_paired_test_module_asserts_nonzero_exit -- each paired test
-     module's source text must contain a `returncode != 0` assertion
-     somewhere. This is deliberately a coarse textual check, not a
-     semantic proof -- the semantic proof that the checker actually fails
-     on its planted violation lives in each module's own tests. This test
-     only guards the convention that SOME non-zero-exit assertion exists
-     in the file at all.
-  7. test_scope_is_firmware_only -- the resolved glob directory's path
-     ends in `firestarter/scripts`, and no path in the glob's result set
-     contains the substring `firestarter_app`.
-
-Self-contained path resolution below -- NOT in conftest.py
-(`firestarter/tests/` has no conftest.py anywhere in the repo; a recorded
-house-rule pattern, per test_update_version.py's own comment, not an
-omission). Stdlib and pytest only.
+Path resolution is self-contained here. The tests directory has no conftest.py.
 """
 
 from pathlib import Path
@@ -129,8 +76,8 @@ def _expected_test_module_for(checker_path):
 
 
 def _stem_after_check_prefix(checker_path):
-    """check_landing_range.py -> 'landing_range' for fixture matching."""
-    stem = checker_path.stem  # e.g. "check_landing_range"
+    """check_erase_no_vpp.py -> 'erase_no_vpp' for fixture matching."""
+    stem = checker_path.stem  # e.g. "check_erase_no_vpp"
     prefix = "check_"
     if stem.startswith(prefix):
         return stem[len(prefix) :]
@@ -264,16 +211,14 @@ def test_paired_test_module_asserts_nonzero_exit():
 
 
 def test_scope_is_firmware_only():
-    """Test 7 -- the resolved glob directory must end in
-    firestarter_fw/scripts, and no path in the glob's result set may contain
-    'firestarter_app'. This pins the SCOPE decision structurally: a future
-    edit widening CHECKER_GLOB to reach the host repo would fail here
-    even before it changed FLOOR-related behavior."""
+    """Test 7 -- the glob directory must be this repo's `scripts/`
+    directory, and no path in the glob's result set may contain
+    'firestarter_app'. A future edit widening CHECKER_GLOB to reach the host
+    repo fails here."""
     resolved = _SCRIPTS_DIR.resolve()
-    parts = resolved.parts[-2:]
-    assert parts == ("firestarter_fw", "scripts"), (
-        f"expected the resolved scripts directory to end in "
-        f"('firestarter_fw', 'scripts'), got {parts} (full path: {resolved})"
+    assert resolved == (_REPO_ROOT / "scripts").resolve()
+    assert (_REPO_ROOT / "platformio.ini").is_file(), (
+        f"expected the firmware repo root at {_REPO_ROOT}"
     )
 
     checkers = _discovered_checkers()

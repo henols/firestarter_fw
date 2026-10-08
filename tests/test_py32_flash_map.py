@@ -27,12 +27,6 @@ need adjustment on real arm-none-eabi-ld, and no ARM linker exists in this
 environment to try it against -- Python, which can actually run the
 arithmetic, is the venue instead.
 
-This module executes in NO CI leg on this branch: `pytest tests/ -v` appears
-only in build.yml (push/PR to main) and beta-build.yml (push to beta) --
-neither fires on this firmware milestone branch, and py32f071.yml has no
-pytest step at all. The local run recorded in this phase's SUMMARY is the
-only evidence this module's assertions were ever exercised.
-
 Plan 126-08 EXTENDED this module with `test_manifest_names_the_flash_driver`
 (C-3's edit-4 assertion) and five sibling functions, once
 platform/py32f071/src/config_storage_flash.cpp existed and the tree genuinely
