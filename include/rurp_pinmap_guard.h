@@ -20,7 +20,7 @@
  * check_build_warnings.py counts against a watermark with no headroom. On AVR,
  * where the flag is never defined, the guard compiles to nothing.
  *
- * The predicate DELEGATES to is_memory_cmd() rather than re-listing its eight
+ * The predicate DELEGATES to is_memory_cmd() rather than re-listing its seven
  * commands, so the refused set cannot drift from the admitted set.
  *
  * Identity/config commands (CMD_FW_VERSION, CMD_CONFIG, CMD_HW_VERSION) stay
