@@ -31,6 +31,7 @@ extern "C" {
 #include "memory.h"
 }
 #include "firestarter.h"
+#include "proto_constants.h"
 
 using namespace fakeit;
 
@@ -72,7 +73,7 @@ static int parse_json(const char* json_str, firestarter_handle_t* handle) {
 
 /* T1: "read-settling-delay":50 → handle.read_settling_us == 50 */
 void test_read_settling_us_parsed_from_json(void) {
-    const char* json = "{\"cmd\":1,\"read-settling-delay\":50}";
+    const char* json = "{\"cmd\":1,\"algorithm\":7,\"read-settling-delay\":50}";
     firestarter_handle_t h = make_handle(CMD_READ);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -81,7 +82,7 @@ void test_read_settling_us_parsed_from_json(void) {
 
 /* T2: "read-strobe-us":25 → handle.read_strobe_us == 25 */
 void test_read_strobe_us_parsed_from_json(void) {
-    const char* json = "{\"cmd\":1,\"read-strobe-us\":25}";
+    const char* json = "{\"cmd\":1,\"algorithm\":7,\"read-strobe-us\":25}";
     firestarter_handle_t h = make_handle(CMD_READ);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -90,7 +91,7 @@ void test_read_strobe_us_parsed_from_json(void) {
 
 /* T3: absent timing keys → both fields remain 0 (zero-init default) */
 void test_read_timing_fields_default_zero_when_absent(void) {
-    const char* json = "{\"cmd\":1}";
+    const char* json = "{\"cmd\":1,\"algorithm\":7}";
     firestarter_handle_t h = make_handle(CMD_READ);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -108,7 +109,7 @@ void test_read_timing_fields_default_zero_when_absent(void) {
  * it. */
 void test_read_settling_us_capped_at_max(void) {
     /* Use a value well above 1000µs to confirm the cap fires */
-    const char* json = "{\"cmd\":1,\"read-settling-delay\":9999}";
+    const char* json = "{\"cmd\":1,\"algorithm\":7,\"read-settling-delay\":9999}";
     firestarter_handle_t h = make_handle(CMD_READ);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -120,7 +121,7 @@ void test_read_settling_us_capped_at_max(void) {
 }
 
 void test_read_strobe_us_capped_at_max(void) {
-    const char* json = "{\"cmd\":1,\"read-strobe-us\":9999}";
+    const char* json = "{\"cmd\":1,\"algorithm\":7,\"read-strobe-us\":9999}";
     firestarter_handle_t h = make_handle(CMD_READ);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -135,7 +136,7 @@ void test_read_strobe_us_capped_at_max(void) {
 /*
  * T5: "page-size":128 -> handle.page_size == 128 */
 void test_page_size_parsed_from_json(void) {
-    const char* json = "{\"cmd\":2,\"page-size\":128}";
+    const char* json = "{\"cmd\":2,\"algorithm\":13,\"page-size\":128}";
     firestarter_handle_t h = make_handle(CMD_WRITE);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -144,7 +145,7 @@ void test_page_size_parsed_from_json(void) {
 
 /* T6: absent key -> handle.page_size stays 0 (fresh handle) */
 void test_page_size_defaults_zero_when_absent(void) {
-    const char* json = "{\"cmd\":2}";
+    const char* json = "{\"cmd\":2,\"algorithm\":13}";
     firestarter_handle_t h = make_handle(CMD_WRITE);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -154,12 +155,12 @@ void test_page_size_defaults_zero_when_absent(void) {
 void test_page_size_resets_between_two_parses_on_the_same_handle(void) {
     firestarter_handle_t h = make_handle(CMD_WRITE);
 
-    int rc1 = parse_json("{\"cmd\":2,\"page-size\":128}", &h);
+    int rc1 = parse_json("{\"cmd\":2,\"algorithm\":13,\"page-size\":128}", &h);
     TEST_ASSERT_EQUAL_INT(0, rc1);
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(128, h.page_size,
         "first parse must store the delivered page-size");
 
-    int rc2 = parse_json("{\"cmd\":2}", &h);
+    int rc2 = parse_json("{\"cmd\":2,\"algorithm\":13}", &h);
     TEST_ASSERT_EQUAL_INT(0, rc2);
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, h.page_size,
         "a stale 128 surviving into the next, page-size-absent command "
@@ -168,7 +169,7 @@ void test_page_size_resets_between_two_parses_on_the_same_handle(void) {
 }
 
 void test_unknown_key_before_a_known_key_does_not_desync_the_token_walk(void) {
-    const char* json = "{\"cmd\":2,\"totally-unknown-key\":7,\"read-strobe-us\":25}";
+    const char* json = "{\"cmd\":2,\"algorithm\":7,\"totally-unknown-key\":7,\"read-strobe-us\":25}";
     firestarter_handle_t h = make_handle(CMD_WRITE);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -178,7 +179,7 @@ void test_unknown_key_before_a_known_key_does_not_desync_the_token_walk(void) {
 }
 
 void test_unknown_key_before_page_size_does_not_desync_the_token_walk(void) {
-    const char* json = "{\"cmd\":2,\"totally-unknown-key\":7,\"page-size\":128}";
+    const char* json = "{\"cmd\":2,\"algorithm\":13,\"totally-unknown-key\":7,\"page-size\":128}";
     firestarter_handle_t h = make_handle(CMD_WRITE);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -230,7 +231,7 @@ void test_in_range_algorithm_still_dispatches(void) {
 }
 
 void test_out_of_range_flags_masks_never_sets_every_flag(void) {
-    const char* json = "{\"cmd\":2,\"flags\":65536}";
+    const char* json = "{\"cmd\":2,\"algorithm\":7,\"flags\":65536}";
     firestarter_handle_t h = make_handle(CMD_WRITE);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -248,7 +249,7 @@ void test_out_of_range_flags_masks_never_sets_every_flag(void) {
 }
 
 void test_out_of_range_page_size_saturates_not_truncates_to_a_valid_size(void) {
-    const char* json = "{\"cmd\":2,\"page-size\":65600}";
+    const char* json = "{\"cmd\":2,\"algorithm\":13,\"page-size\":65600}";
     firestarter_handle_t h = make_handle(CMD_WRITE);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -259,7 +260,7 @@ void test_out_of_range_page_size_saturates_not_truncates_to_a_valid_size(void) {
 
 /* memory-size -> handle->mem_size (uint32_t) */
 void test_memory_size_round_trips_through_the_field_table(void) {
-    const char* json = "{\"cmd\":1,\"memory-size\":65536}";
+    const char* json = "{\"cmd\":1,\"algorithm\":7,\"memory-size\":65536}";
     firestarter_handle_t h = make_handle(CMD_READ);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -279,7 +280,7 @@ void test_memory_size_round_trips_through_the_field_table(void) {
         "memory-size's row must not write into pulse_delay");
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, h.vpp_mv,
         "memory-size's row must not write into vpp_mv");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, h.protocol,
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(PROTO_EPROM_28PIN, h.protocol,
         "memory-size's row must not write into protocol");
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, h.read_settling_us,
         "memory-size's row must not write into read_settling_us");
@@ -291,7 +292,7 @@ void test_memory_size_round_trips_through_the_field_table(void) {
 
 /* address -> handle->address (uint32_t) */
 void test_address_round_trips_through_the_field_table(void) {
-    const char* json = "{\"cmd\":1,\"address\":4096}";
+    const char* json = "{\"cmd\":1,\"algorithm\":7,\"address\":4096}";
     firestarter_handle_t h = make_handle(CMD_READ);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -311,7 +312,7 @@ void test_address_round_trips_through_the_field_table(void) {
         "address's row must not write into pulse_delay");
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, h.vpp_mv,
         "address's row must not write into vpp_mv");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, h.protocol,
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(PROTO_EPROM_28PIN, h.protocol,
         "address's row must not write into protocol");
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, h.read_settling_us,
         "address's row must not write into read_settling_us");
@@ -323,7 +324,7 @@ void test_address_round_trips_through_the_field_table(void) {
 
 /* pulse-delay -> handle->pulse_delay (uint32_t) */
 void test_pulse_delay_round_trips_through_the_field_table(void) {
-    const char* json = "{\"cmd\":1,\"pulse-delay\":1000}";
+    const char* json = "{\"cmd\":1,\"algorithm\":7,\"pulse-delay\":1000}";
     firestarter_handle_t h = make_handle(CMD_READ);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -343,7 +344,7 @@ void test_pulse_delay_round_trips_through_the_field_table(void) {
         "pulse-delay's row must not write into pins");
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, h.vpp_mv,
         "pulse-delay's row must not write into vpp_mv");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, h.protocol,
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(PROTO_EPROM_28PIN, h.protocol,
         "pulse-delay's row must not write into protocol");
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, h.read_settling_us,
         "pulse-delay's row must not write into read_settling_us");
@@ -355,7 +356,7 @@ void test_pulse_delay_round_trips_through_the_field_table(void) {
 
 /* chip-id -> handle->chip_id (uint16_t) */
 void test_chip_id_round_trips_through_the_field_table(void) {
-    const char* json = "{\"cmd\":1,\"chip-id\":4660}";
+    const char* json = "{\"cmd\":1,\"algorithm\":7,\"chip-id\":4660}";
     firestarter_handle_t h = make_handle(CMD_READ);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -375,7 +376,7 @@ void test_chip_id_round_trips_through_the_field_table(void) {
         "chip-id's row must not write into pulse_delay");
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, h.vpp_mv,
         "chip-id's row must not write into vpp_mv");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, h.protocol,
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(PROTO_EPROM_28PIN, h.protocol,
         "chip-id's row must not write into protocol");
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, h.read_settling_us,
         "chip-id's row must not write into read_settling_us");
@@ -390,7 +391,7 @@ void test_chip_id_round_trips_through_the_field_table(void) {
  * spelling here would silently never match -- the same trap key_page_size's
  * own comment documents in the opposite direction. */
 void test_vpp_mv_round_trips_through_the_field_table(void) {
-    const char* json = "{\"cmd\":1,\"vpp_mv\":12000}";
+    const char* json = "{\"cmd\":1,\"algorithm\":7,\"vpp_mv\":12000}";
     firestarter_handle_t h = make_handle(CMD_READ);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -410,7 +411,7 @@ void test_vpp_mv_round_trips_through_the_field_table(void) {
         "vpp_mv's row must not write into pins");
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, h.pulse_delay,
         "vpp_mv's row must not write into pulse_delay");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, h.protocol,
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(PROTO_EPROM_28PIN, h.protocol,
         "vpp_mv's row must not write into protocol");
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, h.read_settling_us,
         "vpp_mv's row must not write into read_settling_us");
@@ -422,7 +423,7 @@ void test_vpp_mv_round_trips_through_the_field_table(void) {
 
 /* pin-count -> handle->pins (uint8_t) */
 void test_pin_count_round_trips_through_the_field_table(void) {
-    const char* json = "{\"cmd\":1,\"pin-count\":28}";
+    const char* json = "{\"cmd\":1,\"algorithm\":7,\"pin-count\":28}";
     firestarter_handle_t h = make_handle(CMD_READ);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -442,7 +443,7 @@ void test_pin_count_round_trips_through_the_field_table(void) {
         "pin-count's row must not write into pulse_delay");
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, h.vpp_mv,
         "pin-count's row must not write into vpp_mv");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, h.protocol,
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(PROTO_EPROM_28PIN, h.protocol,
         "pin-count's row must not write into protocol");
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, h.read_settling_us,
         "pin-count's row must not write into read_settling_us");
@@ -460,7 +461,7 @@ void test_pin_count_round_trips_through_the_field_table(void) {
  * init block set (json_parse:269), never at a value simple_strtoul
  * converted from the digits after the sign. */
 void test_negative_address_is_refused_not_clamped_to_zero(void) {
-    const char* json = "{\"cmd\":2,\"address\":-256}";
+    const char* json = "{\"cmd\":2,\"algorithm\":7,\"address\":-256}";
     firestarter_handle_t h = make_handle(CMD_WRITE);
     h.address = 0xDEADBEEF; /* poison value: a real store would overwrite this */
     int rc = parse_json(json, &h);
@@ -477,7 +478,7 @@ void test_negative_address_is_refused_not_clamped_to_zero(void) {
 /* T8: a positive address must still parse to exactly that value -- the
  * refusal above must not become a blanket rejection of the address field. */
 void test_positive_address_still_parses_to_its_value(void) {
-    const char* json = "{\"cmd\":2,\"address\":4096}";
+    const char* json = "{\"cmd\":2,\"algorithm\":7,\"address\":4096}";
     firestarter_handle_t h = make_handle(CMD_WRITE);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT(0, rc);
@@ -496,7 +497,7 @@ void test_positive_address_still_parses_to_its_value(void) {
  * run here exactly as it did for address before this fix, so today's
  * (unchanged) behaviour is "parses to 0", not a refusal. */
 void test_negative_value_on_a_non_address_field_is_unchanged(void) {
-    const char* json = "{\"cmd\":1,\"pulse-delay\":-500}";
+    const char* json = "{\"cmd\":1,\"algorithm\":7,\"pulse-delay\":-500}";
     firestarter_handle_t h = make_handle(CMD_READ);
     int rc = parse_json(json, &h);
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, rc,
