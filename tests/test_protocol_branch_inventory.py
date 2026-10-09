@@ -29,8 +29,8 @@ Coverage:
      divergence.
   3. test_exactly_one_protocol_keyed_site_at_the_pinned_line -- the live
      re-parse yields exactly one tier-"protocol" site, currently at line
-     64 (Phase 205 Plan 03 Task 1).
-  4. test_inventory_is_non_vacuous -- the recorded inventory has >= 21
+     65.
+  4. test_inventory_is_non_vacuous -- the recorded inventory has >= 17
      sites, every one carries a non-empty predicate and reason, both scan
      targets exist and are non-empty, and the live re-parse of eprom.cpp
      returns a non-zero predicate count.
@@ -458,14 +458,17 @@ def test_exactly_one_protocol_keyed_site_at_the_pinned_line():
     deleted (the CMD_ERASE arm's blank-check assignment and the write-init
     body's own guard), moving the switch up by three lines. The switch
     itself is untouched; only its line number shifted again.
+
+    The pinned line moved from 64 to 65 when eprom.cpp gained an include of
+    proto_constants.h above configure_eprom. The switch itself is untouched.
     A number is a measurement of the live source, not a constant to be
     carried forward by habit -- re-derive it with the extractor at commit
     time if this file's diff ever grows again."""
     live = _extract_predicates(_SCAN_EPROM.read_text())
     protocol_lines = sorted(s["line"] for s in live if s["tier"] == "protocol")
-    assert protocol_lines == [64], (
-        "expected exactly one tier-protocol site, at line [64], found "
-        f"{protocol_lines} instead. More than [64] means a SECOND "
+    assert protocol_lines == [65], (
+        "expected exactly one tier-protocol site, at line [65], found "
+        f"{protocol_lines} instead. More than [65] means a SECOND "
         "protocol-keyed branch has appeared -- a second algorithm selector "
         "and a TABLE-05 violation, to be fixed in src/proms/eprom.cpp, "
         "never here. An empty list means the pulse-fallback switch was "
@@ -484,8 +487,11 @@ def test_inventory_is_non_vacuous():
     # still a real guard against a truncated or emptied inventory -- it caught
     # this reduction, which is why it is being moved by hand rather than
     # having been adjusted silently.
-    assert len(sites) >= 18, (
-        f"non-vacuous guard: expected >= 18 recorded sites, got "
+    # Lowered 18 -> 17 by hand for the same reason: the operation-in-progress
+    # guard in eprom_internal_write_init_body was removed because nothing sets
+    # OPERATION_IN_PROGRESS, so it was always true.
+    assert len(sites) >= 17, (
+        f"non-vacuous guard: expected >= 17 recorded sites, got "
         f"{len(sites)} -- an empty or truncated inventory must FAIL, not "
         "silently pass."
     )
