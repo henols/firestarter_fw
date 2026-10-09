@@ -19,13 +19,9 @@
 static const uint8_t EPROM_PARAM_KEYS[] PROGMEM = { 0x07, 0x08, 0x0B };
 
 /*
- * Per-cell attribution -- family, representative part, datasheet revision, or
- * an explicit "no datasheet basis" note -- lives in the gate-enforced sidecar
- * tests/golden/eprom_params_citations.json.
- *
- * Known divergence, recorded rather than dropped: the 22 Intel-family 1 ms
- * parts on 0x07 genuinely want a 3xN margin pulse. Serving them would need a
- * second 0x07 row, which the table's no-second-dispatch-key rule forbids.
+ * Known divergence: the Intel-family 1 ms parts on 0x07 want a margin pulse.
+ * Serving them would need a second 0x07 row, which the table's
+ * no-second-dispatch-key rule forbids.
  */
 static const eprom_params_t EPROM_PARAMS[] PROGMEM = {
     /* 0x07 PROTO_EPROM_28PIN */ { 75000UL, 0UL,     25,  0, VERIFY_PER_PULSE_PLUS_FINAL, VPP_PATH_DROP_RESISTOR },

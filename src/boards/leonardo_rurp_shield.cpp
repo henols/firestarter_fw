@@ -25,9 +25,23 @@
 uint8_t control_pins = 0x00;
 
 void rurp_board_setup() {
-    DDRB |= PORTB_CONTROL_MASK; // Set pins D8-D13 as output
+    // Drive CE and OE high (chip disabled, outputs off) in the port latches
+    // before the pins become outputs, so they never pulse low.
+    rurp_set_control_pin(CHIP_ENABLE, 1);
+    rurp_set_control_pin(OUTPUT_ENABLE, 1);
+
+    DDRB |= PORTB_CONTROL_MASK; // Set pins D8-D11 as output (PB4-PB7)
     DDRC |= PORTC_CONTROL_MASK; // Set pin D13 as output (PC7)
     DDRD |= PORTD_CONTROL_MASK; // Set pin D12 as output (PD6)
+
+    rurp_chip_disable();
+    rurp_chip_input();
+
+    // Put the address latches and the control register in a known state
+    // before the serial wait, which can block until a host opens the port.
+    rurp_write_to_register(LEAST_SIGNIFICANT_BYTE, 0x00);
+    rurp_write_to_register(MOST_SIGNIFICANT_BYTE, 0x00);
+    rurp_write_to_register(CONTROL_REGISTER, 0x00);
 
     // Note: User button is not available on Leonardo shield revision.
 
@@ -134,15 +148,19 @@ uint8_t rurp_read_data_buffer() {
 }
 
 void rurp_set_data_output() {
-    DDRD |= PORTD_DATA_MASK; // Set pins D0-D3 and D4-D7 as output
+    DDRD |= PORTD_DATA_MASK; // Set pins D0-D4 and D6 as output
     DDRC |= PORTC_DATA_MASK; // Set pin D5 as output
-    DDRE |= PORTE_DATA_MASK; // Set pin D6 as output
+    DDRE |= PORTE_DATA_MASK; // Set pin D7 as output
 }
 
 void rurp_set_data_input() {
-    DDRD &= ~PORTD_DATA_MASK; // Set pins D0-D3 and D4-D7 as output
-    DDRC &= ~PORTC_DATA_MASK; // Set pin D5 as output
-    DDRE &= ~PORTE_DATA_MASK; // Set pin D6 as output
+    // Clear the port bits first so the internal pull-ups are off on every data line.
+    PORTD &= ~PORTD_DATA_MASK;
+    PORTC &= ~PORTC_DATA_MASK;
+    PORTE &= ~PORTE_DATA_MASK;
+    DDRD &= ~PORTD_DATA_MASK; // Set pins D0-D4 and D6 as input
+    DDRC &= ~PORTC_DATA_MASK; // Set pin D5 as input
+    DDRE &= ~PORTE_DATA_MASK; // Set pin D7 as input
 }
 
 #endif

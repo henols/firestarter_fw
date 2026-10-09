@@ -18,6 +18,8 @@
 #include <ArduinoFake.h>
 #include <unity.h>
 
+#include <stdio.h>
+
 extern "C" {
 #include "memory.h"
 #include "sram.h"
@@ -31,7 +33,7 @@ using namespace fakeit;
 extern "C" void clear_bus_recording();
 extern "C" int  bus_recording_count();
 extern "C" uint8_t recorded_reg(int i);
-extern "C" uint8_t recorded_data(int i);
+extern "C" rurp_register_t recorded_data(int i);
 
 void setUp(void) {
     ArduinoFakeReset();
@@ -123,6 +125,33 @@ void test_sram_dispatch_0x27_no_vpp_no_init(void) {
     }
 }
 
+/* Every HV control bit at the full register width. On the wide layout
+ * CTRL_VPP_VPE_DROP_ENABLE is above bit 7, so an 8-bit mask would miss it. */
+static const rurp_register_t kHvBits = (rurp_register_t)(CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE |
+                                                         CTRL_VPP_A9_ENABLE | CTRL_VPE_ENABLE |
+                                                         CTRL_VPP_VPE_DROP_ENABLE);
+
+void test_sram_dispatch_all_protocols_and_commands_assert_no_hv(void) {
+    const uint32_t protocols[] = {0x0E, 0x27, 0x28, 0x29};
+    const uint8_t commands[] = {CMD_READ, CMD_WRITE};
+    for (unsigned p = 0; p < sizeof(protocols) / sizeof(protocols[0]); p++) {
+        for (unsigned c = 0; c < sizeof(commands) / sizeof(commands[0]); c++) {
+            clear_bus_recording();
+            firestarter_handle_t h = make_handle(protocols[p], commands[c]);
+            configure_memory(&h);
+            char msg[48];
+            snprintf(msg, sizeof(msg), "protocol 0x%02X cmd %u", (unsigned)protocols[p], (unsigned)commands[c]);
+            TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code, msg);
+            TEST_ASSERT_NULL_MESSAGE(h.firestarter_operation_init, msg);
+            for (int i = 0; i < bus_recording_count(); i++) {
+                if (recorded_reg(i) == CONTROL_REGISTER) {
+                    TEST_ASSERT_BITS_LOW_MESSAGE(kHvBits, recorded_data(i), msg);
+                }
+            }
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -135,6 +164,7 @@ int main(int argc, char** argv) {
     /* Full dispatch tests: configure_memory for SRAM — no VPP, no init wiring */
     RUN_TEST(test_sram_dispatch_0x0E_no_vpp_no_init);
     RUN_TEST(test_sram_dispatch_0x27_no_vpp_no_init);
+    RUN_TEST(test_sram_dispatch_all_protocols_and_commands_assert_no_hv);
 
     return UNITY_END();
 }

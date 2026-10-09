@@ -30,6 +30,7 @@ bool eprom_erase(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_ERASE_PROM);
     if (!is_flag_set(FLAG_CAN_ERASE)) {
         LOG_ERROR_ID(MSG_ERR_NOT_SUPPORTED);
+        handle->response_code = RESPONSE_CODE_ERROR;
         return true;
     }
     return op_execute_simple_operation(handle);
@@ -46,12 +47,10 @@ bool eprom_check_chip_id(firestarter_handle_t* handle) {
 
 // Standalone entry points for CMD_SDP_UNLOCK / CMD_SDP_LOCK
 // (0x0D-only ops; configure_eeprom28c sets firestarter_operation_main to
-// eeprom28c_sdp_unlock_execute / eeprom28c_sdp_lock_execute). Deliberately no
-// LOG_DEBUG_ID_SUB line here -- eprom_read has none either, and adding one
-// would require a new DBG_* catalog id this phase does not need.
-// Deliberately no precondition check -- eprom_erase's FLAG_CAN_ERASE test has
-// no SDP analogue; the op-layer NULL-main guard is what
-// refuses these commands on a protocol whose handler set no main.
+// eeprom28c_sdp_unlock_execute / eeprom28c_sdp_lock_execute). There is no
+// precondition check: eprom_erase's FLAG_CAN_ERASE test has no SDP analogue.
+// The op-layer NULL-main guard refuses these commands on a protocol whose
+// handler set no main.
 bool eprom_sdp_unlock(firestarter_handle_t* handle) {
     return op_execute_simple_operation(handle);
 }
@@ -60,14 +59,10 @@ bool eprom_sdp_lock(firestarter_handle_t* handle) {
     return op_execute_simple_operation(handle);
 }
 
-// CMD_LOCK_STATUS entry point, in eprom_check_chip_id's
-// single-step shape above -- but deliberately WITHOUT a LOG_DEBUG_ID_SUB
-// line. CMD_LOCK_STATUS (16) is numerically greater
-// than CMD_READ_VPP (11), so it falls outside the second, independent
-// diagnostic-ordinal range in firestarter.cpp, and this command emits none
-// of that range's three DBG_* lines.
-// Adding a DBG_* call here would need a new [debug] catalog entry that is
-// deliberately not minted -- a chosen consequence, not an oversight.
+// CMD_LOCK_STATUS entry point, in eprom_check_chip_id's single-step shape
+// above, without a LOG_DEBUG_ID_SUB line. CMD_LOCK_STATUS (16) is greater
+// than CMD_READ_VPP (11), so it falls outside the diagnostic-ordinal range in
+// firestarter.cpp and emits none of that range's three DBG_* lines.
 bool eprom_lock_status(firestarter_handle_t* handle) {
     return op_execute_simple_operation(handle);
 }
@@ -75,13 +70,9 @@ bool eprom_lock_status(firestarter_handle_t* handle) {
 // Returns true on success/continue, false on error.
 static inline bool _process_incoming_data(firestarter_handle_t* handle) {
     // op_end is the operation's end, not the device's end: it equals
-    // handle->mem_size whenever no region was supplied (D-04's
-    // absent-semantics). eprom_write is this function's only caller now --
-    // the verify wrapper that used to share it was retired in 3.1.0 (Phase
-    // 204), along with its command surface. Under D-05 host and firmware
-    // agree on the region by construction, so the out-of-range refusal
-    // below becomes a fail-closed guard against a host/file mismatch
-    // rather than a live path.
+    // handle->mem_size whenever no region was supplied. Host and firmware
+    // agree on the region, so the out-of-range refusal below is a fail-closed
+    // guard against a host/file mismatch.
     const uint32_t op_end = mem_util_operation_end(handle);
 
     // The operation is "pull" based. The firmware requests a data chunk when it's ready.
@@ -101,14 +92,11 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
         if (!is_operation_waiting_for_data(handle)) {
             // On leonardo the firmware emits MSG_DATA_PROGRESS from inside the
             // per-byte program loop (src/proms/eprom.cpp), so the host's
-            // progress bar can reflect bytes actually programmed rather than
-            // only bytes handed to the firmware at each chunk request below.
-            // On SERIAL_ON_IO targets (uno/uno328pb) that emission is compiled
-            // out, so the host's own chunk-handoff bar -- driven by this
-            // MSG_OK_REQ_DATA request/response cadence -- remains the only
-            // progress source there. The non-claim, restated: intra-block
-            // write progress is emitted on the EPROM path only, and delivered
-            // on leonardo only.
+            // progress bar shows bytes actually programmed. On SERIAL_ON_IO
+            // targets (uno/uno328pb) that emission is compiled out, so the
+            // host's chunk-handoff bar, driven by this MSG_OK_REQ_DATA
+            // request/response cadence, is the only progress source. Intra-block
+            // write progress exists on the EPROM path only, and only on leonardo.
             LOG_OK_ID(MSG_OK_REQ_DATA);
             set_operation_waiting_for_data(handle);
         }
@@ -127,11 +115,18 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
             // The host sent a data packet.
             if (handle->address + handle->data_size > op_end) {
                 LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+                handle->response_code = RESPONSE_CODE_ERROR;
                 return false;
             }
             break;
         default:
-            // An error occurred in op_get_message or an unexpected message was received.
+            // op_get_message already logged a data error (OP_MSG_ERROR). Any
+            // other message here (for example a stray ACK) is a host protocol
+            // error: refuse it.
+            if (msg_type != OP_MSG_ERROR) {
+                LOG_ERROR_ID(MSG_ERR_CMD);
+            }
+            handle->response_code = RESPONSE_CODE_ERROR;
             return false;
     }
 
@@ -145,8 +140,25 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
 
 // Returns true on success/continue, false on error.
 static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
+    const uint32_t op_end = mem_util_operation_end(handle);
+    if (handle->address > op_end) {
+        LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return false;
+    }
+    if (handle->address == op_end) {
+        set_operation_to_done(handle);
+        return true;
+    }
+
     if (!op_execute_function(handle->firestarter_operation_main, handle)) {
         return false;  // Error, so finished.
+    }
+
+    // The read handler fills a whole buffer. Cut the chunk at the end of the
+    // operation's region.
+    if (handle->data_size > op_end - handle->address) {
+        handle->data_size = op_end - handle->address;
     }
 
     // Wrap the raw chip-byte chunk in a MSG_DATA_CHUNK ID frame.
@@ -162,7 +174,7 @@ static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
     }
 
     handle->address += handle->data_size;
-    if (handle->address >= handle->mem_size) {
+    if (handle->address >= op_end) {
         set_operation_to_done(handle);
     }
     return true;

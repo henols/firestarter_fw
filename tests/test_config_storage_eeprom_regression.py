@@ -28,11 +28,6 @@ corroboration only, never the primary proof -- see this phase's evidence
 ledger for why (124-VERIFICATION.md records a live finding where exactly that
 pipeline reported "(empty)" while a real change's trailer survived the grep).
 
-This module executes in NO CI leg on this branch: `pytest tests/` runs only in
-build.yml (push/PR to main) and beta-build.yml (push to beta); py32f071.yml
-has no pytest step. The local run recorded in this phase's evidence artifact
-is the only evidence this module's assertions were ever exercised.
-
 Self-contained path resolution below -- NOT in conftest.py (firestarter/tests/
 has no conftest.py anywhere in the repo, and none of pytest.ini,
 pyproject.toml, setup.cfg or tox.ini exist either; a recorded house-rule
@@ -105,15 +100,9 @@ _SIZEOF_RE = re.compile(r"^SIZEOF (\d+)$")
 def _resolve_compiler():
     """Resolve the host C++ compiler, fail-closed.
 
-    Deliberately never bypassed via any decorator or runtime call that would
-    mark this outcome as skipped, anywhere in this module: doing so would
-    recreate the exact BASE-02/BASE-03 absence-proxy failure class this
-    milestone's Phase 123 removed. If $CXX (or 'g++') cannot be resolved via
-    shutil.which, this raises via a plain assert, which the test runner
-    reports as a FAILURE, never a skipped outcome. This module's harness
-    runs in NO CI leg on this branch -- the local run is the only evidence,
-    which makes the fail-closed contract here even more load-bearing than in
-    the CI-covered precedent (tests/test_vpp_seam_manual_on_every_board.py).
+    Never skip this test with a decorator or a runtime call. If $CXX (or
+    'g++') cannot be resolved via shutil.which, this raises via a plain
+    assert, and the test runner reports a FAILURE.
     """
     compiler = shutil.which(os.environ.get("CXX", "g++"))
     assert compiler is not None, (

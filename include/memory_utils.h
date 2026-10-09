@@ -16,21 +16,13 @@ extern "C" {
 
 uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t address, uint8_t read_write);
 /* The shared final-pass read-and-compare that eprom.cpp's
- * VERIFY_PER_PULSE_PLUS_FINAL arm calls after its per-pulse loop converges,
- * instead of carrying a byte-identical copy. Defined in
- * src/proms/memory.cpp. Its command surface -- the standalone verify
- * command's own wire ordinal -- was retired in 3.1.0 (Phase 204); the
- * function itself was deliberately kept, because it is still the eprom
- * program loop's only final-pass verify. */
+ * VERIFY_PER_PULSE_PLUS_FINAL arm calls after its per-pulse loop converges.
+ * Defined in src/proms/memory.cpp. */
 void memory_verify_execute(firestarter_handle_t* handle);
-/* The single resolution point for D-04's "0 = absent = whole device"
- * fallback and for the fail-closed clamp: returns handle->mem_size when
- * handle->region_end is 0 OR exceeds handle->mem_size, else returns
- * handle->region_end. Deliberately a function rather than an inline
- * ternary -- a ternary written inside eprom.cpp would add a row to the
- * branch-inventory golden (tests/golden/protocol_branch_inventory.json),
- * a function call in a plain assignment does not. Both eprom_operations.cpp
- * and eprom.cpp call it. Defined in src/proms/memory.cpp. */
+/* The single resolution point for the "0 = absent = whole device" fallback and
+ * for the fail-closed clamp: returns handle->mem_size when handle->region_end
+ * is 0 OR exceeds handle->mem_size, else returns handle->region_end. Both
+ * eprom_operations.cpp and eprom.cpp call it. Defined in src/proms/memory.cpp. */
 uint32_t mem_util_operation_end(const firestarter_handle_t* handle);
 void mem_util_set_address(firestarter_handle_t* handle, uint32_t address);
 rurp_register_t mem_util_calculate_lsb_register(firestarter_handle_t* handle, uint32_t address);
@@ -61,14 +53,6 @@ void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
                               uint16_t expected_mv, uint8_t msg_id, uint8_t response_code);
 
 /*
- * Retires four chip-ID mismatch blocks across four translation units
- * (flash_utils.cpp, flash_intel.cpp, eprom.cpp, eeprom_28c.cpp). Definition
- * lives in src/proms/memory.cpp. warn_only is a parameter, not an internal
- * is_flag_set(FLAG_FORCE) check, because eprom.cpp's standalone
- * CMD_CHECK_CHIP_ID path must keep refusing unconditionally regardless of
- * --force -- do not fold the force test into this helper.
- */
-/*
  * Refuse a voltage-gated operation when the stored divider calibration cannot
  * be evaluated. Returns true when it refused, having emitted
  * MSG_ERR_CALIBRATION and set RESPONSE_CODE_ERROR.
@@ -76,28 +60,32 @@ void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
  * Call this BEFORE asserting any high-voltage bit. Without it, an unusable
  * calibration makes rurp_read_voltage_mv return 0, which the low-side test
  * reads as "the rail is low" -- a WARNING, so the write proceeds against a
- * rail nothing has measured. See
- * agent-os/standards/firmware/fail-closed-refusals.md.
+ * rail nothing has measured.
  */
 bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle);
 
 /*
  * Apply the VPP acceptance window to a measured reading, emitting the right
- * message and response code. One implementation for both call sites: this
- * logic used to sit byte-for-byte identical in eprom.cpp and flash_intel.cpp,
- * so a change to one silently left the other on the old policy.
+ * message and response code. Shared by the EPROM, Intel flash and AT28C
+ * chip-ID paths.
  */
 void mem_util_check_vpp_window(firestarter_handle_t* handle, uint16_t vpp_mv);
 
 /*
  * Warn, once per voltage-gated operation, when this board has never been
  * calibrated. Its readings then carry the full per-die bandgap spread, up to
- * 10 %, which is three times the acceptance window -- so the verdict that
- * follows is not trustworthy in either direction. A warning, never a refusal:
- * it reports a limit on what the firmware knows, not a hardware fault.
+ * 10 %, which is three times the acceptance window, so the verdict that
+ * follows is not trustworthy in either direction. A warning, never a refusal.
+ * A no-op on PY32F071.
  */
 void mem_util_warn_if_uncalibrated(firestarter_handle_t* handle);
 
+/*
+ * Report a chip-ID mismatch. warn_only is a parameter, not an internal
+ * is_flag_set(FLAG_FORCE) check, because eprom.cpp's standalone
+ * CMD_CHECK_CHIP_ID path must keep refusing regardless of --force. Definition
+ * lives in src/proms/memory.cpp.
+ */
 void mem_util_report_chip_id(firestarter_handle_t* handle, uint16_t actual, bool warn_only);
 
 static inline bool using_p1_as_vpp(const firestarter_handle_t* handle) {

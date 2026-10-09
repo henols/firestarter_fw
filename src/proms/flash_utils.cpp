@@ -24,15 +24,14 @@ void flash_util_byte_flipping(firestarter_handle_t* handle, const byte_flip_t* b
     for (size_t i = 0; i < size; i++) {
         fu_flash_flip_data(handle, byte_flips[i].address, byte_flips[i].byte);
     }
-    handle->firestarter_set_control_register(handle, CTRL_READ_WRITE, 0);
 }
 
 void flash_util_verify_operation(firestarter_handle_t* handle, uint8_t expected_data) {
 
     handle->firestarter_set_control_register(handle, CTRL_READ_WRITE, 1);
 
-    unsigned long timeout = millis() + 150;
-    while (millis() < timeout) {
+    uint32_t start = millis();
+    while ((uint32_t)(millis() - start) < 150) {
         // Data Polling: Read from the address and check DQ7.
         // When the write is complete, the data read back will have the same DQ7 as the data written.
         if ((fu_flash_data_poll() & 0x80) == (expected_data & 0x80)) {
@@ -59,6 +58,8 @@ void fu_flash_flip_data(firestarter_handle_t* handle, uint32_t address, uint8_t 
     rurp_chip_disable();
 }
 
+// Writes address bits 0-15 only: there is no bank register for A16 and up.
+// Callers must keep command addresses within FLASH_UTIL_COMMAND_ADDRESS_MAX.
 void fu_flash_fast_address(firestarter_handle_t* handle, uint32_t address) {
     uint8_t lsb = address & 0xFF;
     rurp_write_to_register(LEAST_SIGNIFICANT_BYTE, lsb);
@@ -77,8 +78,7 @@ uint8_t fu_flash_data_poll() {
 }
 
 /* Shared AMD/JEDEC chip-ID read: FLASH_ENABLE_ID → read 0x0000/0x0001
- * → FLASH_DISABLE_ID. Used by flash_nor_unlock and flash_5v_page (Option B
- * flash-budget mitigation). */
+ * → FLASH_DISABLE_ID. Used by flash_nor_unlock and flash_5v_page. */
 uint16_t flash_util_get_chip_id(firestarter_handle_t* handle) {
     flash_execute_command(FLASH_ENABLE_ID);
     uint16_t chip_id = handle->firestarter_get_data(handle, 0x0000) << 8;
@@ -89,11 +89,9 @@ uint16_t flash_util_get_chip_id(firestarter_handle_t* handle) {
 
 /* Shared single-byte AMD/JEDEC ID-mode read.
  * flash_util_get_chip_id above is the fixed 0x0000/0x0001 pair; a
- * protect-verify read is the identical mode with a caller-supplied
- * address, so it lives beside it rather than duplicating the sequence in
- * either family handler. Left flash_util_get_chip_id itself unchanged —
- * re-expressing its two-byte read on top of this helper would enter and
- * exit the mode twice for what is today one entry/exit pair. */
+ * protect-verify read is the identical mode with a caller-supplied address.
+ * flash_util_get_chip_id does not call this helper, because that would enter
+ * and exit the mode twice for one entry/exit pair. */
 uint8_t flash_util_read_in_id_mode(firestarter_handle_t* handle, uint32_t address) {
     flash_execute_command(FLASH_ENABLE_ID);
     uint8_t data = handle->firestarter_get_data(handle, address);

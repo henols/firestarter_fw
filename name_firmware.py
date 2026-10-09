@@ -1,8 +1,7 @@
 # name_firmware.py — PlatformIO pre-build SCons hook (extra_scripts = pre:)
 #
 # This script is wired at [env] scope via `extra_scripts = pre:name_firmware.py`
-# at firestarter/platformio.ini line 29, so it runs once per env (including
-# [env:native]). Every env MUST declare `-D RURP_BOARD_NAME=\"X\"` in its
+# in platformio.ini, so it runs once per env (including [env:native]). Every env MUST declare `-D RURP_BOARD_NAME=\"X\"` in its
 # build_flags; the script extracts X and sets PROGNAME = "firestarter_X".
 #
 # PROGNAME decouples from PIO's `board` setting and derives from the
@@ -33,15 +32,13 @@ def _extract_board_name():
             if name == "RURP_BOARD_NAME":
                 # PIO surfaces -D NAME=\"value\" with the literal escaped quotes
                 # preserved in the value string. Strip them; allow either escaped
-                # or plain quote conventions for robustness (Pitfall 2 — order
-                # matters: try escaped first, then plain).
+                # or plain quote conventions; try escaped first, then plain.
                 v = str(value).strip()
                 for quote in ('\\"', '"'):
                     if v.startswith(quote) and v.endswith(quote) and len(v) >= 2 * len(quote):
                         v = v[len(quote):-len(quote)]
                         break
-                # Defensive validation per RESEARCH Security Domain V5: PROGNAME
-                # flows into a filename, so the value must be a safe identifier.
+                # PROGNAME flows into a filename, so the value must be a safe identifier.
                 if not re.match(r"^[a-zA-Z0-9_-]+$", v):
                     print("ERROR: name_firmware.py — RURP_BOARD_NAME value '%s' "
                           "is not a valid identifier (must match [a-zA-Z0-9_-]+)" % v)

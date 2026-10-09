@@ -9,27 +9,33 @@
 #include "rurp_config_storage.h"
 #include "rurp_config_migrate.h"
 
+#include <string.h>
+
 // Define the global configuration variable here.
 // This is the single definition that the linker will use.
 rurp_configuration_t rurp_config;
 
-// Define the functions here. Their declarations are in rurp_shield.h
+// The functions below are declared in rurp_shield.h.
 rurp_configuration_t* rurp_get_config() {
     return &rurp_config;
 }
 
 void rurp_load_config() {
     rurp_configuration_t* config = rurp_get_config();
-    // The bool result is deliberately discarded: rurp_validate_config()
-    // below decides usability of whatever bytes came back (or were left
-    // untouched), which is what keeps one validate policy on both
-    // platforms rather than branching per platform here.
-    (void)rurp_config_storage_load(config, sizeof(*config));
+    // A failed load leaves no usable record: start from zeroed fields with no
+    // hardware-revision override (0xFF), so that zeroed memory is never read
+    // as a Rev 0 override. rurp_validate_config() then fills in the defaults.
+    // After a successful load it decides, for each field, whether the stored
+    // value is usable.
+    if (!rurp_config_storage_load(config, sizeof(*config))) {
+        memset(config, 0, sizeof(*config));
+        config->hardware_revision = 0xFF;
+    }
     rurp_validate_config(config);
 }
 
 void rurp_save_config(rurp_configuration_t* config) {
-    // Result deliberately discarded -- see rurp_load_config() above.
+    // The write result is not used: no caller can act on a failed save.
     (void)rurp_config_storage_save(config, sizeof(*config));
 }
 

@@ -12,6 +12,10 @@
 #include "rurp_shield.h"
 #include "rurp_voltage_math.h"
 
+// Highest hardware revision identifier (REVISION_2_3). 0xFF means "no override".
+#define CONFIG_REVISION_MAX 5
+#define CONFIG_REVISION_NO_OVERRIDE 0xFF
+
 bool rurp_config_migrate(rurp_configuration_t* config) {
     bool changed = false;
 
@@ -25,6 +29,11 @@ bool rurp_config_migrate(rurp_configuration_t* config) {
     }
     if (config->bandgap_mv < RURP_BANDGAP_MIN_MV || config->bandgap_mv > RURP_BANDGAP_MAX_MV) {
         config->bandgap_mv = (uint16_t)RURP_BANDGAP_NOMINAL_MV;
+        changed = true;
+    }
+    if (config->hardware_revision > CONFIG_REVISION_MAX &&
+        config->hardware_revision != CONFIG_REVISION_NO_OVERRIDE) {
+        config->hardware_revision = CONFIG_REVISION_NO_OVERRIDE;
         changed = true;
     }
     if (strncmp(config->version, CONFIG_VERSION, sizeof(config->version)) != 0) {

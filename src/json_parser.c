@@ -53,6 +53,39 @@ static unsigned long simple_strtoul(const char* s) {
     jsoneq_(json, tok, PSTR(s))
 
 /*
+ * Parse an unsigned decimal for a stored configuration field. Unlike
+ * simple_strtoul it reports failure instead of wrapping or reading 0: it
+ * returns false when the text has no leading digit (this includes a '-' sign)
+ * or when the value does not fit in 32 bits.
+ */
+static bool parse_u32_checked(const char* s, uint32_t* out) {
+    uint32_t val = 0;
+    if (*s < '0' || *s > '9') {
+        return false;
+    }
+    while (*s >= '0' && *s <= '9') {
+        uint8_t digit = (uint8_t)(*s - '0');
+        if (val > (0xFFFFFFFFUL - digit) / 10UL) {
+            return false;
+        }
+        val = val * 10UL + digit;
+        s++;
+    }
+    *out = val;
+    return true;
+}
+
+/* Largest value a signed 32-bit configuration field (r1, r2, vcc) can hold. */
+#define CFG_LONG_MAX 0x7FFFFFFFUL
+
+/*
+ * Highest VPP any chip needs, in millivolts. The chip database tops out at
+ * 25000 mV (rows that take VPP straight from the VPE rail). A request above
+ * this is refused.
+ */
+#define VPP_MV_MAX 25000UL
+
+/*
  * Read-timing sweep knobs, clamped at parse time so an absurd JSON value
  * cannot reach delayMicroseconds() unbounded. Values < 3 us are below
  * delayMicroseconds() accuracy on a 16 MHz AVR.
@@ -76,14 +109,11 @@ const char key_algorithm[] PROGMEM = "algorithm";
 const char key_read_settling[] PROGMEM = "read-settling-delay";
 const char key_read_strobe[]   PROGMEM = "read-strobe-us";
 /* Per-chip page-write size delivered by the host.
- * Wire key is the HYPHEN form "page-size" -- the internal database key
- * programming.page_size uses an underscore, so a PROGMEM string written
- * against the underscore form would silently never match. */
+ * Wire key is the hyphen form "page-size"; the database key uses an
+ * underscore, so a string written in the underscore form never matches. */
 const char key_page_size[]     PROGMEM = "page-size";
 /* Absolute, exclusive end address of the operation's region.
- * Wire key is the HYPHEN form "region-end" -- a PROGMEM string written
- * against an underscore form would silently never match, exactly like
- * key_page_size's warning above. */
+ * Wire key is the hyphen form "region-end". */
 const char key_region_end[]    PROGMEM = "region-end";
 
 /*
@@ -91,10 +121,8 @@ const char key_region_end[]    PROGMEM = "region-end";
  *
  * 6 B on AVR because avr-gcc gives every type 1-byte struct alignment;
  * larger and padded on a 64-bit host, where PGM_P is an 8-byte pointer and
- * the compiler inserts alignment padding after the narrower columns. NO
- * ASSERTION ON sizeof(field_desc_t) MAY BE AUTHORED WITHOUT A TARGET GUARD
- * for that reason -- see include/eprom_params.h:52-67's own written warning
- * about exactly this trap (PATTERNS §4).
+ * the compiler inserts alignment padding after the narrower columns. Any
+ * assertion on sizeof(field_desc_t) needs a target guard for that reason.
  *
  * clamp == 0 means "no clamp".
  */
@@ -109,7 +137,7 @@ typedef struct {
  * width's low nibble (FIELD_WIDTH_MASK) is the byte width derived from the
  * member. Bit 7 (FIELD_POLICY_MASK), when set, selects MASK semantics for
  * an out-of-range value instead of SATURATE. Bit 6 (FIELD_POLICY_REJECT_NEGATIVE),
- * when set, refuses the whole frame -- see that macro's own comment below.
+ * when set, refuses the whole frame -- see that macro's comment below.
  */
 #define FIELD_WIDTH_MASK  0x0F
 #define FIELD_POLICY_MASK 0x80
@@ -117,26 +145,19 @@ typedef struct {
 /*
  * FIELD_POLICY_REJECT_NEGATIVE -- a third row policy, set on exactly one
  * row (key_address). simple_strtoul consumes only `[0-9]`, so a leading
- * '-' makes its loop body never run and the value converts to 0 -- a
- * fail-open inside a parser whose other policies (FIELD_MASK above) are
- * fail-closed: `-256` on the wire is today indistinguishable from a
- * legitimate address-0 frame. The scope is the address field alone,
- * because the same simple_strtoul converter serves ctrl_flags, bus-config
- * address lines and static-high lines, and widening the refusal to those
- * would change wire behaviour for six fields no requirement names. The
- * host already refuses a negative start address before the wire
- * (write_blank_guard.require_non_negative_address, Phase 203); this bit is
- * defence-in-depth against a non-firestarter host or a corrupted frame.
+ * '-' makes its loop body never run and the value converts to 0, which is
+ * indistinguishable from a legitimate address-0 frame. This policy refuses
+ * the whole frame instead. It applies to the address field alone: the same
+ * converter serves ctrl_flags, bus-config address lines and static-high
+ * lines, and those fields keep their behaviour.
  */
 #define FIELD_POLICY_REJECT_NEGATIVE 0x40
 
 /*
  * FIELD -- SATURATE policy (ordinal fields). `offset` and `width` are both
  * derived from the compiler (offsetof, sizeof(((firestarter_handle_t*)0)->
- * member)) -- never a literal -- because the AVR and native struct layouts
- * differ at every member from `protocol` down (157-before-figures.md §6),
- * so a hand-written offset or width would be correct on one architecture
- * and wrong on the other. store_field's raw memcpy below is only safe
+ * member)), never a literal, because the AVR and native struct layouts
+ * differ from `protocol` down. store_field's raw memcpy below is only safe
  * because both numbers come from the type.
  */
 #define FIELD(k, member, cl)                                                 \
@@ -147,11 +168,8 @@ typedef struct {
  * FIELD_MASK -- MASK policy (bitmask fields). Refuses to saturate a bitmask
  * to its type maximum: on `ctrl_flags` that would set every control flag at
  * once, including FLAG_FORCE, FLAG_SKIP_ERASE and FLAG_VPE_AS_VPP --
- * a fail-OPEN where the required behaviour is fail-closed.
- * This preserves today's width-limited truncation for a bitmask instead,
- * and does nothing else -- it does not attempt to reject an out-of-range
- * bitmask, because `reject` needs a new message id, and message ids are
- * generated from the catalog rather than written here.
+ * a fail-open where the required behaviour is fail-closed.
+ * It keeps the width-limited truncation for a bitmask instead.
  */
 #define FIELD_MASK(k, member)                                                \
     { (k), (uint16_t)0, (uint8_t)offsetof(firestarter_handle_t, member),     \
@@ -160,7 +178,7 @@ typedef struct {
 /*
  * FIELD_REJECT_NEGATIVE -- SATURATE policy (same as FIELD above), plus the
  * dispatch loop's sign check ORs in FIELD_POLICY_REJECT_NEGATIVE. Applied
- * to the key_address row only -- see that macro's own comment above.
+ * to the key_address row only.
  */
 #define FIELD_REJECT_NEGATIVE(k, member, cl)                                \
     { (k), (uint16_t)(cl), (uint8_t)offsetof(firestarter_handle_t, member), \
@@ -169,12 +187,10 @@ typedef struct {
 static const field_desc_t key_parsers[] PROGMEM = {
     /* memory-size -> handle->mem_size */
     FIELD(key_mem_size, mem_size, 0),
-    /* address -> handle->address. REJECT_NEGATIVE policy: see that
-     * macro's own comment above for why this row alone refuses a leading
-     * '-' instead of silently converting to 0. */
+    /* address -> handle->address. REJECT_NEGATIVE policy: this row alone
+     * refuses a leading '-' instead of converting it to 0. */
     FIELD_REJECT_NEGATIVE(key_address, address, 0),
-    /* flags -> handle->ctrl_flags. MASK policy: see FIELD_MASK's own
-     * comment above for why this row never saturates. */
+    /* flags -> handle->ctrl_flags. MASK policy: this row never saturates. */
     FIELD_MASK(key_flags, ctrl_flags),
     /* chip-id -> handle->chip_id */
     FIELD(key_chip_id, chip_id, 0),
@@ -199,14 +215,9 @@ static const field_desc_t key_parsers[] PROGMEM = {
 };
 
 /*
- * Compile-time layout guards only -- zero flash cost. _Static_assert in a C
- * translation unit is a NEW IDIOM for this repository (the only
- * pre-existing static assert is the C++ one at include/eprom_params.h:62,
- * inert in every C TU); a future reader must not delete these thinking they
- * are something else. Each one proves an offset FITS the uint8_t offset
- * column and a width fits the 32-bit store -- it does NOT prove the table
- * writes the right member, which only the native parse tests do (ceiling
- * 7).
+ * Compile-time layout guards only -- zero flash cost. Each one proves an
+ * offset fits the uint8_t offset column and a width fits the 32-bit store. It
+ * does not prove the table writes the right member.
  */
 _Static_assert(offsetof(firestarter_handle_t, mem_size) < 256 &&
                    sizeof(((firestarter_handle_t*)0)->mem_size) <= 4,
@@ -278,7 +289,7 @@ static void store_field(firestarter_handle_t* handle, const field_desc_t* field,
     uint8_t width_raw = pgm_read_byte(&field->width);
     uint16_t clamp = pgm_read_word(&field->clamp);
 
-    /* 1. The read-timing bound now lives here, as the clamp column. */
+    /* 1. The read-timing bound lives here, as the clamp column. */
     if (clamp != 0 && value > (uint32_t)clamp) {
         value = clamp;
     }
@@ -306,6 +317,9 @@ static void store_field(firestarter_handle_t* handle, const field_desc_t* field,
 }
 
 int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle) {
+    /* handle is a single file-scope global with no per-command memset, so every
+     * field a frame can set is reset here. A value left by a previous command
+     * must never reach this one. */
     handle->address = 0;
     handle->ctrl_flags = 0;
     handle->bus_config.rw_line = 0xFF;
@@ -314,26 +328,19 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
     handle->bus_config.address_mask = 0;
     handle->bus_config.static_high_mask = 0;
     handle->chip_id = 0;
-    /* page_size resets to 0 exactly like chip_id above. handle is a
-     * single file-scope global with no per-command memset, and page-size is
-     * emit-when-present, so without this reset a 128 parsed for one chip
-     * would persist into the next command and "absent means 64" becomes
-     * false in practice -- the exact overrun this reset exists to prevent.
-     * The two read-timing knobs (read_settling_us, read_strobe_us) are
-     * deliberately NOT in this reset block: that is a pre-existing latent
-     * instance of the same defect, filed as a todo, so their absence here is
-     * not an oversight. */
+    handle->protocol = 0;
+    handle->pins = 0;
+    handle->mem_size = 0;
+    handle->pulse_delay = 0;
+    handle->vpp_mv = 0;
+    handle->read_settling_us = 0;
+    handle->read_strobe_us = 0;
+    /* page_size 0 means "absent". */
     handle->page_size = 0;
-    /* region_end resets to 0 for a stronger reason than page_size above:
-     * handle is one file-scope global with no per-command memset, and
-     * under D-04 0 means "whole device" -- so a stale non-zero value left
-     * over from a previous command would NARROW a later whole-device blank
-     * check instead of widening it. That is fail-OPEN: a blank-check run
-     * right after a partial write could scan only the write's region and
-     * report the whole device blank. Without this reset that fail-open
-     * path is live; with it, every command starts from whole-device unless
-     * it supplies its own region-end. */
+    /* region_end 0 means "whole device". A stale non-zero value would narrow a
+     * later whole-device blank check to the earlier region. */
     handle->region_end = 0;
+    bool algorithm_seen = false;
 
     if (token_count < 1 || tokens[0].type != JSMN_OBJECT) {
         return -1; // Not a JSON object
@@ -365,6 +372,9 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
                 if ((width_raw & FIELD_POLICY_REJECT_NEGATIVE) != 0 && *value_str == '-') {
                     return -1; // Refused: this row's value cannot represent a negative number
                 }
+                if (key == key_algorithm) {
+                    algorithm_seen = true;
+                }
                 store_field(handle, &key_parsers[j], simple_strtoul(value_str));
                 token_idx += 2; // Skip key and simple value
                 found = true;
@@ -384,6 +394,12 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
             // Unknown field — skip key + value token (forward-compatible with new Python fields)
             token_idx += 2;
         }
+    }
+    if (is_memory_cmd(handle->cmd) && !algorithm_seen) {
+        return -1; // A memory command with no algorithm has no protocol to run
+    }
+    if (handle->vpp_mv > VPP_MV_MAX) {
+        return -1; // Above the highest VPP any chip needs
     }
     if (handle->bus_config.address_lines[0] == 0xFF) {
         handle->bus_config.address_mask = 0xFFFF;
@@ -542,11 +558,11 @@ static int jsoneq_(const char* json, jsmntok_t* tok, const char* s) {
 /*
  * Hand-expanded rather than the extract_long macro form: that macro emits its
  * own anonymous PSTR("flags"), so expanding it here would store the wire key
- * twice. get_flags survives deliberately -- it is called directly from
- * json_parse_config and json_get_cmd, neither of which walks the field table.
+ * twice. json_parse_config and json_get_cmd call get_flags directly; neither
+ * walks the field table.
  *
- * Truncating by assignment gives the same observable result as the table's
- * FIELD_MASK row, so all three `flags` paths stay consistent.
+ * Truncating by assignment gives the same result as the table's FIELD_MASK
+ * row, so all three `flags` paths agree.
  */
 bool get_flags(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
     if (jsoneq_(json, &tokens[pos], key_flags) == 0) {
@@ -564,31 +580,73 @@ bool get_vpp_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handl
     extract_int("vpp-pin", handle->bus_config.vpp_line);
 }
 
+/*
+ * The four config getters below return false, not a wrapped value, when the
+ * number is missing, negative, or too large for its field. json_parse_config
+ * then finds no getter for the key and refuses the frame.
+ */
+static bool get_config_value(const char* json, jsmntok_t* tokens, int pos, const char* key,
+                             uint32_t max, uint32_t* out) {
+    uint32_t value;
+    if (jsoneq_(json, &tokens[pos], key) != 0) {
+        return false;
+    }
+    if (!parse_u32_checked(json + tokens[pos + 1].start, &value) || value > max) {
+        return false;
+    }
+    *out = value;
+    return true;
+}
+
 bool get_r1(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
-    extract_long("r1", config->r1);
+    uint32_t value;
+    if (!get_config_value(json, tokens, pos, PSTR("r1"), CFG_LONG_MAX, &value)) {
+        return false;
+    }
+    config->r1 = (long)value;
+    return true;
 }
 
 bool get_r2(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
-    extract_long("r2", config->r2);
+    uint32_t value;
+    if (!get_config_value(json, tokens, pos, PSTR("r2"), CFG_LONG_MAX, &value)) {
+        return false;
+    }
+    config->r2 = (long)value;
+    return true;
 }
 
 bool get_rev(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
-    extract_int("rev", config->hardware_revision);
+    uint32_t value;
+    if (!get_config_value(json, tokens, pos, PSTR("rev"), 0xFFUL, &value)) {
+        return false;
+    }
+    config->hardware_revision = (uint8_t)value;
+    return true;
 }
 
 bool get_vcc(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
+    uint32_t value;
     (void)config;
-    extract_long("vcc", s_measured_vcc_mv);
+    if (!get_config_value(json, tokens, pos, PSTR("vcc"), CFG_LONG_MAX, &value)) {
+        return false;
+    }
+    s_measured_vcc_mv = (long)value;
+    return true;
 }
 
 /*
- * Write the stored bandgap directly. This is the escape hatch -- restoring the
- * nominal, or re-applying a calibration recorded elsewhere. The value is still
- * range-checked by rurp_config_migrate before it is ever used, so a bad one
- * cannot reach the conversion.
+ * Write the stored bandgap directly: restore the nominal, or re-apply a
+ * calibration recorded elsewhere. The caller range-checks the value before it
+ * is stored.
  */
 bool get_bg(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
-    extract_int("bg", config->bandgap_mv);
+    uint32_t value;
+    if (!get_config_value(json, tokens, pos, PSTR("bg"), 0xFFFFUL, &value)) {
+        return false;
+    }
+    config->bandgap_mv = (uint16_t)value;
+    return true;
 }
 
 long json_config_measured_vcc_mv(void) {

@@ -13,20 +13,17 @@
  * warnings on the native build. PROGMEM access comes transitively through
  * eprom_params.h.
  *
- * Keep this as its OWN translation unit. protocol_branch_inventory.json pins
- * the blob SHAs of eprom.cpp and eprom_params.cpp, so folding this arithmetic
- * into either turns that golden RED.
+ * Keep this as its own translation unit.
  */
 #include "eprom_budget.h"
 #include "eprom_params.h"
 #include "eprom.h"
 
 /*
- * BF-3(a): the pulse count ceils. See eprom_budget.h's declaration comment
- * for the full rule and the 49999/50000 worked example; the ceil below is
- * exactly `(energy_cap_us + pulse_us - 1) / pulse_us`, which mirrors the
- * shipped loop's "increment, then test" statement order (src/proms/
- * eprom.cpp's inner `for (;;)`) rather than a naive division.
+ * The pulse count ceils. See eprom_budget.h's declaration comment for the rule
+ * and the 49999/50000 worked example; the ceil below is exactly
+ * `(energy_cap_us + pulse_us - 1) / pulse_us`, which mirrors the program loop's
+ * "increment, then test" order rather than a naive division.
  */
 uint32_t eprom_worst_pulses(uint8_t max_pulses, uint32_t pulse_us, uint32_t energy_cap_us) {
     if (energy_cap_us == 0U || pulse_us == 0U) {
@@ -38,7 +35,7 @@ uint32_t eprom_worst_pulses(uint8_t max_pulses, uint32_t pulse_us, uint32_t ener
          * called with the live value. Neither arm may divide. */
         return (uint32_t)max_pulses;
     }
-    uint32_t by_energy = (energy_cap_us + pulse_us - 1U) / pulse_us;  /* ceil(C/P) -- BF-3 */
+    uint32_t by_energy = (energy_cap_us + pulse_us - 1U) / pulse_us;  /* ceil(C/P) */
     return by_energy < (uint32_t)max_pulses ? by_energy : (uint32_t)max_pulses;
 }
 
@@ -47,9 +44,8 @@ uint32_t eprom_per_byte_budget_us(uint8_t max_pulses, uint32_t pulse_us, uint32_
     uint32_t n = eprom_worst_pulses(max_pulses, pulse_us, energy_cap_us);
     /* The (uint8_t) narrowing below is safe by construction: n never
      * exceeds max_pulses (see eprom_worst_pulses above), and max_pulses is
-     * itself a uint8_t. BF-3(b): CALL the shipped overprogram-duration
-     * function with this pulse count -- never restate its
-     * factor*pulse_count*pulse_us formula here. */
+     * itself a uint8_t. Call the overprogram-duration function with this
+     * pulse count; never restate its formula here. */
     return n * pulse_us + eprom_overprogram_us((uint8_t)n, pulse_us, overprogram_factor, overprogram_cap_us);
 }
 

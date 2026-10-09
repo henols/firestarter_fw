@@ -82,6 +82,10 @@ jobs:
             ~/.platformio/.cache
           key: ${{ runner.os }}-pio
 
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
       - name: Install PlatformIO Core
         run: pip install --upgrade platformio
 
@@ -93,7 +97,7 @@ jobs:
       - name: Install pytest for script tests
         run: pip install pytest
 
-      - name: Run update_version.py tests
+      - name: Run Python tests
         run: pytest tests/ -v
 
       - name: Generate release version

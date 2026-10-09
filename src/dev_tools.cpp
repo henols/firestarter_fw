@@ -20,7 +20,19 @@
 #include "rurp_voltage_math.h"
 #include "messages.h"
 
-// void rurp_internal_write_to_register(uint8_t reg, rurp_register_t data);
+// Time, in milliseconds, a dev command waits for the user button.
+#define DT_BUTTON_WAIT_MS 30000UL
+
+static bool dt_wait_for_button(void) {
+    unsigned long start = millis();
+    while (!rurp_user_button_pressed()) {
+        if ((unsigned long)(millis() - start) >= DT_BUTTON_WAIT_MS) {
+            return false;
+        }
+        delay(200);
+    }
+    return true;
+}
 
 void dt_decode_register(firestarter_handle_t* handle, const char* reg_name, uint16_t reg, uint8_t size) {
     {
@@ -108,7 +120,6 @@ bool dt_set_registers(firestarter_handle_t* handle) {
     } else {
         dt_decode_register(handle, "CTRL", ctrl_reg, 8);
     }
-#else
 #endif
     LOG_OK_ID_U16(MSG_OK_READY, (uint16_t)DATA_BUFFER_SIZE);  // semantics ≈ "setup done, waiting on user button"
     rurp_set_programmer_mode();
@@ -124,10 +135,11 @@ bool dt_set_registers(firestarter_handle_t* handle) {
     rurp_set_chip_enable(!is_flag_set(FLAG_CHIP_ENABLE));
     rurp_set_chip_output(!is_flag_set(FLAG_OUTPUT_ENABLE));
 
-    while (!rurp_user_button_pressed()) {
-        delay(200);
-    }
+    bool pressed = dt_wait_for_button();
     rurp_set_communication_mode();
+    if (!pressed) {
+        LOG_ERROR_ID(MSG_ERR_TIMEOUT);
+    }
 
     return true;
 }
@@ -153,18 +165,17 @@ bool dt_set_address(firestarter_handle_t* handle) {
     dt_decode_register(handle, "LSB", lsb, 8);
     dt_decode_register(handle, "TOP addr", top_address, 8);
     dt_decode_register(handle, "CTRL remapped", ctrl_version, 8);
-#else
-    // dt_decode_ctrl(top_address);
 #endif
     LOG_OK_ID_U16(MSG_OK_READY, (uint16_t)DATA_BUFFER_SIZE);  // semantics ≈ "setup done, waiting on user button"
     rurp_set_programmer_mode();
     mem_util_set_address(handle, address);
     rurp_set_chip_enable(!is_flag_set(FLAG_CHIP_ENABLE));
     rurp_set_chip_output(!is_flag_set(FLAG_OUTPUT_ENABLE));
-    while (!rurp_user_button_pressed()) {
-        delay(200);
-    }
+    bool pressed = dt_wait_for_button();
     rurp_set_communication_mode();
+    if (!pressed) {
+        LOG_ERROR_ID(MSG_ERR_TIMEOUT);
+    }
 
     return true;
 }

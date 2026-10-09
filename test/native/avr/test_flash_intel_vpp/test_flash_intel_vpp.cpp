@@ -4,14 +4,10 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Five test cases exercise the flash_intel_check_vpp static helper (added in
- * Task 2) via the canonical dispatch path: configure_memory() → operation_init.
- * Mock VPP voltage and hardware revision are injected through suite-local
+ * These cases exercise the flash_intel_check_vpp static helper through the
+ * canonical dispatch path: configure_memory() -> operation_init. Mock VPP
+ * voltage and hardware revision are injected through suite-local
  * set_mock_vpp_mv() / set_mock_hw_rev() setters in host_stubs.cpp.
- *
- * Wave 0 state (Task 1): test bodies are empty stubs — they compile, link, and
- * trivially PASS. Task 2 fills the bodies with assertions and wires the
- * production code check into flash_intel_write_init.
  */
 
 #include <Arduino.h>
@@ -180,10 +176,10 @@ void test_flash_intel_high_vpp_error_clears_regulator(void) {
     h.firestarter_operation_init(&h);
     TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
     TEST_ASSERT_TRUE_MESSAGE(s_ctrl_writes_with_p1_low > 0,
-        "SAF-04: high-VPP ERROR path left CTRL_VPP_P1_ENABLE asserted (socket still at 12V)");
+        "high-VPP ERROR path left CTRL_VPP_P1_ENABLE asserted (socket still at 12V)");
     TEST_ASSERT_BITS_HIGH(CTRL_VPP_P1_ENABLE, s_last_ctrl_reg);
     TEST_ASSERT_FALSE_MESSAGE(s_last_ctrl_state,
-        "SAF-04: final control-register write must drive regulator low after VPP error");
+        "final control-register write must drive regulator low after VPP error");
 }
 
 
@@ -238,14 +234,11 @@ void test_flash_intel_accepts_divider_sum_at_bound_and_asserts_hv(void) {
 
 
 /*
- * v1.43 Task 6 -- the retuned VPP acceptance window.
+ * The VPP acceptance window.
  *
- * HIGH was a flat +500 mV. That is +4.2 % at a 12000 mV target but only
- * +2.0 % at 25000, which is tighter than this instrument's measured
- * post-calibration worst case of 3.3 % -- so it could refuse a correctly set
- * rail on measurement error alone, on exactly the 30 database rows at
- * 18000 mV and above. It is now a 3 % headroom with a 500 mV floor, which
- * leaves all 716 rows below 18000 mV on the identical threshold.
+ * HIGH is a 3 % headroom with a 500 mV floor. A flat +500 mV would be only
+ * +2.0 % at a 25000 mV target, tight enough to refuse a correctly set rail on
+ * measurement error alone. LOW is -5 %.
  *
  * Every boundary below is asserted as a PAIR: the value that must pass and
  * the adjacent value that must not.
@@ -261,8 +254,7 @@ static uint8_t run_at(uint16_t target, uint16_t measured, uint32_t flags) {
 }
 
 void test_window_floor_applies_below_the_crossover(void) {
-    // 12000 target: 3 % is 360, below the 500 floor, so the ceiling is 12500 --
-    // byte-identical to the pre-v1.43 threshold. 561 database rows sit here.
+    // 12000 target: 3 % is 360, below the 500 floor, so the ceiling is 12500.
     TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, run_at(12000, 12500, 0));
     TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, run_at(12000, 12501, 0));
 }

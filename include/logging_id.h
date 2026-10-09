@@ -10,9 +10,7 @@
  * binary frames without manually packing param byte arrays. Multi-byte
  * params are encoded MSB-first.
  *
- * Coexists with the legacy log_*_const / log_*_format macros in logging.h
- * No existing call-site is converted by this header — these macros
- * are the surface Phases 7-8 will migrate call-sites to.
+ * Coexists with the legacy log_*_const / log_*_format macros in logging.h.
  */
 
 #ifndef __LOGGING_ID_H__
@@ -204,9 +202,9 @@
         rurp_log_id((id), _b, 8);                                      \
     } while (0)
 
-// --- OK multi-param composites (P-02) ---
+// --- OK multi-param composites ---
 
-// P-02: two u8 values packed as 2 bytes.
+// Two u8 values packed as 2 bytes.
 // Used by MSG_OK_REV (physical hw revision + effective/override, 0xFF = no override).
 #define LOG_OK_ID_U8_U8(id, p1, p2)                                    \
     do {                                                               \
@@ -214,7 +212,7 @@
         rurp_log_id((id), _b, 2);                                      \
     } while (0)
 
-// --- SERIAL_DEBUG-gated DEBUG severity (B-01..B-04) ---
+// --- SERIAL_DEBUG-gated DEBUG severity ---
 //
 // In production builds (SERIAL_DEBUG undefined) every macro expands to nothing:
 //   • zero flash cost — debug string literals never enter PROGMEM

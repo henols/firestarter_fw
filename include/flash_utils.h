@@ -13,7 +13,11 @@ extern "C" {
 #include "firestarter.h"
 
 #define flash_execute_command(command) \
-    flash_util_byte_flipping(handle, command, sizeof(command) / sizeof(command[0]));
+    flash_util_byte_flipping(handle, command, sizeof(command) / sizeof(command[0]))
+
+    /* Highest address the flash command path (flash_util_byte_flipping) can
+     * drive: it writes address bits 0-15 only. */
+    #define FLASH_UTIL_COMMAND_ADDRESS_MAX 0xFFFFUL
 
 
     typedef struct byte_flip {
@@ -63,9 +67,7 @@ extern "C" {
      *
      * Both sequences are datasheet-derived: infoic.xml's `config` field is the
      * literal string "NULL" on every 0x05 and 0x06 entry, so there is no
-     * machine-readable upstream to diff against. The pinning legs in
-     * test_val_nor_unlock.cpp / test_val_5v_page.cpp are change detectors over
-     * these literals, not correctness proofs.
+     * machine-readable upstream to diff against.
      *
      * Sequence A -- 0x06 AMD Autoselect Sector Group Protection Verify.
      * [AMD Am29F040B Rev. F, "Autoselect Mode", verify at (SA)+0x02, p.11;

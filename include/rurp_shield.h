@@ -20,8 +20,8 @@ extern "C" {
 #include "rurp_pinout.h"
 
 #ifdef HARDWARE_REVISION
-// Hardware-revision enum values (out of the alias-migration scope —
-// these are revision identifiers, not RURP-signal aliases).
+// Hardware-revision enum values. These are revision identifiers, not
+// RURP-signal aliases.
 #define REVISION_0 0
 #define REVISION_1 1
 #define REVISION_2_0 2
@@ -54,7 +54,7 @@ extern "C" {
  *
  * +/-25 % of each default, the same tolerance the host already applies to r1
  * (_R1_LO/_R1_HI in cli_handlers.py). This is what reaches a stale value the
- * version gate alone never could: a board carrying the pre-Phase-44 r1 of
+ * version gate alone never could: a board carrying an old r1 of
  * 1000 passes every arithmetic guard, so only a range check corrects it.
  */
 #define VALUE_R1_MIN 202500L

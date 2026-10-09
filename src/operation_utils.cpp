@@ -76,7 +76,7 @@ bool op_execute_stateful_operation(bool (*callback)(firestarter_handle_t* handle
         return false;
     }
     // No main phase installed for this (command, protocol): refuse rather
-    // than fall through, which used to report OK having done nothing.
+    // than fall through and report OK having done nothing.
     // Returning true means FINISHED, not successful — response_code carries
     // the outcome, and command_done() still runs.
     LOG_ERROR_ID(MSG_ERR_NOT_SUPPORTED);
@@ -98,7 +98,7 @@ bool op_wait_for_ack(firestarter_handle_t* handle) {
         if (msg_type == OP_MSG_ACK) {
             return true;
         }
-        if (msg_type == OP_MSG_ERROR) {
+        if (msg_type == OP_MSG_ERROR || msg_type == OP_MSG_DONE) {
             return false;
         }
         delay(10);
@@ -223,20 +223,6 @@ static inline int _execute_operation_house_keeping_func(void (*callback)(firesta
 
 static inline bool _single_step_operation_callback(firestarter_handle_t* handle) {
     int res = _execute_operation(handle->firestarter_operation_main, handle);
-    // This function used to carry a block here, keyed on the standalone
-    // blank-check command's ordinal: frames had to be emitted in THIS
-    // function, not inside the callback, because _execute_operation runs the
-    // callback in programmer mode and on the Uno rurp_log_id is
-    // com_mode-gated, so anything logged there was silently dropped. That
-    // block deferred the standalone blank-check command's not-blank error
-    // frame and progress frame out of programmer mode, and consumed the one
-    // host ack each deferred DATA frame needed to keep a 1:1 frame/ack
-    // balance -- a real defect once meant this loop emitted without ever
-    // consuming that ack, desyncing the port (surfaced as a reused
-    // MSG_ERR_EMPTY_INPUT; see git history for the fix). That command's wire
-    // ordinal was retired in 3.1.0, and the operations that remain on this
-    // path do their own acknowledgement waiting, so no replacement block is
-    // needed here.
     if (res == ERROR) {
         return false;
     }
