@@ -52,10 +52,8 @@ extern "C" {
      *
      * DO NOT "TIDY" THIS AWAY, AND DO NOT MAKE IT UNIFORM ACROSS TARGETS.
      * platformio.ini sets it to 0 for leonardo ONLY, to buy flash. The
-     * ATmega32U4 has a bootloader cliff at 28672 B, and platformio.ini
-     * raises the linker's reported ceiling to the chip's real 32768 B — so
-     * NOTHING warns if the build grows past the cliff. It simply links over
-     * the USB bootloader and the board loses bootloader entry.
+     * ATmega32U4 has a bootloader cliff at 28672 B, and PlatformIO's size
+     * check fails the build when the image grows past it.
      *
      * The difference is unobservable today: no chip_database.json row sets
      * overprogram_factor, so eprom_overprogram_us returns 0 and no margin
