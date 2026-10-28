@@ -127,7 +127,7 @@ rurp_register_t mem_util_calculate_msb_register(firestarter_handle_t* handle, ui
 }
 
 rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* handle, uint32_t address) {
-    rurp_register_t top_address = ((uint32_t)address >> 16) & (CTRL_ADDRESS_LINE_16 | CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18 | CTRL_READ_WRITE);
+    rurp_register_t top_address = ((uint32_t)address >> RURP_CTRL_ADDRESS_SHIFT) &(CTRL_ADDRESS_LINE_16 | CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18 | CTRL_READ_WRITE);
     // CTRL_VPE_ENABLE, CTRL_VPP_P1_ENABLE, CTRL_VPP_A9_ENABLE and CTRL_VPP_REGULATOR_ENABLE are
     // always preserved below. Every address write (the one caller of this function) writes
     // CONTROL_REGISTER on every byte, for both the pulse and the verify; the preserve mask is
@@ -454,9 +454,16 @@ uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t
         reorg_address |= (uint32_t)read_write << config.rw_line;
     }
 
-    // Set VPP line to high if VPP is not on P1
-    if (config.vpp_line != 0xFF && !using_p1_as_vpp(handle)) {
-        reorg_address |= 1UL << config.vpp_line;
+    // P1-VPP parts need that pin at VCC level during reads. Drive the line
+    // high for a read unless doing so would also switch VPP onto the socket
+    // (line 21 on Rev 2.x), and never while the P1 route is on.
+    if (config.vpp_line != 0xFF) {
+        if (!using_p1_as_vpp(handle)) {
+            reorg_address |= 1UL << config.vpp_line;
+        } else if (read_write == READ_FLAG && !vpp_line_switches_vpp(handle) &&
+                   !handle->firestarter_get_control_register((firestarter_handle_t*)handle, CTRL_VPP_P1_ENABLE)) {
+            reorg_address |= 1UL << config.vpp_line;
+        }
     }
 
     reorg_address |= config.static_high_mask;
