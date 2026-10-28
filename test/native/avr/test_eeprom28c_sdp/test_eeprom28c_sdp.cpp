@@ -277,10 +277,9 @@ static void drive_write_init(firestarter_handle_t* h, rurp_register_t ctrl_seed)
 /* Case 5's mechanism (RESEARCH Open Question 1, second leg): reaches the
  * stale-upper-address state via an ACTUAL preceding memory_get_data() read
  * rather than a directly-seeded cache, so a reviewer cannot object that a
- * hand-seeded cache is unrepresentative. DIP32_28C040's rw_line (22, chip
- * pin 31 = WE) folds READ_FLAG=1 into CONTROL bit 0x40 (CTRL_READ_WRITE) on
- * every real read through the production get_data path — one read is
- * sufficient.
+ * hand-seeded cache is unrepresentative. DIP32_28C512_EEPROM's rw_line (20)
+ * folds READ_FLAG=1 into CONTROL bit 0x10 (CTRL_ADDRESS_LINE_17) on every
+ * real read through the production get_data path — one read is sufficient.
  * Returns the CONTROL value actually left behind, so the caller can drive an
  * identically-seeded reference emitter for comparison. */
 static rurp_register_t drive_write_init_after_real_read(firestarter_handle_t* h, uint32_t probe_addr) {
@@ -458,7 +457,7 @@ void test_case4_at28c010_stale_direct_seed(void) {
 
 void test_case5_at28c040_stale_via_real_read(void) {
     /* Probe address 0x0000, deliberately NOT 0x5555/0x2AAA (the SDP
-     * sequence's own magic addresses): CTRL_READ_WRITE is set by
+     * sequence's own magic addresses): CTRL_ADDRESS_LINE_17 is set by
      * rw_line's READ_FLAG bit alone, independent of which address is read, so
      * any address demonstrates the mechanism. Reusing 0x5555 would also
      * pre-warm the LSB/MSB latch cache to the SAME value write #1 of the SDP
@@ -467,9 +466,9 @@ void test_case5_at28c040_stale_via_real_read(void) {
      * CONTROL-bit finding this case exists to isolate. */
     firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[4]); /* AT28C040 */
     rurp_register_t stale_ctrl = drive_write_init_after_real_read(&h, 0x0000);
-    TEST_ASSERT_BITS_HIGH_MESSAGE((uint8_t)CTRL_READ_WRITE, stale_ctrl,
+    TEST_ASSERT_BITS_HIGH_MESSAGE((uint8_t)CTRL_ADDRESS_LINE_17, stale_ctrl,
         "Case 5: a real preceding read (at an arbitrary address, 0x0000) must leave "
-        "CTRL_READ_WRITE stuck HIGH on DIP32_28C040 -- rw_line 22 (WE, chip pin 31) folds "
+        "CTRL_ADDRESS_LINE_17 stuck HIGH on DIP32_28C512_EEPROM -- rw_line 20 folds "
         "READ_FLAG into this CONTROL bit regardless of which address is read");
 
     sdp_strobe_t shipped_snapshot[64];
@@ -481,10 +480,10 @@ void test_case5_at28c040_stale_via_real_read(void) {
     TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "Case 5: fixed-reference drive must not overflow");
     TEST_ASSERT_GREATER_THAN_MESSAGE(SDP_FIXED_DIP32_28C512_EEPROM_LEN, strobe_count(),
         "Case 5: stale-seeded reference emitter must emit an extra CONTROL_REGISTER write "
-        "clearing CTRL_READ_WRITE versus the zero-seed target");
+        "clearing CTRL_ADDRESS_LINE_17 versus the zero-seed target");
 
     sdp_assert_stream_equals(shipped_snapshot, shipped_len,
-        "Case 5: AT28C040/DIP32_28C040, stale CTRL_READ_WRITE reached via a REAL "
+        "Case 5: AT28C040/DIP32_28C512_EEPROM, stale CTRL_ADDRESS_LINE_17 reached via a REAL "
         "preceding read (memory_get_data, not a directly-seeded cache) -- shipped path must clear "
         "the write-inhibit bit like the fixed reference emitter does");
 

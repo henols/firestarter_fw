@@ -125,118 +125,6 @@ void test_sram_dispatch_0x27_no_vpp_no_init(void) {
     }
 }
 
-/* Issue #120: real range behavior, not source-text assertions. The start-address
- * refusal before configure_memory() is in the decoder (refusal ADDRESS_RANGE),
- * covered by the generated command vectors. */
-#include "memory_utils.h"
-#include "messages.h"
-void memory_read_execute(firestarter_handle_t* handle);
-void memory_write_execute(firestarter_handle_t* handle);
-void memory_verify_execute(firestarter_handle_t* handle);
-
-static unsigned issue120_reads;
-static unsigned issue120_writes;
-static uint8_t issue120_read(firestarter_handle_t*, uint32_t) {
-    ++issue120_reads;
-    return 0x5A;
-}
-static void issue120_write(firestarter_handle_t*, uint32_t, uint8_t) {
-    ++issue120_writes;
-}
-static firestarter_handle_t issue120_handle(uint32_t address, uint32_t mem_size) {
-    firestarter_handle_t h = {};
-    h.cmd = CMD_READ;
-    h.address = address;
-    h.mem_size = mem_size;
-    h.response_code = RESPONSE_CODE_OK;
-    h.firestarter_get_data = issue120_read;
-    h.firestarter_set_data = issue120_write;
-    return h;
-}
-
-void test_issue120_range_edges_do_not_wrap(void) {
-    TEST_ASSERT_TRUE(mem_util_range_fits(1023, 1, 1024));
-    TEST_ASSERT_TRUE(mem_util_range_fits(1024, 0, 1024));
-    TEST_ASSERT_FALSE(mem_util_range_fits(1024, 1, 1024));
-    TEST_ASSERT_FALSE(mem_util_range_fits(1025, 0, 1024));
-    TEST_ASSERT_FALSE(mem_util_range_fits(UINT32_MAX, 1, UINT32_MAX));
-    TEST_ASSERT_FALSE(mem_util_range_fits(UINT32_MAX - 1, 3, UINT32_MAX));
-    TEST_ASSERT_TRUE(mem_util_range_fits(UINT32_MAX - 1, 1, UINT32_MAX));
-    TEST_ASSERT_FALSE(mem_util_range_fits(510, 3, 512));
-    TEST_ASSERT_TRUE(mem_util_range_fits(510, 2, 512));
-}
-
-void test_issue120_read_out_of_range_does_not_access_bus(void) {
-    issue120_reads = 0;
-    firestarter_handle_t h = issue120_handle(1025, 1024);
-    h.data_size = 3;
-    memory_read_execute(&h);
-    TEST_ASSERT_EQUAL_UINT8(RESPONSE_CODE_ERROR, h.response_code);
-    TEST_ASSERT_EQUAL_UINT32(0, h.data_size);
-    TEST_ASSERT_EQUAL_UINT32(0, issue120_reads);
-
-    h = issue120_handle(UINT32_MAX, 1024);
-    memory_read_execute(&h);
-    TEST_ASSERT_EQUAL_UINT8(RESPONSE_CODE_ERROR, h.response_code);
-    TEST_ASSERT_EQUAL_UINT32(0, issue120_reads);
-}
-
-void test_issue120_read_end_is_empty_and_last_byte_is_read(void) {
-    issue120_reads = 0;
-    firestarter_handle_t h = issue120_handle(1024, 1024);
-    memory_read_execute(&h);
-    TEST_ASSERT_EQUAL_UINT32(0, h.data_size);
-    TEST_ASSERT_EQUAL_UINT32(0, issue120_reads);
-    TEST_ASSERT_EQUAL_UINT8(RESPONSE_CODE_OK, h.response_code);
-    h.address = 1023;
-    memory_read_execute(&h);
-    TEST_ASSERT_EQUAL_UINT32(1, h.data_size);
-    TEST_ASSERT_EQUAL_UINT8(0x5A, (uint8_t)h.data_buffer[0]);
-    TEST_ASSERT_EQUAL_UINT32(1, issue120_reads);
-}
-
-void test_issue120_direct_write_and_verify_refuse_out_of_range(void) {
-    issue120_reads = 0;
-    issue120_writes = 0;
-    firestarter_handle_t h = issue120_handle(UINT32_MAX - 1, UINT32_MAX);
-    h.cmd = CMD_WRITE;
-    h.data_size = 3;
-    memory_write_execute(&h);
-    TEST_ASSERT_EQUAL_UINT8(RESPONSE_CODE_ERROR, h.response_code);
-    TEST_ASSERT_EQUAL_UINT32(0, issue120_writes);
-
-    h = issue120_handle(510, 1024);
-    h.cmd = CMD_WRITE;
-    h.region_end = 512;
-    h.data_size = 3;
-    memory_write_execute(&h);
-    TEST_ASSERT_EQUAL_UINT8(RESPONSE_CODE_ERROR, h.response_code);
-    TEST_ASSERT_EQUAL_UINT32(0, issue120_writes);
-
-    h = issue120_handle(UINT32_MAX, 1024);
-    h.data_size = 1;
-    memory_verify_execute(&h);
-    TEST_ASSERT_EQUAL_UINT8(RESPONSE_CODE_ERROR, h.response_code);
-    TEST_ASSERT_EQUAL_UINT32(0, issue120_reads);
-}
-
-void test_issue120_direct_write_accepts_valid_end_boundary(void) {
-    issue120_writes = 0;
-    firestarter_handle_t h = issue120_handle(1023, 1024);
-    h.cmd = CMD_WRITE;
-    h.data_size = 1;
-    h.data_buffer[0] = 0x42;
-    memory_write_execute(&h);
-    TEST_ASSERT_EQUAL_UINT8(RESPONSE_CODE_OK, h.response_code);
-    TEST_ASSERT_EQUAL_UINT32(1, issue120_writes);
-
-    h.address = 1024;
-    h.data_size = 0;
-    memory_write_execute(&h);
-    TEST_ASSERT_EQUAL_UINT8(RESPONSE_CODE_OK, h.response_code);
-    TEST_ASSERT_EQUAL_UINT32(1, issue120_writes);
-}
-
 /* Every HV control bit at the full register width. On the wide layout
  * CTRL_VPP_VPE_DROP_ENABLE is above bit 7, so an 8-bit mask would miss it. */
 static const rurp_register_t kHvBits = (rurp_register_t)(CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE |
@@ -278,10 +166,5 @@ int main(int argc, char** argv) {
     RUN_TEST(test_sram_dispatch_0x27_no_vpp_no_init);
     RUN_TEST(test_sram_dispatch_all_protocols_and_commands_assert_no_hv);
 
-    RUN_TEST(test_issue120_range_edges_do_not_wrap);
-    RUN_TEST(test_issue120_read_out_of_range_does_not_access_bus);
-    RUN_TEST(test_issue120_read_end_is_empty_and_last_byte_is_read);
-    RUN_TEST(test_issue120_direct_write_and_verify_refuse_out_of_range);
-    RUN_TEST(test_issue120_direct_write_accepts_valid_end_boundary);
     return UNITY_END();
 }

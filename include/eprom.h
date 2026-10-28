@@ -47,17 +47,6 @@ extern "C" {
      * entirely on uno/uno328pb — see eprom.cpp for why. */
     #define EPROM_PROGRESS_EMIT_INTERVAL_MS 1000
 
-    /* Bytes per program group. The write loop keeps one pending bit per byte
-     * of a group on the stack, so its stack cost is EPROM_PROGRAM_GROUP / 8
-     * bytes whatever DATA_BUFFER_SIZE is. A larger block is programmed one
-     * group after the other, and each extra group costs one more route settle
-     * per pass. At 512 a 512-byte block is one group, so it runs exactly as a
-     * single-group loop. The native test envs set 8, so a short test block can
-     * span several groups. Must be a multiple of 8. */
-    #ifndef EPROM_PROGRAM_GROUP
-    #define EPROM_PROGRAM_GROUP 512
-    #endif
-
     /* EPROM overprogram support differs by target to preserve bootloader space.
  * Leonardo disables this call site because the ATmega32U4 USB bootloader
  * begins at 28672 B. PlatformIO's size check fails the build when the image

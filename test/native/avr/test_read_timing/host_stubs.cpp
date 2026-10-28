@@ -8,10 +8,10 @@
  * the linker hungry for hardware-side symbols defined in the AVR-only TUs
  * (src/boards/*.cpp, src/logging.c). The shared include provides no-op host
  * implementations of every rurp_* symbol the proms reference, plus the
- * PROGMEM log-tag globals from src/logging.c, so the command-decode test binary
+ * PROGMEM log-tag globals from src/logging.c, so the read-timing test binary
  * can link.
  *
- * Suite-specific extensions: NONE — test_command_decode uses the canonical
+ * Suite-specific extensions: NONE — test_read_timing uses the canonical
  * default for every stub, so this TU is a pure pass-through to the shared
  * include.
  *
