@@ -76,6 +76,14 @@ extern "C" {
 #define CTRL_VPP_VPE_DROP_ENABLE      0x100
 #endif
 
+// Bus lines 0-15 go to the LSB and MSB address latches. Bus line
+// RURP_CTRL_ADDRESS_SHIFT + n is control-register bit n.
+#define RURP_CTRL_ADDRESS_SHIFT       16
+
+// The physical control-register bits that switch a VPP route onto the socket.
+// They have the same positions on every revision.
+#define RURP_SOCKET_VPP_ROUTE_BITS    (CTRL_VPP_A9_ENABLE | CTRL_VPE_ENABLE | CTRL_VPP_P1_ENABLE)
+
 // ---- Section 2b: EPROM high-voltage composite masks (EPROM_HV_*) -------
 // Defined beside the CTRL_* bits they are built from so they cannot drift.
 //

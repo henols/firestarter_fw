@@ -11,13 +11,14 @@
  * shift-register logic outputs, so mem_util_remap_address_bus() can drive
  * them high for a read.
  *
- * A 32-pin VPP-on-P1 part uses bus line 21. That line is not a logic output:
- * it lands in the control register as CTRL_ADDRESS_LINE_18, and on Rev 2.x
- * rurp_map_ctrl_reg_for_hardware_revision() maps that bit onto the pin-1 VPP
- * switch. Driving it high for a read switches the VPP rail onto pin 1.
+ * A 32-pin VPP-on-P1 part uses bus line 21, which lands in the control
+ * register as CTRL_ADDRESS_LINE_18. On Rev 0/1 that is the A18 latch bit, a
+ * logic level, so a read drives it high. On Rev 2.x
+ * rurp_map_ctrl_reg_for_hardware_revision() maps it onto the pin-1 VPP
+ * switch, so driving it high would switch the VPP rail onto pin 1.
  *
  * test_val_eprom checks the remap output. This suite checks the PHYSICAL
- * control byte that a Rev 2 board latches while the chip is read.
+ * control byte that the board latches while the chip is read.
  */
 
 #include <Arduino.h>
@@ -124,6 +125,27 @@ void test_rev2_28pin_chip_id_read_holds_pin1_high_with_switch_off(void) {
     }
 }
 
+/* ─── Rev 1 board: A18 is its own latch bit ──────────────────────────────── */
+
+/* On Rev 0/1, pin 1 gets the A18 latch bit through a diode, separate from the
+ * VPP switch, so a read holds pin 1 high without switching VPP. */
+void test_rev1_32pin_plain_read_holds_pin1_high_with_switch_off(void) {
+    rurp_get_config()->hardware_revision = REVISION_1;
+    firestarter_handle_t h = make_handle(0x08, 32, VPP_P1_32_DIP, 0x20000, CMD_READ);
+    h.address = 0;
+    h.data_size = 16;
+    h.mem_size = 16;
+    h.firestarter_operation_main(&h);
+    TEST_ASSERT_TRUE_MESSAGE(read_snapshot_count() > 0, "no data read was observed");
+    for (int i = 0; i < read_snapshot_count(); i++) {
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(CTRL_ADDRESS_LINE_18_REV1,
+                                       read_snapshot_ctrl_physical(i) & CTRL_ADDRESS_LINE_18_REV1,
+                                       "pin 1 (A18) is low during the read");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0, read_snapshot_ctrl_physical(i) & CTRL_VPP_P1_ENABLE_REV1,
+                                       "the VPP switch is on during the read");
+    }
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -132,6 +154,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_rev2_32pin_chip_id_read_keeps_p1_vpp_switch_off);
     RUN_TEST(test_rev2_32pin_plain_read_keeps_p1_vpp_switch_off);
     RUN_TEST(test_rev2_28pin_chip_id_read_holds_pin1_high_with_switch_off);
+    RUN_TEST(test_rev1_32pin_plain_read_holds_pin1_high_with_switch_off);
 
     return UNITY_END();
 }
