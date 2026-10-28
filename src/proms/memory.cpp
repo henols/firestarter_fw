@@ -454,16 +454,13 @@ uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t
         reorg_address |= (uint32_t)read_write << config.rw_line;
     }
 
-    // Set VPP line to high if VPP is not on P1.
-    // A chip that takes VPP on P1 (2764/27128-class) still needs P1 at VCC
-    // level while it is read: with the line low the outputs read marginally
-    // (stray 0x7F/0xFE bytes on a blank 2764). Drive it high for reads, but
-    // only while the P1 programming route is off, so the line never sits
-    // high against VPP.
+    // P1-VPP parts need that pin at VCC level during reads. Only bus lines
+    // 0-15 are shift-register logic outputs: line 21 on a 32-pin part is a
+    // control-register bit and can enable the pin-1 VPP switch on Rev 2.
     if (config.vpp_line != 0xFF) {
         if (!using_p1_as_vpp(handle)) {
             reorg_address |= 1UL << config.vpp_line;
-        } else if (read_write == READ_FLAG &&
+        } else if (read_write == READ_FLAG && config.vpp_line < 16 &&
                    !handle->firestarter_get_control_register((firestarter_handle_t*)handle, CTRL_VPP_P1_ENABLE)) {
             reorg_address |= 1UL << config.vpp_line;
         }
