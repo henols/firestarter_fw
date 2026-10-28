@@ -28,6 +28,7 @@ static std::string incoming;
 static unsigned reads = 0;
 static unsigned configured = 0;
 static unsigned writes = 0;
+static unsigned ram_tests = 0;
 static unsigned logged = 0;
 static int ce_level = 0;
 static int cleared[3] = {};
@@ -93,6 +94,7 @@ extern "C" bool eprom_check_chip_id(firestarter_handle_t*) { return true; }
 extern "C" bool eprom_sdp_unlock(firestarter_handle_t*) { return true; }
 extern "C" bool eprom_sdp_lock(firestarter_handle_t*) { return true; }
 extern "C" bool eprom_lock_status(firestarter_handle_t*) { return true; }
+extern "C" bool eprom_ram_test(firestarter_handle_t*) { ram_tests++; return true; }
 extern "C" bool hw_read_voltage(firestarter_handle_t*) { return true; }
 extern "C" bool hw_get_version(firestarter_handle_t*) { return true; }
 extern "C" bool hw_get_config(firestarter_handle_t*) { return true; }
@@ -118,7 +120,7 @@ static void reset() {
     fake_ms = 100;
     timeout_started_ms = 0;
     incoming.clear();
-    reads = configured = writes = logged = 0;
+    reads = configured = writes = ram_tests = logged = 0;
     ce_level = 0;
     memset(latch, 0, sizeof(latch));
     memset(cleared, 0, sizeof(cleared));
@@ -287,6 +289,15 @@ int main() {
     assert(live_config.r2 == VALUE_R2);
     assert(saves == 1);
     puts("PASS in-band config applied");
+
+    reset();
+    frame(memory_frame(CMD_RAM_TEST, 32768, 0, 28, 5000));
+    assert(handle.cmd == CMD_RAM_TEST && configured == 1);
+    arm();
+    loop();
+    assert(ram_tests == 1);
+    assert_idle();
+    puts("PASS ram-test dispatch");
     return 0;
 }
 """
@@ -329,4 +340,5 @@ def test_command_lifecycle_and_safe_cleanup(tmp_path: Path, defines: list[str]) 
         "PASS malformed bus rejection",
         "PASS out-of-band config refused",
         "PASS in-band config applied",
+        "PASS ram-test dispatch",
     }
