@@ -1,0 +1,137 @@
+/*
+ * Project Name: Firestarter
+ * Copyright (c) 2024 Henrik Olsson
+ *
+ * Permission is hereby granted under MIT license.
+ *
+ * The level of a VPP-on-P1 bus line while the chip is read (PR #101).
+ *
+ * A 2764/27128 (28-pin, VPP on pin 1 = bus line 15) and a 2716 (24-pin, VPP
+ * on pin 21 = bus line 11) need VPP at VCC in read mode. Both lines are
+ * shift-register logic outputs, so mem_util_remap_address_bus() can drive
+ * them high for a read.
+ *
+ * A 32-pin VPP-on-P1 part uses bus line 21. That line is not a logic output:
+ * it lands in the control register as CTRL_ADDRESS_LINE_18, and on Rev 2.x
+ * rurp_map_ctrl_reg_for_hardware_revision() maps that bit onto the pin-1 VPP
+ * switch. Driving it high for a read switches the VPP rail onto pin 1.
+ *
+ * test_val_eprom checks the remap output. This suite checks the PHYSICAL
+ * control byte that a Rev 2 board latches while the chip is read.
+ */
+
+#include <Arduino.h>
+#include <ArduinoFake.h>
+#include <unity.h>
+
+extern "C" {
+#include "memory.h"
+#include "eprom.h"
+#include "memory_utils.h"
+}
+#include "firestarter.h"
+#include "rurp_pinout.h"
+#include "rurp_shield.h"
+
+using namespace fakeit;
+
+extern "C" void reset_register_cache(uint8_t lsb, uint8_t msb, rurp_register_t ctrl);
+extern "C" void clear_read_snapshots();
+extern "C" int read_snapshot_count();
+extern "C" uint8_t read_snapshot_msb(int i);
+extern "C" rurp_register_t read_snapshot_ctrl_logical(int i);
+extern "C" uint8_t read_snapshot_ctrl_physical(int i);
+extern "C" rurp_configuration_t* rurp_get_config();
+
+void setUp(void) {
+    ArduinoFakeReset();
+    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t))).AlwaysReturn(1);
+    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
+    When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
+    When(Method(ArduinoFake(), delay)).AlwaysReturn();
+    When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
+    When(Method(ArduinoFake(), millis)).AlwaysReturn(0);
+    rurp_get_config()->hardware_revision = REVISION_2_0;
+    reset_register_cache(0, 0, 0);
+    clear_read_snapshots();
+}
+
+void tearDown(void) {
+    rurp_get_config()->hardware_revision = 0;
+}
+
+/* A bus config with no per-line remap: address_lines[0] == 0xFF keeps the
+ * address bits where they are, so only the VPP line moves. */
+static firestarter_handle_t make_handle(uint32_t protocol, uint8_t pins, uint8_t vpp_line,
+                                        uint32_t mem_size, uint8_t cmd) {
+    firestarter_handle_t h = {};
+    h.protocol = protocol;
+    h.pins = pins;
+    h.mem_size = mem_size;
+    h.cmd = cmd;
+    h.response_code = RESPONSE_CODE_OK;
+    h.ctrl_flags = FLAG_SKIP_ERASE;
+    memset(h.bus_config.address_lines, 0xFF, sizeof(h.bus_config.address_lines));
+    h.bus_config.address_mask = mem_size - 1;
+    h.bus_config.matching_lines = 0;
+    h.bus_config.rw_line = 0xFF;
+    h.bus_config.vpp_line = vpp_line;
+    h.bus_config.static_high_mask = 0;
+    configure_memory(&h);
+    reset_register_cache(0, 0, 0);
+    clear_read_snapshots();
+    return h;
+}
+
+/* ─── Rev 2 board: the physical bus while the chip is read ───────────────── */
+
+static void assert_p1_switch_off_on_every_read(const char* msg) {
+    TEST_ASSERT_TRUE_MESSAGE(read_snapshot_count() > 0, "no data read was observed");
+    for (int i = 0; i < read_snapshot_count(); i++) {
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0, read_snapshot_ctrl_physical(i) & CTRL_VPP_P1_ENABLE_REV2, msg);
+    }
+}
+
+/* eprom_get_chip_id() turns the regulator on (without the drop resistor) and
+ * then reads. The pin-1 VPP switch must stay off for those reads. */
+void test_rev2_32pin_chip_id_read_keeps_p1_vpp_switch_off(void) {
+    firestarter_handle_t h = make_handle(0x08, 32, VPP_P1_32_DIP, 0x20000, CMD_CHECK_CHIP_ID);
+    h.firestarter_operation_main(&h);
+    for (int i = 0; i < read_snapshot_count(); i++) {
+        TEST_ASSERT_TRUE_MESSAGE(read_snapshot_ctrl_logical(i) & CTRL_VPP_REGULATOR_ENABLE,
+                                 "precondition: the regulator is on during the chip-ID read");
+    }
+    assert_p1_switch_off_on_every_read("the regulated rail is switched onto pin 1 during the chip-ID read");
+}
+
+void test_rev2_32pin_plain_read_keeps_p1_vpp_switch_off(void) {
+    firestarter_handle_t h = make_handle(0x08, 32, VPP_P1_32_DIP, 0x20000, CMD_READ);
+    h.address = 0;
+    h.data_size = 16;
+    h.mem_size = 16;
+    h.firestarter_operation_main(&h);
+    assert_p1_switch_off_on_every_read("the VPP rail is switched onto pin 1 during a plain read");
+}
+
+/* 28-pin: pin 1 is at VCC (MSB bit 7 = bus line 15) for every read, and the
+ * VPP switch stays off. */
+void test_rev2_28pin_chip_id_read_holds_pin1_high_with_switch_off(void) {
+    firestarter_handle_t h = make_handle(0x07, 28, VPP_P1_28_DIP, 0x2000, CMD_CHECK_CHIP_ID);
+    h.firestarter_operation_main(&h);
+    assert_p1_switch_off_on_every_read("the VPP switch is on during a 28-pin chip-ID read");
+    for (int i = 0; i < read_snapshot_count(); i++) {
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x80, read_snapshot_msb(i) & 0x80, "pin 1 is low during the read");
+    }
+}
+
+int main(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
+    UNITY_BEGIN();
+
+    RUN_TEST(test_rev2_32pin_chip_id_read_keeps_p1_vpp_switch_off);
+    RUN_TEST(test_rev2_32pin_plain_read_keeps_p1_vpp_switch_off);
+    RUN_TEST(test_rev2_28pin_chip_id_read_holds_pin1_high_with_switch_off);
+
+    return UNITY_END();
+}
