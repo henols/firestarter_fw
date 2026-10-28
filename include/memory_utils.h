@@ -94,6 +94,26 @@ static inline bool using_p1_as_vpp(const firestarter_handle_t* handle) {
            (handle->pins == 28 && handle->bus_config.vpp_line == VPP_P1_28_DIP) ||
            (handle->pins == 24 && handle->bus_config.vpp_line == VPP_P21_24_DIP);
 }
+
+/*
+ * True when driving the VPP bus line high also switches a VPP route onto the
+ * socket. Lines 0-15 reach the socket from the address latches through a
+ * Schottky diode, so they are logic levels on every revision. A line above
+ * them is a control-register bit: on Rev 0/1 line 21 is the A18 latch bit,
+ * and on Rev 2.x it is the same bit as the pin-1 VPP switch.
+ */
+static inline bool vpp_line_switches_vpp(const firestarter_handle_t* handle) {
+    uint8_t line = handle->bus_config.vpp_line;
+    if (line < RURP_CTRL_ADDRESS_SHIFT) {
+        return false;
+    }
+    rurp_register_t bit = (rurp_register_t)1 << (line - RURP_CTRL_ADDRESS_SHIFT);
+#ifdef HARDWARE_REVISION
+    return (rurp_map_ctrl_reg_for_hardware_revision(bit) & RURP_SOCKET_VPP_ROUTE_BITS) != 0;
+#else
+    return (bit & RURP_SOCKET_VPP_ROUTE_BITS) != 0;
+#endif
+}
 #ifdef __cplusplus
 }
 #endif
