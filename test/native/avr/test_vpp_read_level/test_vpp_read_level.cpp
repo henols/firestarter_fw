@@ -146,6 +146,59 @@ void test_rev1_32pin_plain_read_holds_pin1_high_with_switch_off(void) {
     }
 }
 
+/* ─── dev addr: the handle never went through configure_memory() ──────────── */
+
+/* dt_set_address() remaps an address on a handle that the JSON parser filled
+ * but configure_memory() never saw, so every handler pointer is NULL. */
+static firestarter_handle_t make_unconfigured_handle(uint8_t pins, uint8_t vpp_line) {
+    firestarter_handle_t h = {};
+    h.pins = pins;
+    memset(h.bus_config.address_lines, 0xFF, sizeof(h.bus_config.address_lines));
+    h.bus_config.address_mask = 0x1FFF;
+    h.bus_config.rw_line = 0xFF;
+    h.bus_config.vpp_line = vpp_line;
+    return h;
+}
+
+void test_unconfigured_read_remap_does_not_call_a_null_handler(void) {
+    firestarter_handle_t h = make_unconfigured_handle(28, VPP_P1_28_DIP);
+    TEST_ASSERT_NULL(h.firestarter_get_control_register);
+    mem_util_remap_address_bus(&h, 0, READ_FLAG);
+}
+
+/* dt_set_address() sets the mask itself, so dev addr with OE holds pin 1 high
+ * for the read until the P1 route is on. */
+void test_unconfigured_read_holds_pin1_high_once_the_mask_is_set(void) {
+    firestarter_handle_t h = make_unconfigured_handle(28, VPP_P1_28_DIP);
+    mem_util_set_read_high_mask(&h);
+    uint32_t pin1 = (uint32_t)1 << VPP_P1_28_DIP;
+    TEST_ASSERT_EQUAL_HEX32(pin1, mem_util_remap_address_bus(&h, 0, READ_FLAG) & pin1);
+    TEST_ASSERT_EQUAL_HEX32(0, mem_util_remap_address_bus(&h, 0, WRITE_FLAG) & pin1);
+    reset_register_cache(0, 0, CTRL_VPP_P1_ENABLE);
+    TEST_ASSERT_EQUAL_HEX32(0, mem_util_remap_address_bus(&h, 0, READ_FLAG) & pin1);
+}
+
+/* ─── The read-high mask, set once per command ───────────────────────────── */
+
+static uint32_t read_high_mask_for(uint8_t pins, uint8_t vpp_line) {
+    firestarter_handle_t h = make_unconfigured_handle(pins, vpp_line);
+    mem_util_set_read_high_mask(&h);
+    return h.bus_config.read_high_mask;
+}
+
+void test_read_high_mask_holds_logic_level_p1_lines(void) {
+    TEST_ASSERT_EQUAL_HEX32((uint32_t)1 << VPP_P1_28_DIP, read_high_mask_for(28, VPP_P1_28_DIP));
+    TEST_ASSERT_EQUAL_HEX32((uint32_t)1 << VPP_P21_24_DIP, read_high_mask_for(24, VPP_P21_24_DIP));
+    rurp_get_config()->hardware_revision = REVISION_1;
+    TEST_ASSERT_EQUAL_HEX32((uint32_t)1 << VPP_P1_32_DIP, read_high_mask_for(32, VPP_P1_32_DIP));
+}
+
+void test_read_high_mask_is_empty_where_the_line_switches_vpp_or_is_not_p1(void) {
+    TEST_ASSERT_EQUAL_HEX32(0, read_high_mask_for(32, VPP_P1_32_DIP));
+    TEST_ASSERT_EQUAL_HEX32(0, read_high_mask_for(28, 0xFF));
+    TEST_ASSERT_EQUAL_HEX32(0, read_high_mask_for(32, VPP_P1_28_DIP));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -155,6 +208,11 @@ int main(int argc, char** argv) {
     RUN_TEST(test_rev2_32pin_plain_read_keeps_p1_vpp_switch_off);
     RUN_TEST(test_rev2_28pin_chip_id_read_holds_pin1_high_with_switch_off);
     RUN_TEST(test_rev1_32pin_plain_read_holds_pin1_high_with_switch_off);
+
+    RUN_TEST(test_unconfigured_read_remap_does_not_call_a_null_handler);
+    RUN_TEST(test_unconfigured_read_holds_pin1_high_once_the_mask_is_set);
+    RUN_TEST(test_read_high_mask_holds_logic_level_p1_lines);
+    RUN_TEST(test_read_high_mask_is_empty_where_the_line_switches_vpp_or_is_not_p1);
 
     return UNITY_END();
 }

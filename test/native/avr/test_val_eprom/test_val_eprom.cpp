@@ -100,40 +100,26 @@ static firestarter_handle_t make_handle(uint32_t protocol, uint8_t cmd) {
 
 /* Exercise the remap directly. This suite's register stub keeps the Rev 0/1
  * layout, where line 21 is the A18 latch bit, so a 32-pin read drives it high.
- * test_vpp_read_level checks Rev 2.x, where line 21 is the pin-1 VPP switch. */
-static bool s_p1_route_on;
-static rurp_register_t s_requested_control_bit;
-static bool get_p1_route(firestarter_handle_t*, rurp_register_t bit) {
-    s_requested_control_bit = bit;
-    return s_p1_route_on;
-}
-
+ * test_vpp_read_level checks Rev 2.x, where line 21 is the pin-1 VPP switch,
+ * and the P1 route being on: this suite's rurp_read_from_register reads 0. */
 static void assert_p1_read_bit(uint8_t pins, uint8_t vpp_line,
-                               uint8_t read_write, bool route_on, bool expected_high) {
+                               uint8_t read_write, bool expected_high) {
     firestarter_handle_t h = {};
     h.pins = pins;
     h.bus_config.address_lines[0] = 0xFF;
     h.bus_config.rw_line = 0xFF;
     h.bus_config.vpp_line = vpp_line;
-    h.firestarter_get_control_register = get_p1_route;
-    s_p1_route_on = route_on;
-    s_requested_control_bit = 0;
+    mem_util_set_read_high_mask(&h);
     const uint32_t mapped = mem_util_remap_address_bus(&h, 0, read_write);
     TEST_ASSERT_EQUAL_UINT32(expected_high ? (1UL << vpp_line) : 0, mapped);
-    if (read_write == READ_FLAG) {
-        TEST_ASSERT_EQUAL(CTRL_VPP_P1_ENABLE, s_requested_control_bit);
-    } else {
-        TEST_ASSERT_EQUAL(0, s_requested_control_bit);
-    }
 }
 
 void test_p1_vpp_remap_only_drives_logic_outputs_high_during_safe_reads(void) {
-    assert_p1_read_bit(28, VPP_P1_28_DIP, READ_FLAG, false, true);
-    assert_p1_read_bit(28, VPP_P1_28_DIP, READ_FLAG, true, false);
-    assert_p1_read_bit(28, VPP_P1_28_DIP, WRITE_FLAG, false, false);
-    assert_p1_read_bit(24, VPP_P21_24_DIP, READ_FLAG, false, true);
-    assert_p1_read_bit(32, VPP_P1_32_DIP, READ_FLAG, false, true);
-    assert_p1_read_bit(32, VPP_P1_32_DIP, READ_FLAG, true, false);
+    assert_p1_read_bit(28, VPP_P1_28_DIP, READ_FLAG, true);
+    assert_p1_read_bit(28, VPP_P1_28_DIP, WRITE_FLAG, false);
+    assert_p1_read_bit(24, VPP_P21_24_DIP, READ_FLAG, true);
+    assert_p1_read_bit(32, VPP_P1_32_DIP, READ_FLAG, true);
+    assert_p1_read_bit(32, VPP_P1_32_DIP, WRITE_FLAG, false);
 }
 
 /* ─── Helper: scan recording for CONTROL_REGISTER writes with VPP bit set ─── */
