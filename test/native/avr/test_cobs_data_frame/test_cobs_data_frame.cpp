@@ -345,6 +345,37 @@ void test_op_message_fragmented_done(void) {
     TEST_ASSERT_EQUAL_INT(OP_MSG_DONE, op_get_message(&op_handle));
 }
 
+/* op_get_message: "NK" and a data frame that fails its check (CRC resend)  */
+
+void test_op_message_nak(void) {
+    queue_text("NK");
+    setup_serial_read_mock(rx_queue, rx_pos);
+    TEST_ASSERT_EQUAL_INT(OP_MSG_NAK, op_get_message(&op_handle));
+    TEST_ASSERT_EQUAL_size_t(rx_queue.size(), rx_pos);
+}
+
+void test_op_message_fragmented_nak(void) {
+    queue_text("N");
+    setup_serial_read_mock(rx_queue, rx_pos);
+    TEST_ASSERT_EQUAL_INT(OP_MSG_INCOMPLETE, op_get_message(&op_handle));
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0, rx_pos, "a partial NK must not be consumed");
+    queue_text("K");
+    TEST_ASSERT_EQUAL_INT(OP_MSG_NAK, op_get_message(&op_handle));
+}
+
+void test_op_message_bad_crc_frame_then_next_frame(void) {
+    const uint8_t payload[] = { 0x11, 0x22, 0x33 };
+    queue_data_frame(payload, sizeof(payload));
+    rx_queue[2] ^= 0x01;  /* '#', COBS code, then payload[0]: break the CRC8 */
+    size_t bad_end = rx_queue.size();
+    queue_data_frame(payload, sizeof(payload));
+    setup_serial_read_mock(rx_queue, rx_pos);
+    TEST_ASSERT_EQUAL_INT(OP_MSG_BAD_DATA, op_get_message(&op_handle));
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(bad_end, rx_pos, "the bad frame is drained to its delimiter");
+    TEST_ASSERT_EQUAL_INT(OP_MSG_DATA, op_get_message(&op_handle));
+    TEST_ASSERT_EQUAL_MEMORY(payload, op_handle.data_buffer, sizeof(payload));
+}
+
 /* main                                                                      */
 int main(int argc, char** argv) {
     (void)argc;
@@ -361,6 +392,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_op_message_partial_done_keeps_the_next_frame);
     RUN_TEST(test_op_message_invalid_done_prefix_keeps_a_following_ack);
     RUN_TEST(test_op_message_fragmented_done);
+    RUN_TEST(test_op_message_nak);
+    RUN_TEST(test_op_message_fragmented_nak);
+    RUN_TEST(test_op_message_bad_crc_frame_then_next_frame);
 
     return UNITY_END();
 }

@@ -7,7 +7,9 @@ on source text.
 
 The host side of each scenario follows what firestarter_app 3.2.4 sends:
 "OK" acks, '#' data frames and a "DONE" only in answer to a data request
-after its file is exhausted.
+after its file is exhausted. The resend scenarios add what a 3.3 host sends:
+"NK" for a read chunk that failed its check, and the chunk at the requested
+address again.
 """
 import os
 from pathlib import Path
@@ -44,6 +46,8 @@ static std::string rx;
 static size_t rx_pos = 0;
 static std::vector<uint8_t> ids;
 static std::vector<uint32_t> chunks;  // sizes of emitted read chunks
+static std::vector<uint32_t> chunk_at;  // addresses of emitted read chunks
+static std::vector<uint32_t> requests;  // addresses of write data requests
 static std::vector<uint8_t> written;  // bytes handed to the write handler
 static uint32_t written_at = 0xFFFFFFFF;
 
@@ -52,12 +56,17 @@ static uint32_t written_at = 0xFFFFFFFF;
 static int host_file = -1;  // bytes left in the host's file; -1 = no host
 static uint8_t host_chunk = 32;
 static const char* host_reply = nullptr;  // a scripted reply instead
+static int host_bad_frames = 0;  // write chunks that arrive with a bad CRC
+static int host_naks = 0;        // read chunks the host answers with "NK"
 static void send(const char* text);
 static void send_data(uint8_t n, uint8_t fill);
 static void host_on_data_request() {
     if (host_reply) {
         send(host_reply);
         host_reply = nullptr;
+    } else if (host_bad_frames > 0) {
+        rx += "#\xFF";  // the harness framing for a frame that fails its check
+        host_bad_frames--;
     } else if (host_file > 0) {
         uint8_t n = host_file < host_chunk ? (uint8_t)host_file : host_chunk;
         send_data(n, 0x11);
@@ -87,9 +96,11 @@ size_t rurp_communication_read_bytes(char* buf, size_t n) {
     while (i < n && rx_pos < rx.size()) buf[i++] = rx[rx_pos++];
     return i;
 }
-// Harness framing after '#': one length byte, then the payload.
+// Harness framing after '#': one length byte, then the payload. Length 0xFF
+// is a frame that fails its CRC8 check.
 int rurp_communication_read_data(char* buf, size_t cap) {
     size_t n = (uint8_t)rx[rx_pos++];
+    if (n == 0xFF) return -1;
     assert(n <= cap);
     memcpy(buf, rx.data() + rx_pos, n);
     rx_pos += n;
@@ -98,18 +109,28 @@ int rurp_communication_read_data(char* buf, size_t cap) {
 size_t rurp_communication_write(const char*, size_t n) { return n; }
 void rurp_log_id(uint8_t id, const uint8_t*, uint8_t) {
     ids.push_back(id);
-    if (id == MSG_OK_REQ_DATA) host_on_data_request();
     // The host acks each finished phase; the first ack starts INIT.
     if (id == MSG_INIT_DONE || id == MSG_MAIN_DONE || id == MSG_END_DONE) send("OK");
 }
 void rurp_log_id_u8(uint8_t id, uint8_t) { ids.push_back(id); }
 void rurp_log_id_u16(uint8_t id, uint16_t) { ids.push_back(id); }
 void rurp_log_id_u24(uint8_t id, uint32_t) { ids.push_back(id); }
-void rurp_log_id_u32(uint8_t id, uint32_t) { ids.push_back(id); }
-void rurp_log_id_wide(uint8_t id, const uint8_t*, uint16_t n) {
+void rurp_log_id_u32(uint8_t id, uint32_t v) {
     ids.push_back(id);
-    if (id == MSG_DATA_CHUNK) {
-        chunks.push_back(n);
+    if (id == MSG_OK_REQ_DATA) {
+        requests.push_back(v);
+        host_on_data_request();
+    }
+}
+void rurp_log_id_wide(uint8_t id, const uint8_t*, uint16_t) { ids.push_back(id); }
+void rurp_log_data_chunk(uint32_t address, const uint8_t*, uint16_t n) {
+    ids.push_back(MSG_DATA_CHUNK);
+    chunks.push_back(n);
+    chunk_at.push_back(address);
+    if (host_naks > 0) {
+        send("NK");
+        host_naks--;
+    } else {
         send(host_reply ? host_reply : "OK");
     }
 }
@@ -139,12 +160,16 @@ static void reset(uint8_t cmd, uint32_t address, uint32_t mem_size, uint32_t reg
     rx_pos = 0;
     ids.clear();
     chunks.clear();
+    chunk_at.clear();
+    requests.clear();
     written.clear();
     written_at = 0xFFFFFFFF;
     fake_ms = 0;
     host_file = -1;
     host_chunk = 32;
     host_reply = nullptr;
+    host_bad_frames = 0;
+    host_naks = 0;
     send("OK");
 }
 
@@ -185,8 +210,48 @@ int main() {
     assert(count(MSG_MAIN_DONE) == 1);
     assert(written.size() == 48 && written_at == 16);
     assert(count(MSG_OK_REQ_DATA) == 2);
+    assert(requests == std::vector<uint32_t>({16, 48}));
     assert(rx_pos == rx.size());
     puts("PASS bounded write ends at region end");
+
+    // A write chunk that fails its check is asked for again at the same
+    // address, and the write goes on.
+    reset(CMD_WRITE, 16, 1024, 16 + 48);
+    host_file = 48;
+    host_bad_frames = 2;
+    run(eprom_write);
+    assert(!has_error());
+    assert(count(MSG_MAIN_DONE) == 1);
+    assert(written.size() == 48 && written_at == 16);
+    assert(requests == std::vector<uint32_t>({16, 16, 16, 48}));
+    puts("PASS bad write chunk asked for again");
+
+    // FRAME_RESEND_MAX resends, then one more bad frame ends the write.
+    reset(CMD_WRITE, 0, 1024, 48);
+    host_file = 48;
+    host_bad_frames = FRAME_RESEND_MAX + 1;
+    run(eprom_write);
+    assert(count(MSG_ERR_RESEND_LIMIT) == 1);
+    assert(count(MSG_ERR_DATA_ERR_N) == 0);
+    assert(count(MSG_MAIN_DONE) == 0);
+    assert(written.empty());
+    assert(requests.size() == FRAME_RESEND_MAX + 1);
+    puts("PASS write resend limit");
+
+    // The resend count is per chunk: a bad frame before each chunk is not a run.
+    reset(CMD_WRITE, 0, 1024, 0);
+    host_file = 32 * (FRAME_RESEND_MAX + 2);
+    for (int i = 0; i < FRAME_RESEND_MAX + 2; i++) {
+        host_bad_frames = 1;
+        handle.response_code = RESPONSE_CODE_OK;
+        while (count(MSG_OK_REQ_DATA) < (unsigned)(2 * i + 2)) {
+            assert(!eprom_write(&handle));
+        }
+    }
+    run(eprom_write);
+    assert(!has_error());
+    assert(written.size() == 32 * (FRAME_RESEND_MAX + 2));
+    puts("PASS write resend count is per chunk");
 
     // A DONE before region-end is refused: the host sent less than it declared.
     reset(CMD_WRITE, 0, 1024, 48);
@@ -233,8 +298,28 @@ int main() {
     run(eprom_read);
     assert(!has_error());
     assert(chunks.size() == 3 && chunks[0] == 64 && chunks[1] == 64 && chunks[2] == 32);
+    assert(chunk_at == std::vector<uint32_t>({0, 64, 128}));
     assert(count(MSG_MAIN_DONE) == 1);
     puts("PASS read to mem_size");
+
+    // An "NK" gets the same chunk again, with the same address.
+    reset(CMD_READ, 0, 160, 0);
+    host_naks = 2;
+    run(eprom_read);
+    assert(!has_error());
+    assert(chunk_at == std::vector<uint32_t>({0, 0, 0, 64, 128}));
+    assert(handle.address == 160);
+    assert(count(MSG_MAIN_DONE) == 1);
+    puts("PASS NAK resends read chunk");
+
+    // FRAME_RESEND_MAX resends, then one more "NK" ends the read.
+    reset(CMD_READ, 0, 160, 0);
+    host_naks = FRAME_RESEND_MAX + 1;
+    run(eprom_read);
+    assert(count(MSG_ERR_RESEND_LIMIT) == 1);
+    assert(chunks.size() == FRAME_RESEND_MAX + 1);
+    assert(count(MSG_MAIN_DONE) == 0);
+    puts("PASS read resend limit");
 
     // A read with region-end stops there and cuts the last chunk.
     reset(CMD_READ, 16, 1024, 16 + 100);
@@ -281,11 +366,16 @@ def test_write_and_read_transfer_loops(tmp_path: Path) -> None:
     )
     assert result.stdout.splitlines() == [
         "PASS bounded write ends at region end",
+        "PASS bad write chunk asked for again",
+        "PASS write resend limit",
+        "PASS write resend count is per chunk",
         "PASS early DONE refused",
         "PASS unbounded DONE accepted",
         "PASS late data refused",
         "PASS stray ACK refused",
         "PASS read to mem_size",
+        "PASS NAK resends read chunk",
+        "PASS read resend limit",
         "PASS read honours region end",
         "PASS DONE in ACK wait",
     ]

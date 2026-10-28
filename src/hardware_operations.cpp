@@ -77,6 +77,9 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
         // reap.
         return true;
     }
+    if (msg_type == OP_MSG_BAD_DATA) {
+        op_log_bad_data();
+    }
     if (msg_type != OP_MSG_ACK) {
         // Neither ACK nor DONE yet. Keep waiting.
         // Returning false keeps the command active without doing anything.

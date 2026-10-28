@@ -168,6 +168,7 @@ typedef struct firestarter_handle {
     uint8_t cmd;
     uint8_t operation_state;
     uint8_t response_code;
+    uint8_t resend_count;        /* resends of the current data chunk, <= FRAME_RESEND_MAX */
     uint8_t protocol;            /* largest dispatched value is 0x39 (PROTO_PHANTOM_0x39),
                                    * which fits uint8_t */
     uint8_t pins;

@@ -348,13 +348,16 @@ static uint8_t crc8_ccitt(uint8_t crc, uint8_t b) {
 
 // Board-agnostic frame emitter: single-byte writes, .flush() at end. It does
 // not consult com_mode; the Uno strong override of rurp_log_id gates the call.
-// The narrow _firestarter_emit_frame in rurp_serial_utils.h calls this one, so
-// every frame has the same bytes whatever its parameter count type.
-void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t param_count) {
+// The narrow and wide emitters in rurp_serial_utils.h call this one, so every
+// frame has the same bytes whatever its parameter count type. The parameters
+// are `head` followed by `params`, so a caller can put a field in front of a
+// buffer without a copy.
+void _firestarter_emit_frame_parts(uint8_t id, const uint8_t* head, uint8_t head_len,
+                                   const uint8_t* params, uint16_t param_count) {
     // The u16 length field counts id + params + crc, so it can carry at most
     // 65533 parameter bytes. A longer frame would wrap the length and desync
     // the host decoder, so it is not sent.
-    if (param_count > 65533) {
+    if ((uint32_t)head_len + param_count > 65533) {
         return;
     }
 
@@ -366,7 +369,7 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
 
     // Length field (u16 big-endian): counts id + params + crc; excludes the
     // len field itself and the trailing 0x0A anchor.
-    uint16_t len_u16 = (uint16_t)(1 + param_count + 1);
+    uint16_t len_u16 = (uint16_t)(1 + head_len + param_count + 1);
     SERIAL_PORT.write((uint8_t)(len_u16 >> 8));    // MSB
     SERIAL_PORT.write((uint8_t)(len_u16 & 0xFF));  // LSB
 
@@ -378,6 +381,10 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
     crc = crc8_ccitt(crc, id);
 
     // Params.
+    for (uint8_t i = 0; i < head_len; i++) {
+        SERIAL_PORT.write(head[i]);
+        crc = crc8_ccitt(crc, head[i]);
+    }
     for (uint16_t i = 0; i < param_count; i++) {
         uint8_t b = params[i];
         SERIAL_PORT.write(b);
@@ -440,4 +447,10 @@ void rurp_log_id_u32(uint8_t id, uint32_t v) {
 // outside communication mode, which the operation-loop already ensures).
 __attribute__((weak)) void rurp_log_id_wide(uint8_t id, const uint8_t* params, uint16_t param_count) {
     _firestarter_emit_frame_wide(id, params, param_count);
+}
+
+// Weak default for rurp_log_data_chunk. Uno has a strong override with the
+// same com_mode gate as its rurp_log_id_wide.
+__attribute__((weak)) void rurp_log_data_chunk(uint32_t address, const uint8_t* data, uint16_t size) {
+    _firestarter_emit_data_chunk(address, data, size);
 }

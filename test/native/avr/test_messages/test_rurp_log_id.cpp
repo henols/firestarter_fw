@@ -331,6 +331,22 @@ void test_wide_frame_sizes_up_to_the_length_field_limit(void) {
     TEST_ASSERT_EQUAL_size_t(0, capture_wide(MSG_DATA_CHUNK, params, 65534).size());
 }
 
+/* MSG_DATA_CHUNK carries the chip address in front of the data. */
+
+void test_data_chunk_frame_has_the_address_first(void) {
+    static uint8_t data[1536];
+    for (size_t i = 0; i < sizeof(data); i++) data[i] = (uint8_t)(i * 13 + 5);
+    const uint32_t address = 0x01A2B3C4;
+    const uint16_t counts[] = { 0, 1, 64, 1536 };
+    for (uint16_t n : counts) {
+        std::vector<uint8_t> params = { 0x01, 0xA2, 0xB3, 0xC4 };
+        params.insert(params.end(), data, data + n);
+        captured.clear();
+        rurp_log_data_chunk(address, data, n);
+        assert_frame(captured, MSG_DATA_CHUNK, params.data(), params.size());
+    }
+}
+
 /* Uno deferred-log queue (henols/firestarter#125). */
 
 static void push_ids(deferred_log_t* log, const uint8_t* ids, size_t n) {
@@ -416,6 +432,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_ok_ready_u16_param_frame);
     RUN_TEST(test_narrow_and_wide_frames_are_byte_identical);
     RUN_TEST(test_wide_frame_sizes_up_to_the_length_field_limit);
+    RUN_TEST(test_data_chunk_frame_has_the_address_first);
     RUN_TEST(test_deferred_error_replaces_the_newest_info_frame);
     RUN_TEST(test_deferred_error_keeps_the_order_of_protocol_frames);
     RUN_TEST(test_deferred_full_queue_drops_a_new_info_frame);

@@ -85,7 +85,11 @@ void dt_decode_register(firestarter_handle_t* handle, const char* reg_name, uint
 
 bool dt_set_registers(firestarter_handle_t* handle) {
     // Wait for an ACK message that precedes the register data
-    if (op_get_message(handle) != OP_MSG_ACK) {
+    op_message_type msg_type = op_get_message(handle);
+    if (msg_type == OP_MSG_BAD_DATA) {
+        op_log_bad_data();
+    }
+    if (msg_type != OP_MSG_ACK) {
         return false;
     };
 

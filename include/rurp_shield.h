@@ -105,6 +105,9 @@ extern "C" {
     // param_count is uint16_t to avoid overflow for 512 / 1024-byte chunks.
     void rurp_log_id_wide(uint8_t id, const uint8_t* params, uint16_t param_count);
 
+    // MSG_DATA_CHUNK with the chip address of data[0] in front of the data.
+    void rurp_log_data_chunk(uint32_t address, const uint8_t* data, uint16_t size);
+
     void rurp_set_data_output();
     void rurp_set_data_input();
     void rurp_set_control_pin(uint8_t pin, uint8_t state);
