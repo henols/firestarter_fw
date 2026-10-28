@@ -289,6 +289,9 @@ void loop() {
         case CMD_LOCK_STATUS:
             finished = eprom_lock_status(&handle);
             break;
+        case CMD_RAM_TEST:
+            finished = eprom_ram_test(&handle);
+            break;
         case CMD_READ_VPP:
         case CMD_READ_VPE:
             finished = hw_read_voltage(&handle);
@@ -310,9 +313,11 @@ void loop() {
         case CMD_DEV_ADDRESS:
             finished = dt_set_address(&handle);
             break;
+#ifdef CMD_DEV_ADC
         case CMD_DEV_ADC:
             finished = dt_read_adc(&handle);
             break;
+#endif
 #endif
 
         case CMD_CONFIG:

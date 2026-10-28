@@ -59,6 +59,13 @@ bool eprom_lock_status(firestarter_handle_t* handle) {
     return op_execute_simple_operation(handle);
 }
 
+// The RAM test runs in bounded batches. Its main callback keeps the operation
+// in progress until the last March element ends, so it is called again on
+// each loop() iteration.
+bool eprom_ram_test(firestarter_handle_t* handle) {
+    return op_execute_simple_operation(handle);
+}
+
 // Returns true on success/continue, false on error.
 static inline bool _process_incoming_data(firestarter_handle_t* handle) {
     // The operation's exclusive end bounds each received chunk; it defaults

@@ -180,6 +180,7 @@ bool dt_set_address(firestarter_handle_t* handle) {
     return true;
 }
 
+#ifdef CMD_DEV_ADC
 // Rail modes sampled by dt_read_adc, in the order it sweeps them. The mode
 // byte is the first field of every MSG_DATA_ADC_RAW frame.
 #define DT_ADC_MODE_RAILS_OFF 0
@@ -294,5 +295,6 @@ bool dt_read_adc(firestarter_handle_t* handle) {
     }
     return true;
 }
+#endif // CMD_DEV_ADC
 
 #endif

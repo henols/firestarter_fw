@@ -61,6 +61,11 @@ image therefore implements `CMD_DEV_ADDRESS` (`7`) and `CMD_DEV_REGISTER` (`8`).
 `firestarter dev addr` and `firestarter dev reg` need them. For a stable tag it sets no such flag,
 so a stable image refuses both commands.
 
+`CMD_DEV_ADC` (`17`, `firestarter dev adc`) is also a dev command, but the `leonardo` pre-release
+image does not have it. `leonardo` sets `-D DEV_ADC_SUPPORTED=0`, because its DEV_TOOLS image does
+not fit under the 28672 B cliff with both `CMD_DEV_ADC` and `CMD_RAM_TEST`. On `leonardo`, ordinal
+17 answers `MSG_ERR_UNKNOWN_CMD`. `uno` and `uno328pb` pre-release images have `CMD_DEV_ADC`.
+
 **`platformio.ini` tells you what a local build does. It does not tell you what ships.** To build
 a local image that matches a pre-release artifact, run:
 
@@ -138,7 +143,7 @@ are in `src/proms/`.
 | `0x08` | `PROTO_EPROM_32PIN` | `eprom.cpp` | Drop-resistor route | 32-pin UV-EPROM. Refer to the 27C section. |
 | `0x0B` | `PROTO_EPROM_24PIN` | `eprom.cpp` | Direct VPE route | 24-pin UV-EPROM. Refer to the 27C section. |
 | `0x0D` | `PROTO_EEPROM_PARALLEL` | `eeprom_28c.cpp` | None (5V) | SDP disable, then DQ7 page poll. Refer to the 0x0D section. |
-| `0x0E`, `0x27`, `0x28`, `0x29` | `PROTO_SRAM_32PIN`, `_24PIN`, `_28PIN`, `_32PIN_NVRAM` | `sram.cpp` | None (5V) | Generic read and write. |
+| `0x0E`, `0x27`, `0x28`, `0x29` | `PROTO_SRAM_32PIN`, `_24PIN`, `_28PIN`, `_32PIN_NVRAM` | `sram.cpp`, `march.cpp` | None (5V) | Generic read and write. `CMD_RAM_TEST` (`18`) runs a March C- test on `0x27`, `0x28` and `0x29` only. It stops at the first failure and sends `MSG_ERR_RAM_TEST` (`0xC2`) with the element, address, expected value and value read. `0x0E` refuses it, because only NVRAM read/write rows use `0x0E`. |
 | `0x06` | `PROTO_FLASH_NOR_UNLOCK` | `flash_nor_unlock.cpp` | None (5V) | AMD unlock. Chip erase, or sector erase at a non-zero address. Each program and erase waits on DQ7. A write at a non-zero address does not erase. |
 | `0x05` | `PROTO_FLASH_5V_PAGE` | `flash_5v_page.cpp` | None (5V) | Page write, then DQ7 poll. Software chip erase. |
 | `0x35` | `PROTO_PHANTOM_0x35` | `flash_5v_page.cpp` | None (5V) | Phantom. No database chips. The upstream label names an ITE EC MCU. |
