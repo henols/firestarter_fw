@@ -162,6 +162,7 @@ typedef struct bus_config {
     uint8_t rw_line;                            // RW line mapping
     uint8_t vpp_line;                           // VPP line mapping
     uint32_t static_high_mask;                  // Bus lines unconditionally driven HIGH (e.g. CE2, tied-high NC pins)
+    uint32_t read_high_mask;                    // P1-VPP line driven HIGH for a read; set by mem_util_set_read_high_mask()
 } bus_config_t;
 
 typedef struct firestarter_handle {

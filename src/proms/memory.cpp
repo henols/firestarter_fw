@@ -104,6 +104,7 @@ void configure_memory(firestarter_handle_t* handle) {
         return;
     }
 
+    mem_util_set_read_high_mask(handle);
     mem_util_set_address(handle, 0);
     configure(handle);
 }
@@ -454,20 +455,28 @@ uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t
         reorg_address |= (uint32_t)read_write << config.rw_line;
     }
 
-    // P1-VPP parts need that pin at VCC level during reads. Drive the line
-    // high for a read unless doing so would also switch VPP onto the socket
-    // (line 21 on Rev 2.x), and never while the P1 route is on.
-    if (config.vpp_line != 0xFF) {
-        if (!using_p1_as_vpp(handle)) {
-            reorg_address |= 1UL << config.vpp_line;
-        } else if (read_write == READ_FLAG && !vpp_line_switches_vpp(handle) &&
-                   !handle->firestarter_get_control_register((firestarter_handle_t*)handle, CTRL_VPP_P1_ENABLE)) {
-            reorg_address |= 1UL << config.vpp_line;
-        }
+    if (config.vpp_line != 0xFF && !using_p1_as_vpp(handle)) {
+        reorg_address |= 1UL << config.vpp_line;
+    }
+    // Read the register cache directly: dt_set_address() gets here without
+    // configure_memory(), so the handle's control-register getter is NULL.
+    if (read_write == READ_FLAG && config.read_high_mask &&
+        !(rurp_read_from_register(CONTROL_REGISTER) & CTRL_VPP_P1_ENABLE)) {
+        reorg_address |= config.read_high_mask;
     }
 
     reorg_address |= config.static_high_mask;
     return reorg_address;
+}
+
+/* P1-VPP parts need that pin at VCC level during reads. The read drives the
+ * line high unless doing so would also switch VPP onto the socket (line 21 on
+ * Rev 2.x). Set once per command, so the per-byte remap only checks whether
+ * the P1 route is on. */
+void mem_util_set_read_high_mask(firestarter_handle_t* handle) {
+    uint8_t line = handle->bus_config.vpp_line;
+    handle->bus_config.read_high_mask =
+        (line != 0xFF && using_p1_as_vpp(handle) && !vpp_line_switches_vpp(handle)) ? (uint32_t)1 << line : 0;
 }
 
 /* Resolve the operation end in one place and clamp invalid region ends to

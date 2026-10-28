@@ -15,6 +15,7 @@ extern "C" {
 #define READ_FLAG 1
 
 uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t address, uint8_t read_write);
+void mem_util_set_read_high_mask(firestarter_handle_t* handle);
 /* Shared final read-and-compare pass after pulse verification converges.
  * Required by the EPROM program path regardless of standalone commands. */
 void memory_verify_execute(firestarter_handle_t* handle);

@@ -153,6 +153,7 @@ bool dt_set_address(firestarter_handle_t* handle) {
         LOG_INFO_ID_BYTES(MSG_INFO_CE_OE, _b, 2);
     }
     LOG_INFO_ID_U24(MSG_INFO_ADDR, handle->address);
+    mem_util_set_read_high_mask(handle);
     uint32_t address = mem_util_remap_address_bus(handle, handle->address, is_flag_set(FLAG_OUTPUT_ENABLE));
     LOG_INFO_ID_U24(MSG_INFO_ADDR_REMAP, address);
 
