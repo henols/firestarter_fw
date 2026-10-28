@@ -4,9 +4,9 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Every case builds a FRESH, zero-initialised handle, because these cases
- * call configure_memory directly with no command frame to set the fields,
- * so a shared handle would leak state between cases.
+ * Every case builds a fresh, zero-initialised handle and calls
+ * configure_memory() directly, without json_parse(), so no state from one
+ * case reaches the next.
  */
 
 #include <Arduino.h>
@@ -40,9 +40,8 @@ void setUp(void) {
 
 void tearDown(void) {}
 
-/* Fresh handle per case -- no command frame writes pulse_delay, protocol,
- * mem_size, vpp_mv or pins here, so a shared handle would leak state
- * between cases. FLAG_SKIP_ERASE keeps a CMD_WRITE dispatch from
+/* Fresh handle per case, so no state from one case reaches the next.
+ * FLAG_SKIP_ERASE keeps a CMD_WRITE dispatch from
  * wanting an erase path this suite never drives (configure_eprom only sets
  * up function pointers and the pulse_delay fallback for CMD_WRITE; neither
  * pointer is ever invoked here; write-init itself performs no blank check

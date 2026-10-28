@@ -1,9 +1,8 @@
 """Behavioral host harness for the real firmware command dispatcher.
 
-Runs production firestarter.cpp and command_decoder.c against stubbed
+Runs production firestarter.cpp, json_parser.c and jsmn.c against stubbed
 transport/hardware functions; assertions operate on register writes and command
-outcomes, never source-code spellings. Frames are built from the generated
-include/command_frame.h offsets.
+outcomes, never source-code spellings. Requires the #118 fix at the branch base.
 """
 import os
 from pathlib import Path
@@ -128,40 +127,13 @@ static void reset() {
     memset(latch, 0, sizeof(latch));
     memset(cleared, 0, sizeof(cleared));
 }
-static void put32(std::string& s, size_t off, uint32_t v) {
-    s[off] = (char)(v >> 24);
-    s[off + 1] = (char)(v >> 16);
-    s[off + 2] = (char)(v >> 8);
-    s[off + 3] = (char)v;
-}
-// A memory-command frame with no address lines; every other field is zero.
-static std::string memory_frame(uint8_t cmd, uint32_t mem_size, uint32_t address,
-                                uint8_t pins, uint16_t vpp_mv) {
-    std::string f(CF_HEADER_SIZE + CF_MEMORY_SIZE, '\0');
-    f[CF_OFF_MAGIC] = (char)CF_MAGIC;
-    f[CF_OFF_VERSION] = (char)CF_VERSION;
-    f[CF_OFF_CMD] = (char)cmd;
-    f[CF_OFF_LENGTH] = (char)(CF_MEMORY_SIZE >> 8);
-    f[CF_OFF_LENGTH + 1] = (char)(CF_MEMORY_SIZE & 0xFF);
-    const size_t p = CF_HEADER_SIZE;
-    put32(f, p + CF_MEMORY_OFF_MEM_SIZE, mem_size);
-    put32(f, p + CF_MEMORY_OFF_ADDRESS, address);
-    f[p + CF_MEMORY_OFF_PROTOCOL] = 7;
-    f[p + CF_MEMORY_OFF_PINS] = (char)pins;
-    f[p + CF_MEMORY_OFF_VPP_MV] = (char)(vpp_mv >> 8);
-    f[p + CF_MEMORY_OFF_VPP_MV + 1] = (char)(vpp_mv & 0xFF);
-    for (int i = 0; i < CF_ADDRESS_LINES; i++) {
-        f[p + CF_MEMORY_OFF_ADDRESS_LINES + i] = (char)CF_LINE_ABSENT;
-    }
-    f[p + CF_MEMORY_OFF_RW_LINE] = (char)CF_LINE_ABSENT;
-    f[p + CF_MEMORY_OFF_VPP_LINE] = (char)CF_LINE_ABSENT;
-    return f;
-}
-static void frame(const std::string& bytes) {
-    incoming = bytes;
+static void frame(const char* json) {
+    incoming = json;
     loop();
 }
-static const std::string read_cmd = memory_frame(CMD_READ, 65536, 0, 28, 12500);
+static const char* read_cmd =
+    "{\"cmd\":1,\"memory-size\":65536,\"algorithm\":7,"
+    "\"pin-count\":28,\"vpp_mv\":12500}";
 
 int main() {
     reset();
@@ -192,27 +164,28 @@ int main() {
     reset();
     timeout_started_ms = fake_ms;  // unexpired timer carried over from prior command
     arm();
-    frame(memory_frame(CMD_WRITE, 65536, 0xFFFFFF00UL, 28, 12500));  // -256 as u32
+    frame("{\"cmd\":2,\"address\":-256,\"memory-size\":65536,"
+          "\"algorithm\":7,\"pin-count\":28,\"vpp_mv\":12500}");
     assert_idle();
     loop();
     assert(configured == 0 && writes == 0);
-    puts("PASS address-range rejection");
+    puts("PASS negative-address rejection");
 
     reset();
     frame(read_cmd);
     assert(configured == 1);
     command_done(&handle);
     arm();
-    frame(memory_frame(CMD_WRITE, 65536, 0, 0, 0));  // no pin-count, no vpp_mv
+    frame("{\"cmd\":2,\"memory-size\":65536,\"algorithm\":7}");
     assert_idle();
     assert(configured == 1 && writes == 0);
     puts("PASS required-fields rejection");
 
     reset();
     arm();
-    std::string bad_bus = memory_frame(CMD_WRITE, 65536, 0, 28, 12500);
-    bad_bus[CF_HEADER_SIZE + CF_MEMORY_OFF_ADDRESS_LINES] = (char)CF_BUS_LINES;  // off the bus
-    frame(bad_bus);
+    frame("{\"cmd\":2,\"memory-size\":65536,\"algorithm\":7,"
+          "\"pin-count\":28,\"vpp_mv\":12500,"
+          "\"bus-config\":{\"bus\":false}}");
     assert_idle();
     assert(configured == 0 && writes == 0);
     puts("PASS malformed bus rejection");
@@ -236,14 +209,16 @@ def test_command_lifecycle_and_safe_cleanup(tmp_path: Path) -> None:
     main.write_text(DRIVER)
     includes = [
         "-I", str(tmp_path), "-I", str(ROOT),
-        "-I", str(ROOT / "include"),
+        "-I", str(ROOT / "include"), "-I", str(ROOT / "lib/jsmn/src"),
     ]
-    decoder_obj = tmp_path / "command_decoder.o"
+    parser_obj, tokenizer_obj = tmp_path / "parser.o", tmp_path / "jsmn.o"
     exe = tmp_path / "driver"
     _compile([cc, "-std=c11", "-c", *includes,
-              str(ROOT / "src/command_decoder.c"), "-o", str(decoder_obj)])
+              str(ROOT / "src/json_parser.c"), "-o", str(parser_obj)])
+    _compile([cc, "-std=c11", "-c", *includes,
+              str(ROOT / "lib/jsmn/src/jsmn.c"), "-o", str(tokenizer_obj)])
     _compile([cxx, "-std=c++17", *includes, str(main),
-              str(decoder_obj), "-o", str(exe)])
+              str(parser_obj), str(tokenizer_obj), "-o", str(exe)])
     result = subprocess.run([str(exe)], cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == 0, (
         f"dispatcher integration test failed:\n{result.stdout}\n{result.stderr}"
@@ -252,7 +227,7 @@ def test_command_lifecycle_and_safe_cleanup(tmp_path: Path) -> None:
         "PASS cleanup",
         "PASS timeout",
         "PASS completion",
-        "PASS address-range rejection",
+        "PASS negative-address rejection",
         "PASS required-fields rejection",
         "PASS malformed bus rejection",
     }

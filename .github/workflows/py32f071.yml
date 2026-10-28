@@ -19,6 +19,7 @@ on:
       - "platform/py32f071/**"
       - "include/**"
       - "src/**"
+      - "lib/jsmn/**"
       - ".github/workflows/py32f071.yml"
   workflow_dispatch:
 
