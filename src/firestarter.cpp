@@ -136,6 +136,7 @@ bool parse_command(firestarter_handle_t* handle) {
 bool init_programmer_framed(firestarter_handle_t* handle) {
     handle->response_code = RESPONSE_CODE_OK;
     handle->operation_state = 0;
+    handle->resend_count = 0;
 
     /* CMD_IDLE already decoded the frame and NUL-terminated data_buffer.
  * Parse it without another serial read. */

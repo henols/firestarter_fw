@@ -24,12 +24,18 @@ extern "C" {
 #define OPERATION_IN_PROGRESS 0x40
 #define OPERATION_WAITING_FOR_DATA 0x80
 
+/* Resends allowed for one data chunk after it fails its COBS or CRC8 check.
+ * One more bad frame ends the command with MSG_ERR_RESEND_LIMIT. */
+#define FRAME_RESEND_MAX 3
+
 enum op_message_type {
     OP_MSG_ACK,
     OP_MSG_DONE,
     OP_MSG_DATA,
     OP_MSG_INCOMPLETE,
-    OP_MSG_ERROR
+    OP_MSG_ERROR,     /* a wait failed; the error frame is already sent */
+    OP_MSG_BAD_DATA,  /* a '#' frame failed its check; nothing is sent yet */
+    OP_MSG_NAK        /* "NK": the host asks for the last data chunk again */
 };
 
 
@@ -74,12 +80,19 @@ void op_reset_timeout();
 /**
  * @brief Parses the incoming serial stream for messages from the host.
  *
- * This function is non-blocking. It checks for "OK" (ACK), "DONE", and data packets ('#').
+ * This function is non-blocking. It checks for "OK" (ACK), "NK" (NAK), "DONE", and data packets ('#').
+ * A '#' frame that fails its check returns OP_MSG_BAD_DATA and sends nothing:
+ * the caller either asks for the frame again or calls op_log_bad_data().
  *
  * @param handle Pointer to the firestarter handle, used to store incoming data.
  * @return An op_message_type enum value indicating the message found, or OP_MSG_INCOMPLETE if no full message is available.
  */
 op_message_type op_get_message(firestarter_handle_t* handle);
+
+/**
+ * @brief Sends MSG_ERR_DATA_ERR_N for the last OP_MSG_BAD_DATA from op_get_message.
+ */
+void op_log_bad_data(void);
 
 /**
  * @brief Waits for an "OK" (ACK) message from the host.
@@ -90,6 +103,16 @@ op_message_type op_get_message(firestarter_handle_t* handle);
  * @return true if an ACK was received, false on timeout or error.
  */
 bool op_wait_for_ack(firestarter_handle_t* handle);
+
+/**
+ * @brief Waits for an "OK" (ACK) or an "NK" (NAK) message from the host.
+ *
+ * Same timeout as op_wait_for_ack.
+ *
+ * @param handle Pointer to the firestarter handle.
+ * @return OP_MSG_ACK or OP_MSG_NAK, or OP_MSG_ERROR after it sends the error frame.
+ */
+op_message_type op_wait_for_ack_or_nak(firestarter_handle_t* handle);
 
 /**
  * @brief Marks the MAIN phase of an operation as complete.

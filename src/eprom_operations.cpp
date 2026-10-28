@@ -80,11 +80,26 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
     // condition where the firmware requests data after the host has already sent "DONE".
     op_message_type msg_type = op_get_message(handle);
 
+    if (msg_type == OP_MSG_BAD_DATA) {
+        // The chunk failed its COBS or CRC8 check, so nothing was written and
+        // the address did not move. Ask for the same address again.
+        if (handle->resend_count >= FRAME_RESEND_MAX) {
+            LOG_ERROR_ID_U8(MSG_ERR_RESEND_LIMIT, (uint8_t)(handle->resend_count + 1));
+            handle->response_code = RESPONSE_CODE_ERROR;
+            return false;
+        }
+        handle->resend_count++;
+        clear_operation_waiting_for_data(handle);
+        op_reset_timeout();
+        msg_type = OP_MSG_INCOMPLETE;
+    }
+
     if (msg_type == OP_MSG_INCOMPLETE) {
         if (!is_operation_waiting_for_data(handle)) {
             // Leonardo also emits per-byte EPROM progress; on Uno-class
             // boards these chunk exchanges are the only progress source.
-            LOG_OK_ID(MSG_OK_REQ_DATA);
+            // The address lets the host tell a request again from the next one.
+            LOG_OK_ID_U32(MSG_OK_REQ_DATA, handle->address);
             set_operation_waiting_for_data(handle);
         }
         return true;
@@ -114,13 +129,10 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
             }
             break;
         default:
-            // op_get_message already logged a data error (OP_MSG_ERROR). Any
-            // other message here, for example a stray ACK, is a host
+            // Any other message here, for example a stray ACK, is a host
             // protocol error: refuse it with an error frame, so the host
             // does not wait for a timeout.
-            if (msg_type != OP_MSG_ERROR) {
-                LOG_ERROR_ID(MSG_ERR_CMD);
-            }
+            LOG_ERROR_ID(MSG_ERR_CMD);
             handle->response_code = RESPONSE_CODE_ERROR;
             return false;
     }
@@ -129,6 +141,7 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
         return false;
     }
 
+    handle->resend_count = 0;
     handle->address += handle->data_size;
     return true;
 }
@@ -159,13 +172,30 @@ static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
     // Wrap the raw chip-byte chunk in a MSG_DATA_CHUNK ID frame.
     // MSG_DATA_SENDING signals the start of the batch (host may see this before
     // the first chunk). Then the actual data follows as a framed MSG_DATA_CHUNK.
+    // The chunk carries its address, so the host can drop a chunk that is
+    // sent again after an "NK" that was not for this chunk.
     LOG_DATA_ID(MSG_DATA_SENDING);
-    rurp_log_id_wide(MSG_DATA_CHUNK,
-                     (const uint8_t*)handle->data_buffer,
-                     (uint16_t)handle->data_size);
-
-    if (!op_wait_for_ack(handle)) {
-        return false;
+    handle->resend_count = 0;
+    for (;;) {
+        rurp_log_data_chunk(handle->address,
+                            (const uint8_t*)handle->data_buffer,
+                            (uint16_t)handle->data_size);
+        op_message_type reply = op_wait_for_ack_or_nak(handle);
+        if (reply == OP_MSG_ACK) {
+            break;
+        }
+        if (reply != OP_MSG_NAK) {
+            return false;
+        }
+        // The host saw a frame that failed its check. Nothing in
+        // data_buffer changed, so send the same chunk again.
+        if (handle->resend_count >= FRAME_RESEND_MAX) {
+            LOG_ERROR_ID_U8(MSG_ERR_RESEND_LIMIT, (uint8_t)(handle->resend_count + 1));
+            handle->response_code = RESPONSE_CODE_ERROR;
+            return false;
+        }
+        handle->resend_count++;
+        op_reset_timeout();
     }
 
     handle->address += handle->data_size;

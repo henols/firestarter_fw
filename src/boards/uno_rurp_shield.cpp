@@ -107,6 +107,12 @@ void rurp_log_id_wide(uint8_t id, const uint8_t* params, uint16_t param_count) {
     }
 }
 
+void rurp_log_data_chunk(uint32_t address, const uint8_t* data, uint16_t size) {
+    if (com_mode) {
+        _firestarter_emit_data_chunk(address, data, size);
+    }
+}
+
 
 void rurp_set_control_pin(uint8_t pin, uint8_t state) {
     // Preserve unrelated PORTB bits, including the user-button pull-up.

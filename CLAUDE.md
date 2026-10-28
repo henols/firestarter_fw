@@ -329,6 +329,25 @@ Before the binary protocol, the JSON parser clamped the read timings to 1000 µs
 refuses them. It also refuses the bus-line values that the JSON parser used as unchecked shift
 counts (issue #115).
 
+### Resend of a bad frame
+
+Each frame has a CRC8. The receiver of a frame that fails its COBS or CRC8 check asks for the frame
+again. It does not guess.
+
+- **Command frame.** In `CMD_IDLE` the firmware sends `MSG_ERR_EMPTY_INPUT` (`0xA4`) and stays idle.
+  The host sends the command again once.
+- **Write chunk.** `MSG_OK_REQ_DATA` carries the chip address (u32) of the chunk that it asks for.
+  For a bad `#` frame, `op_get_message` returns `OP_MSG_BAD_DATA` and sends nothing. The write
+  loop then asks for the same address again. Nothing was programmed, so the address does not move.
+- **Read chunk.** `MSG_DATA_CHUNK` is `[address u32][data]`. For a bad frame the host answers `NK`
+  where it would answer `OK`. The read loop then sends the same `data_buffer` again. The address
+  lets the host drop a copy that it already has.
+
+`FRAME_RESEND_MAX` (3, `include/operation_utils.h`) limits the resends for one chunk. One more bad
+frame ends the command with `MSG_ERR_RESEND_LIMIT` (`0xC4`). `handle->resend_count` counts them,
+and it starts at 0 for each chunk. Each resend calls `op_reset_timeout()`.
+`tests/test_write_transport_behavior.py` runs both loops with bad frames and with `NK` replies.
+
 ### Operation-Setup Ack (`MSG_OK_READY`)
 
 `init_programmer_framed` in `src/firestarter.cpp` sends this ack after it parses a command. The ack

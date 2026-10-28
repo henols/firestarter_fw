@@ -92,26 +92,44 @@ bool op_execute_function(void (*callback)(firestarter_handle_t* handle), firesta
     return false;
 }
 
-bool op_wait_for_ack(firestarter_handle_t* handle) {
+// The read code of the last '#' frame that failed its check.
+static int16_t last_bad_data = 0;
+
+void op_log_bad_data(void) {
+    LOG_ERROR_ID_U16(MSG_ERR_DATA_ERR_N, (uint16_t)last_bad_data);
+}
+
+// Returns OP_MSG_ACK, OP_MSG_NAK (only when nak_allowed), or OP_MSG_ERROR
+// after it sends the error frame. An "NK" that is not allowed is ignored.
+static op_message_type _wait_for_reply(firestarter_handle_t* handle, bool nak_allowed) {
     const uint32_t started_ms = (uint32_t)millis();
     while (!fs_timeout_expired(started_ms, 1000U, (uint32_t)millis())) {
         op_message_type msg_type = op_get_message(handle);
-        if (msg_type == OP_MSG_ACK) {
-            return true;
+        if (msg_type == OP_MSG_ACK || (msg_type == OP_MSG_NAK && nak_allowed)) {
+            return msg_type;
         }
-        if (msg_type == OP_MSG_ERROR) {
-            return false;
+        if (msg_type == OP_MSG_BAD_DATA) {
+            op_log_bad_data();
+            return OP_MSG_ERROR;
         }
         if (msg_type == OP_MSG_DONE) {
             // The host ended the command where an ACK was expected. Report
             // it at once instead of waiting for the ACK timeout.
             LOG_ERROR_ID(MSG_ERR_CMD);
-            return false;
+            return OP_MSG_ERROR;
         }
         delay(10);
     }
     LOG_ERROR_ID(MSG_ERR_TIMEOUT);
-    return false;
+    return OP_MSG_ERROR;
+}
+
+bool op_wait_for_ack(firestarter_handle_t* handle) {
+    return _wait_for_reply(handle, false) == OP_MSG_ACK;
+}
+
+op_message_type op_wait_for_ack_or_nak(firestarter_handle_t* handle) {
+    return _wait_for_reply(handle, true);
 }
 
 /* Non-blocking. Consumes junk until a valid message start is found; returns
@@ -133,6 +151,17 @@ op_message_type op_get_message(firestarter_handle_t* handle) {
                     return OP_MSG_ACK;
                 }
                 // Not "OK", 'O' is consumed. Loop will treat next char as junk.
+                break;
+
+            case 'N':  // Potential "NK"
+                if (rurp_communication_available() < 2) {
+                    return OP_MSG_INCOMPLETE;
+                }
+                rurp_communication_read();  // consume 'N'
+                if (rurp_communication_peak() == 'K') {
+                    rurp_communication_read();  // consume 'K'
+                    return OP_MSG_NAK;
+                }
                 break;
 
             case 'D': {  // Potential "DONE"
@@ -159,8 +188,8 @@ op_message_type op_get_message(firestarter_handle_t* handle) {
                 rurp_communication_read();  // consume '#'
                 int res = rurp_communication_read_data(handle->data_buffer, DATA_BUFFER_SIZE);
                 if (res < 0) {
-                    LOG_ERROR_ID_U16(MSG_ERR_DATA_ERR_N, (uint16_t)res);
-                    return OP_MSG_ERROR;
+                    last_bad_data = (int16_t)res;
+                    return OP_MSG_BAD_DATA;
                 }
                 handle->data_size = res;
                 return OP_MSG_DATA;
