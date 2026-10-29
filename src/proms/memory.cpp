@@ -440,32 +440,34 @@ void memory_verify_execute(firestarter_handle_t* handle) {
 
 // Utility functions
 uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t address, uint8_t read_write) {
-    bus_config_t config = handle->bus_config;
-    uint32_t reorg_address = config.address_mask & address;
-    if (config.address_lines[0] != 0xFF) {
-        for (int i = config.matching_lines; i < ADDRESS_LINES_SIZE && config.address_lines[i] != 0xFF; i++) {
-            uint32_t line_bit = (uint32_t)1 << config.address_lines[i];
+    // A pointer, not a copy: this runs on every byte, and a copy of the
+    // struct cost about 300 cycles per call on AVR.
+    const bus_config_t* config = &handle->bus_config;
+    uint32_t reorg_address = config->address_mask & address;
+    if (config->address_lines[0] != 0xFF) {
+        for (int i = config->matching_lines; i < ADDRESS_LINES_SIZE && config->address_lines[i] != 0xFF; i++) {
+            uint32_t line_bit = (uint32_t)1 << config->address_lines[i];
             reorg_address &= ~line_bit;
             if (address & 1UL << i) {
                 reorg_address |= line_bit;
             }
         }
     }
-    if (config.rw_line != 0xFF) {
-        reorg_address |= (uint32_t)read_write << config.rw_line;
+    if (config->rw_line != 0xFF) {
+        reorg_address |= (uint32_t)read_write << config->rw_line;
     }
 
-    if (config.vpp_line != 0xFF && !using_p1_as_vpp(handle)) {
-        reorg_address |= 1UL << config.vpp_line;
+    if (config->vpp_line != 0xFF && !using_p1_as_vpp(handle)) {
+        reorg_address |= 1UL << config->vpp_line;
     }
     // Read the register cache directly: dt_set_address() gets here without
     // configure_memory(), so the handle's control-register getter is NULL.
-    if (read_write == READ_FLAG && config.read_high_mask &&
+    if (read_write == READ_FLAG && config->read_high_mask &&
         !(rurp_read_from_register(CONTROL_REGISTER) & CTRL_VPP_P1_ENABLE)) {
-        reorg_address |= config.read_high_mask;
+        reorg_address |= config->read_high_mask;
     }
 
-    reorg_address |= config.static_high_mask;
+    reorg_address |= config->static_high_mask;
     return reorg_address;
 }
 
