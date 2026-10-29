@@ -34,14 +34,16 @@ fi
 # A commit that carries the binary command frame must not be tagged below its
 # first feature version: a JSON-era CLI of that feature version would install
 # the firmware and then could not drive it. A commit without the frame has no
-# floor. release.yml makes the same check.
-FLOOR=$(git show "origin/main:include/command_frame.h" 2>/dev/null | sed -n 's/^#define CF_MIN_FEATURE "\([0-9]*\.[0-9]*\)"$/\1/p' || true)
+# floor. The floor comes from the branch that is tagged, so a patch on
+# release/X.Y (no frame) is not judged by main's floor. release.yml makes the
+# same check on the tagged commit.
+FLOOR=$(git show "origin/$BRANCH:include/command_frame.h" 2>/dev/null | sed -n 's/^#define CF_MIN_FEATURE "\([0-9]*\.[0-9]*\)"$/\1/p' || true)
 if [ -n "$FLOOR" ]; then
     IFS=. read -r V_MAJOR V_MINOR _ <<<"$VERSION"
     IFS=. read -r F_MAJOR F_MINOR <<<"$FLOOR"
     if (( V_MAJOR < F_MAJOR || (V_MAJOR == F_MAJOR && V_MINOR < F_MINOR) )); then
         echo "error: $VERSION is below $FLOOR, the first version of the binary command frame" >&2
-        echo "       on origin/main. A JSON-era CLI of version $V_MAJOR.$V_MINOR would install it." >&2
+        echo "       on origin/$BRANCH. A JSON-era CLI of version $V_MAJOR.$V_MINOR would install it." >&2
         exit 1
     fi
 fi
