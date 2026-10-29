@@ -163,7 +163,8 @@
 
 // --- DATA multi-param composites ---
 
-// Two u16 values packed as 4 big-endian bytes.
+// Two u16 values packed as 4 big-endian bytes. The severity comes from the
+// catalog entry, so any id with two u16 params may use it.
 #define LOG_DATA_ID_U16_U16(id, p1, p2)                                \
     do {                                                               \
         uint16_t _v1 = (uint16_t)(p1); uint16_t _v2 = (uint16_t)(p2); \
@@ -183,21 +184,6 @@
             (uint8_t)((_v1 >> 8)  & 0xFF), (uint8_t)(_v1 & 0xFF),     \
             (uint8_t)((_v2 >> 24) & 0xFF), (uint8_t)((_v2 >> 16) & 0xFF), \
             (uint8_t)((_v2 >> 8)  & 0xFF), (uint8_t)(_v2 & 0xFF)      \
-        };                                                             \
-        rurp_log_id((id), _b, 8);                                      \
-    } while (0)
-
-// Four u16 values packed as 8 big-endian bytes.
-// Used by MSG_DATA_VPP_VOLTAGE / MSG_DATA_VPE_VOLTAGE (catalog: 4 x u16 params).
-#define LOG_DATA_ID_U16x4(id, p1, p2, p3, p4)                         \
-    do {                                                               \
-        uint16_t _a = (uint16_t)(p1); uint16_t _b2 = (uint16_t)(p2); \
-        uint16_t _c = (uint16_t)(p3); uint16_t _d  = (uint16_t)(p4); \
-        uint8_t _b[8] = {                                              \
-            (uint8_t)((_a  >> 8) & 0xFF), (uint8_t)(_a  & 0xFF),      \
-            (uint8_t)((_b2 >> 8) & 0xFF), (uint8_t)(_b2 & 0xFF),      \
-            (uint8_t)((_c  >> 8) & 0xFF), (uint8_t)(_c  & 0xFF),      \
-            (uint8_t)((_d  >> 8) & 0xFF), (uint8_t)(_d  & 0xFF)       \
         };                                                             \
         rurp_log_id((id), _b, 8);                                      \
     } while (0)

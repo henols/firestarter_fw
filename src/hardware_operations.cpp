@@ -12,22 +12,6 @@
 #include "rurp_pinout.h"
 #include "version.h"
 
-#if !defined(RURP_PLATFORM_PY32F071)
-// Plausible internal-VCC band, in millivolts. USB VBUS is specified
-// 4.75-5.25 V (USB 2.0 section 7.2.2) and the board derives VCC from it
-// through a series switch, so a reported value outside this band is the
-// bandgap constant being wrong, not the supply. The band is for a 5 V
-// supply. A PY32F071 board runs from 3.3 V, so it has no such check.
-#define HW_VCC_PLAUSIBLE_MIN_MV 4400
-#define HW_VCC_PLAUSIBLE_MAX_MV 5250
-
-// The VCC warning is emitted once per command, not once per reading. The
-// condition cannot change between samples of one command, and a frame
-// interleaved with every DATA frame is noise the host read loop has to step
-// around on every iteration.
-static bool s_vcc_warned = false;
-#endif
-
 bool hw_read_voltage(firestarter_handle_t* handle) {
     // State 0: Initialization. This runs only once per command.
     if (handle->operation_state == 0) {
@@ -52,9 +36,6 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
         }
         delay(100);                     // Allow voltage to stabilize.
         rurp_set_communication_mode();  // Switch back to communication mode to send the ready signal.
-#if !defined(RURP_PLATFORM_PY32F071)
-        s_vcc_warned = false;           // re-arm the once-per-command VCC warning
-#endif
         handle->operation_state = 1;    // Transition to the reading state.
 
         // Send a ready signal to the client to prompt it for the first ACK.
@@ -88,34 +69,11 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
     uint16_t vcc_mv = rurp_read_vcc_mv();
     uint16_t voltage_mv = rurp_read_voltage_mv();
 
-#if !defined(RURP_PLATFORM_PY32F071)
-    // An internal VCC outside what the board can physically run at is an
-    // instrument fault, not a supply fault. rurp_scale_vcc_mv returns
-    // supply * RURP_BANDGAP_NOMINAL_MV / bandgap_true, so a figure the
-    // hardware cannot reach measures how far this chip's real bandgap is
-    // from the stored bandgap_mv, and that same error scales every VPP/VPE
-    // reading this command prints. USB VBUS is specified 4.75-5.25 V and the
-    // board takes a MOSFET drop off it, so a value outside the band below
-    // cannot be a real supply.
-    if (!s_vcc_warned &&
-        (vcc_mv < HW_VCC_PLAUSIBLE_MIN_MV || vcc_mv > HW_VCC_PLAUSIBLE_MAX_MV)) {
-        s_vcc_warned = true;
-        LOG_WARN_ID_U16(MSG_WARN_VCC_IMPLAUSIBLE, vcc_mv);
-    }
-#endif
-
-    // Compute pre-rounded integer/decimal tenths for each voltage (catalog expects 4 x u16).
-    uint16_t v_int  = (uint16_t)((voltage_mv + 50) / 1000);
-    uint16_t v_dec  = (uint16_t)(((voltage_mv + 50) / 100) % 10);
-    uint16_t vc_int = (uint16_t)((vcc_mv + 50) / 1000);
-    uint16_t vc_dec = (uint16_t)(((vcc_mv + 50) / 100) % 10);
-
-    // Send the data back to the client as a structured ID frame.
-    if (handle->cmd == CMD_READ_VPE) {
-        LOG_DATA_ID_U16x4(MSG_DATA_VPE_VOLTAGE, v_int, v_dec, vc_int, vc_dec);
-    } else {
-        LOG_DATA_ID_U16x4(MSG_DATA_VPP_VOLTAGE, v_int, v_dec, vc_int, vc_dec);
-    }
+    // Millivolts, unformatted. The host formats them and checks the VCC band
+    // (an internal VCC the board cannot run at means the stored bandgap is
+    // wrong, and that error scales every VPP/VPE reading).
+    LOG_DATA_ID_U16_U16(handle->cmd == CMD_READ_VPE ? MSG_DATA_VPE_MV : MSG_DATA_VPP_MV,
+                        voltage_mv, vcc_mv);
 
     op_reset_timeout();  // Reset the command timeout since we're actively communicating.
 

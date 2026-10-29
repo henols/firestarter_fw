@@ -49,11 +49,7 @@ rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* ha
 void mem_util_split_delay(uint32_t us, uint32_t* out_ms, uint16_t* out_us);
 void mem_util_delay_us(uint32_t us);
 
-/* Shared VPP-mismatch report. Defined in src/proms/memory.cpp.
- *
- * The parameter widths are part of the contract: both are uint16_t so `(x+50)`
- * promotes to 16-bit on AVR and the division stays on __udivmodhi4. Do not
- * widen either. */
+/* Shared VPP-mismatch report, in millivolts. Defined in src/proms/memory.cpp. */
 void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
                               uint16_t expected_mv, uint8_t msg_id, uint8_t response_code);
 

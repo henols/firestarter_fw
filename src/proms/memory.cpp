@@ -191,10 +191,10 @@ void mem_util_check_vpp_window(firestarter_handle_t* handle, uint16_t vpp_mv) {
         // the part, where an under-set one only fails to program.
         bool force = is_flag_set(FLAG_FORCE);
         mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv,
-                                force ? MSG_WARN_VPP_HIGH : MSG_ERR_VPP_HIGH,
+                                force ? MSG_WARN_VPP_HIGH_MV : MSG_ERR_VPP_HIGH_MV,
                                 force ? RESPONSE_CODE_WARNING : RESPONSE_CODE_ERROR);
     } else if ((uint32_t)vpp_mv < target * (100 - RURP_VPP_LOW_TOLERANCE_PCT) / 100) {
-        mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv, MSG_WARN_VPP_LOW,
+        mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv, MSG_WARN_VPP_LOW_MV,
                                 RESPONSE_CODE_WARNING);
     }
 }
@@ -234,28 +234,11 @@ bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle) {
     return true;
 }
 
-/* Shared VPP-mismatch report:
- *   [measured_V u16 BE][measured_tenths u16 BE][expected_V u16 BE][expected_tenths u16 BE]
- *
- * Both millivolt parameters are uint16_t deliberately: `(x + 50)` then
- * promotes to 16-bit and `/1000` compiles to __udivmodhi4 on AVR. Do not
- * widen them. */
+/* Shared VPP-mismatch report: [measured_mv u16 BE][expected_mv u16 BE].
+ * The host formats the millivolts. */
 void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
                               uint16_t expected_mv, uint8_t msg_id, uint8_t response_code) {
-    uint16_t _v0 = (uint16_t)((measured_mv + 50) / 1000);
-    uint16_t _v1 = (uint16_t)((((measured_mv + 50) / 100) % 10));
-    uint16_t _v2 = (uint16_t)((expected_mv + 50) / 1000);
-    uint16_t _v3 = (uint16_t)((((expected_mv + 50) / 100) % 10));
-    uint8_t _b[8];
-    _b[0] = (uint8_t)((_v0 >> 8) & 0xFF);
-    _b[1] = (uint8_t)(_v0 & 0xFF);
-    _b[2] = (uint8_t)((_v1 >> 8) & 0xFF);
-    _b[3] = (uint8_t)(_v1 & 0xFF);
-    _b[4] = (uint8_t)((_v2 >> 8) & 0xFF);
-    _b[5] = (uint8_t)(_v2 & 0xFF);
-    _b[6] = (uint8_t)((_v3 >> 8) & 0xFF);
-    _b[7] = (uint8_t)(_v3 & 0xFF);
-    LOG_ID_BYTES(msg_id, _b, 8);
+    LOG_DATA_ID_U16_U16(msg_id, measured_mv, expected_mv);
     handle->response_code = response_code;
 }
 
