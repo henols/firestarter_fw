@@ -16,20 +16,6 @@ extern "C" {
     void configure_eprom(firestarter_handle_t* handle);
 
     /*
-     * Overprogram (margin) pulse duration: overprogram_factor x pulse_count x
-     * pulse_us, clamped to cap_us. factor == 0 yields 0.
-     *
-     * The product is computed in uint32_t throughout: the worst named case
-     * (factor=3, count=25, pulse_us=65535) is 4,915,125, which fits uint32_t
-     * but overflows any uint16_t intermediate.
-     *
-     * cap_us == 0 yields 0, meaning "no clamp configured" — NOT "uncapped".
-     * Reading it as uncapped would let the worst case above emit a
-     * multi-second VPE pulse.
-     */
-    uint32_t eprom_overprogram_us(uint8_t pulse_count, uint32_t pulse_us, uint8_t factor, uint32_t cap_us);
-
-    /*
      * Which high-voltage route to assert (direct-VPE vs drop-resistor),
      * from the eprom_params vpp_path column, though not from that column
      * alone: a required voltage above RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV
@@ -46,17 +32,6 @@ extern "C" {
     /* Intra-block progress cadence. The emission it paces is compiled out
      * entirely on uno/uno328pb — see eprom.cpp for why. */
     #define EPROM_PROGRESS_EMIT_INTERVAL_MS 1000
-
-    /* EPROM overprogram support differs by target to preserve bootloader space.
- * Leonardo disables this call site because the ATmega32U4 USB bootloader
- * begins at 28672 B. PlatformIO's size check fails the build when the image
- * grows past it.
- * No shipped chip row currently sets overprogram_factor, so this difference
- * is inert until such a row is introduced. Re-measure the Leonardo firmware
- * size before enabling the feature on that board. */
-    #ifndef EPROM_OVERPROGRAM_SUPPORTED
-    #define EPROM_OVERPROGRAM_SUPPORTED 1
-    #endif
 
     /*
      * Settle either side of the program-voltage route assert wrapping every

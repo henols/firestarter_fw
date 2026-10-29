@@ -14,7 +14,7 @@
  *
  * Fields are ordered largest-first, deliberately: the AVR toolchain gives every
  * type 1-byte struct alignment and a 64-bit host does not, and this order is
- * what keeps sizeof() == 12 on both.
+ * what keeps sizeof() == 8 on both (the trailing pad byte is explicit).
  *
  * NO PULSE-WIDTH COLUMN. Pulse width is handle->pulse_delay; the per-protocol
  * fallbacks stay in configure_eprom's switch and are not duplicated here.
@@ -38,22 +38,22 @@ enum { VERIFY_PER_PULSE = 0, VERIFY_PER_PULSE_PLUS_FINAL = 1 };
  * this dependency-free header to pull in the shield's register header. */
 enum { VPP_PATH_DROP_RESISTOR = 0, VPP_PATH_DIRECT_VPE = 1 };
 
-/* Six columns, largest-first (see the field-order note above). No
+/* Four columns, largest-first (see the field-order note above). No
  * pulse-width field of any name exists here -- no pulse_delay, no pulse_width_us, no
- * fallback_pulse_us. */
+ * fallback_pulse_us. No overprogram column either: no 27C row applies an
+ * overprogram pulse, so the feature and its two columns were removed. */
 typedef struct {
-    uint32_t overprogram_cap_us;  /* clamp for overprogram_factor x pulse_count x pulse_us */
     uint32_t energy_cap_us;       /* accumulated per-byte program-time budget; 0 = uncapped */
     uint8_t  max_pulses;          /* structural retry/backstop ceiling */
-    uint8_t  overprogram_factor;  /* margin-pulse multiplier; 0 = no overprogram */
     uint8_t  verify_mode;         /* VERIFY_PER_PULSE / VERIFY_PER_PULSE_PLUS_FINAL */
     uint8_t  vpp_path;            /* VPP_PATH_DROP_RESISTOR / VPP_PATH_DIRECT_VPE */
+    uint8_t  reserved;            /* explicit pad: keeps sizeof() equal on AVR and host */
 } eprom_params_t;
 
 /* Compile-time sizeof check only -- NOT the rejected __attribute__((used)) / force-the-table-into-the-image pattern; do not delete this thinking it is one. */
 #ifdef __cplusplus
-static_assert(sizeof(eprom_params_t) == 12,
-              "sizeof(eprom_params_t) must be 12 on every target: "
+static_assert(sizeof(eprom_params_t) == 8,
+              "sizeof(eprom_params_t) must be 8 on every target: "
               "field order is largest-first because avr-gcc gives every type "
               "1-byte alignment while a 64-bit host does not.");
 #endif

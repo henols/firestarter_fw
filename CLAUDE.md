@@ -168,8 +168,8 @@ leaves the route on, so the next block does not pay the settle time again. `comm
 the route at the end of the operation. This hardware-level teardown sequence still needs a
 focused executable regression test; source text checks must not substitute for one.
 
-**No overprogram.** No 27C row applies an overprogram pulse. No 27C row uses DQ7 polling. DQ7
-polling is a flash-family method.
+**No overprogram.** The firmware has no overprogram (margin) pulse. No 27C row uses DQ7 polling.
+DQ7 polling is a flash-family method.
 
 **Progress inside a block.** The per-byte loop sends `MSG_DATA_PROGRESS` (`0xE0`). A timer at
 `EPROM_PROGRESS_EMIT_INTERVAL_MS` (1000 ms) controls the send. A byte count does not. The payload

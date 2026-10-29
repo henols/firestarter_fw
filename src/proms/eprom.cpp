@@ -150,20 +150,6 @@ void eprom_write_init(firestarter_handle_t* handle) {
 }
 
 /*
- * See include/eprom.h for the rationale. factor == 0 (every shipped row) always
- * yields 0, so the per-byte loop's overprogram call is inert on every live
- * protocol; the clamp below yields 0 for cap_us == 0 without a special case,
- * since a positive product always compares greater than a zero cap.
- */
-uint32_t __attribute__((noinline)) eprom_overprogram_us(uint8_t pulse_count, uint32_t pulse_us, uint8_t factor, uint32_t cap_us) {
-    if (factor == 0) {
-        return 0;
-    }
-    uint32_t product = (uint32_t)factor * pulse_count * pulse_us;
-    return product > cap_us ? cap_us : product;
-}
-
-/*
  * The single place a per-byte program-budget failure is reported: disables the
  * VPP route, packs a 4-byte big-endian {addr_hi, addr_mid, addr_lo,
  * pulse_count} payload matching MSG_ERR_MAX_PULSES / MSG_ERR_ENERGY_CAP, emits
@@ -179,34 +165,6 @@ static void eprom_internal_report_budget_failure(firestarter_handle_t* handle, u
     LOG_ERROR_ID_BYTES(msg_id, _b, 4);
     handle->response_code = RESPONSE_CODE_ERROR;
 }
-
-/*
- * ONE program pulse, with the program-voltage route asserted for its duration
- * and released before the caller's verify read. include/eprom.h has the setup
- * and hold values.
- *
- * Name CTRL_VPE_ENABLE here, never CTRL_VPP_P1_ENABLE:
- * eprom_internal_set_control_register substitutes P1 for VPE when
- * using_p1_as_vpp(handle) holds, and naming P1 directly breaks that
- * substitution on the two protocols that need it.
- *
- * The route bit survives the address latch memory_set_data performs between
- * the assert and the CE strobe -- mem_util_calculate_top_address_register
- * preserves both route bits on every revision.
- *
- * Guarded by EPROM_OVERPROGRAM_SUPPORTED because the overprogram site is its
- * only caller; unguarded it is an unreferenced static on leonardo, and the
- * AVR warning policy is zero.
- */
-#if EPROM_OVERPROGRAM_SUPPORTED
-static void eprom_internal_program_pulse(firestarter_handle_t* handle, uint32_t addr, uint8_t expected) {
-    handle->firestarter_set_control_register(handle, CTRL_VPE_ENABLE, 1);
-    delayMicroseconds(EPROM_VPP_SETUP_US);
-    handle->firestarter_set_data(handle, addr, expected);
-    delayMicroseconds(EPROM_VPP_HOLD_US);
-    handle->firestarter_set_control_register(handle, CTRL_VPE_ENABLE, 0);
-}
-#endif
 
 /*
  * Resolves which high-voltage route to assert for the current handle. Called
@@ -271,12 +229,6 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
 
     uint32_t energy_cap_us      = pgm_read_dword(&row->energy_cap_us);
     uint8_t  max_pulses         = pgm_read_byte(&row->max_pulses);
-#if EPROM_OVERPROGRAM_SUPPORTED
-    // Read only by the overprogram site below, so guarded with it: unused
-    // locals are -Wunused-variable and the AVR warning policy is zero.
-    uint32_t overprogram_cap_us = pgm_read_dword(&row->overprogram_cap_us);
-    uint8_t  overprogram_factor = pgm_read_byte(&row->overprogram_factor);
-#endif
     uint8_t  verify_mode        = pgm_read_byte(&row->verify_mode);
     uint32_t org_delay = handle->pulse_delay;
     // Per-byte progress state is absent on UART-shared Uno targets.
@@ -307,8 +259,8 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
      *     after the converged-early break, so a byte converging on its last
      *     permitted pulse still succeeds.
      *   - `pending` is deliberately NOT cleared between passes, so the scan can
-     *     distinguish "was flagged, now matches" (converged this pass) from
-     *     "never flagged" (matched all along) -- the state overprogram needs.
+     *     distinguish "was flagged, now matches" (converged this pass, cleared
+     *     so the next pass skips it) from "never flagged" (matched all along).
      *
      * The route is held up for the whole pulse pass, so every strobe after the
      * first sees a settled rail. OE/VPP still comes fully down before every
@@ -382,25 +334,6 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
                 if (was_pending) {
                     // Converged on this pass, after exactly `pulses` pulses.
                     pending[i >> 3] &= (uint8_t)~mask;
-#if EPROM_OVERPROGRAM_SUPPORTED
-                    // Unreachable from any current database row: no chip sets
-                    // overprogram_factor, so eprom_overprogram_us returns 0 and no
-                    // margin pulse is emitted.
-                    //
-                    // The org_delay save/restore is immediate, so no failure exit
-                    // between save and restore can leak a modified pulse_delay into
-                    // the handle. Route-wrapped per byte, because an overprogram pulse
-                    // is a program pulse and this site runs with the pass's route down.
-                    //
-                    // Compiled out on leonardo to save flash. See
-                    // EPROM_OVERPROGRAM_SUPPORTED in include/eprom.h.
-                    uint32_t op_us = eprom_overprogram_us(pulses, org_delay, overprogram_factor, overprogram_cap_us);
-                    if (op_us) {
-                        handle->pulse_delay = op_us;
-                        eprom_internal_program_pulse(handle, addr, expected);
-                        handle->pulse_delay = org_delay;
-                    }
-#endif
                 }
                 continue;
             }

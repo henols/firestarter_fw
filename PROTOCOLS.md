@@ -125,7 +125,7 @@ Rev 0 hardware the firmware skips the check and sends a warning.
 The pulse width does not change between pulses. The route must be off for each read, because
 Program Verify needs OE/VPP low (Winbond W27C512 datasheet, operating-mode table). After
 `max_pulses` pulses the write fails with `MSG_ERR_MAX_PULSES` (`0xBD`). On `0x0B`, a pulse total
-that reaches `energy_cap_us` fails with `MSG_ERR_ENERGY_CAP` (`0xBE`). No row applies an
+that reaches `energy_cap_us` fails with `MSG_ERR_ENERGY_CAP` (`0xBE`). The firmware has no
 overprogram pulse. The limit of 25 pulses comes from the Winbond W27C512 "Smart Programming
 Algorithm 2" flowchart and ST M27C512 Rev. 3, Fig. 4. The 50 ms cap on `0x0B` is the
 per-location pulse `t_w(PR)` in the TI TMS 2516 datasheet (programming timing table).

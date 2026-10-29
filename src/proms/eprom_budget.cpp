@@ -5,8 +5,8 @@
  * Permission is hereby granted under MIT license.
  *
  * Per-block worst-case write-time budget arithmetic, declared in
- * eprom_budget.h. Reads the PROGMEM eprom_params table and CALLS the shipped
- * overprogram-duration function rather than restating either.
+ * eprom_budget.h. Reads the PROGMEM eprom_params table rather than restating
+ * it.
  *
  * Do NOT include an Arduino framework header here: this file follows
  * not_implemented.cpp's include discipline so it adds zero macro-redefinition
@@ -15,7 +15,6 @@
  */
 #include "eprom_budget.h"
 #include "eprom_params.h"
-#include "eprom.h"
 
 /*
  * The pulse count ceils. See eprom_budget.h's declaration comment for the rule
@@ -37,14 +36,8 @@ uint32_t eprom_worst_pulses(uint8_t max_pulses, uint32_t pulse_us, uint32_t ener
     return by_energy < (uint32_t)max_pulses ? by_energy : (uint32_t)max_pulses;
 }
 
-uint32_t eprom_per_byte_budget_us(uint8_t max_pulses, uint32_t pulse_us, uint32_t energy_cap_us,
-                                   uint8_t overprogram_factor, uint32_t overprogram_cap_us) {
-    uint32_t n = eprom_worst_pulses(max_pulses, pulse_us, energy_cap_us);
-    /* The (uint8_t) narrowing below is safe by construction: n never
-     * exceeds max_pulses (see eprom_worst_pulses above), and max_pulses is
-     * itself a uint8_t. Call the overprogram-duration function with this
-     * pulse count; never restate its formula here. */
-    return n * pulse_us + eprom_overprogram_us((uint8_t)n, pulse_us, overprogram_factor, overprogram_cap_us);
+uint32_t eprom_per_byte_budget_us(uint8_t max_pulses, uint32_t pulse_us, uint32_t energy_cap_us) {
+    return eprom_worst_pulses(max_pulses, pulse_us, energy_cap_us) * pulse_us;
 }
 
 uint16_t eprom_block_budget_s(uint32_t protocol, uint32_t pulse_us, uint32_t block_bytes) {
@@ -71,13 +64,10 @@ uint16_t eprom_block_budget_s(uint32_t protocol, uint32_t pulse_us, uint32_t blo
      * on AVR (eprom_params.h's own PROGMEM contract). verify_mode and
      * vpp_path are not read here -- neither one is part of the time
      * budget. */
-    uint8_t  max_pulses         = pgm_read_byte(&row->max_pulses);
-    uint8_t  overprogram_factor = pgm_read_byte(&row->overprogram_factor);
-    uint32_t energy_cap_us      = pgm_read_dword(&row->energy_cap_us);
-    uint32_t overprogram_cap_us = pgm_read_dword(&row->overprogram_cap_us);
+    uint8_t  max_pulses    = pgm_read_byte(&row->max_pulses);
+    uint32_t energy_cap_us = pgm_read_dword(&row->energy_cap_us);
 
-    uint32_t per_byte_us = eprom_per_byte_budget_us(max_pulses, pulse_us, energy_cap_us,
-                                                     overprogram_factor, overprogram_cap_us);
+    uint32_t per_byte_us = eprom_per_byte_budget_us(max_pulses, pulse_us, energy_cap_us);
 
     /* Divide BEFORE multiplying so the block-scale multiply below cannot
      * overflow uint32_t on its own -- only the remainder (< 1 000 000) is

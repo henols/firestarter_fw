@@ -40,15 +40,9 @@ extern "C" {
 uint32_t eprom_worst_pulses(uint8_t max_pulses, uint32_t pulse_us, uint32_t energy_cap_us);
 
 /*
- * Worst-case per-byte program TIME in us: pulse count x pulse width, plus the
- * overprogram duration for that same count.
- *
- * Get the overprogram term by CALLING eprom_overprogram_us (eprom.h), never
- * by restating its formula (overprogram_factor x pulse_count x pulse_us,
- * clamped to the cap).
+ * Worst-case per-byte program TIME in us: pulse count x pulse width.
  */
-uint32_t eprom_per_byte_budget_us(uint8_t max_pulses, uint32_t pulse_us, uint32_t energy_cap_us,
-                                   uint8_t overprogram_factor, uint32_t overprogram_cap_us);
+uint32_t eprom_per_byte_budget_us(uint8_t max_pulses, uint32_t pulse_us, uint32_t energy_cap_us);
 
 /*
  * Advertised per-block write-time budget in whole SECONDS, already padded:
