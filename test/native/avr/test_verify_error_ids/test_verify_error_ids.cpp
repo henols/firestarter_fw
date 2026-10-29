@@ -323,9 +323,10 @@ void test_eeprom28c_page_readback_match_raises_no_verify_id(void) {
     verify_ids_captured_frame_ids(&ids);
     /* Unlike memory_verify_execute and flash_util_wait_program (which
      * emit nothing at all on success), eeprom28c_write_execute
-     * unconditionally emits MSG_INFO_PAGE_LOAD_WORST_US even on a fully
-     * successful write -- so a truly empty capture here would mean the
-     * drive never actually ran, not that it succeeded quietly. */
+     * emits MSG_INFO_PAGE_LOAD_WORST_US even on a fully successful write in
+     * a DEV_TOOLS build, which [env:native] is -- so a truly empty capture
+     * here would mean the drive never actually ran, not that it succeeded
+     * quietly. */
     TEST_ASSERT_TRUE_MESSAGE(verify_ids_frame_count(ids) >= 1,
         "non-vacuity: a successful page write still emits its cadence-report frame");
     TEST_ASSERT_FALSE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_VERIFY),

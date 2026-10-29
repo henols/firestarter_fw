@@ -438,8 +438,13 @@ void eeprom28c_write_execute(firestarter_handle_t* handle) {
     // The compare below tracks a MAXIMUM; it is deliberately not a budget
     // check. A per-byte comparison against t_BLC would cost flash and cycles
     // in a hot loop on a target with hundreds of bytes of headroom.
+    //
+    // DEV_TOOLS only: a bench measurement. The micros() call runs inside the
+    // byte-load window it measures, so a stable image leaves it out.
+#if DEV_TOOLS
     uint32_t page_load_worst_us = 0;
     uint32_t page_load_previous_us = micros();
+#endif
     // The loop exits by break, not early return, so the worst-interval report
     // below is reached on BOTH paths. With an empty socket the very first
     // page's poll fails, and a report placed only at the normal exit would
@@ -451,12 +456,14 @@ void eeprom28c_write_execute(firestarter_handle_t* handle) {
         uint8_t data = handle->data_buffer[i];
         handle->firestarter_set_data(handle, address, data);
 
+#if DEV_TOOLS
         uint32_t page_load_now_us = micros();
         uint32_t page_load_interval_us = (uint32_t)(page_load_now_us - page_load_previous_us);
         if (page_load_interval_us > page_load_worst_us) {
             page_load_worst_us = page_load_interval_us;
         }
         page_load_previous_us = page_load_now_us;
+#endif
 
         bool page_end = ((address + 1) & page_mask) == 0;
         bool last_byte = (i == handle->data_size - 1);
@@ -476,7 +483,9 @@ void eeprom28c_write_execute(firestarter_handle_t* handle) {
         }
     }
     (void)page_load_aborted;  // recorded for reader clarity only; both exits report identically
+#if DEV_TOOLS
     LOG_ID_U32(MSG_INFO_PAGE_LOAD_WORST_US, page_load_worst_us);
+#endif
 }
 
 // Completion detection ONLY -- a DQ7-complement poll. Compares just that one
