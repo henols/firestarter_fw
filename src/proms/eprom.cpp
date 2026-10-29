@@ -382,8 +382,9 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
 
     // verify_mode: 0x07/0x08 ship VERIFY_PER_PULSE_PLUS_FINAL -- one more
     // full-block read-and-compare pass through memory_verify_execute. 0x0B
-    // ships VERIFY_PER_PULSE -- no final pass.
-    if (verify_mode == VERIFY_PER_PULSE_PLUS_FINAL) {
+    // ships VERIFY_PER_PULSE -- no final pass. FLAG_SKIP_FINAL_VERIFY drops
+    // the pass when the host reads the region back itself (write --verify).
+    if (verify_mode == VERIFY_PER_PULSE_PLUS_FINAL && !is_flag_set(FLAG_SKIP_FINAL_VERIFY)) {
         memory_verify_execute(handle);
     }
 }

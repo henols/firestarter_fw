@@ -211,7 +211,8 @@ The table values are in `src/proms/eprom_params.cpp`. The fallback widths are in
 `VERIFY_PER_PULSE_PLUS_FINAL` reads the full array one more time after the loop is complete. A
 mismatch in that pass sends `MSG_ERR_VERIFY` (`0xAF`) with the same 5-byte payload that
 `memory_verify_execute` uses. `VERIFY_PER_PULSE` reads each byte after each pulse and does no final
-pass.
+pass. `FLAG_SKIP_FINAL_VERIFY` (`0x200`) drops the final pass: the host sets it for
+`write --verify`, which reads the whole region back itself. The per-pulse verify always runs.
 
 **Error IDs per row:**
 
@@ -368,7 +369,8 @@ Control flags in `firestarter.h`:
 - `0x08` — **reserved. Never reuse it.** It was the skip-blank-check flag. Shipped hosts still send
   it. `constants.py` in `firestarter_app` records the same reservation.
 - `FLAG_VPE_AS_VPP (0x10)` — selects the direct VPE path.
-- `firestarter.h` defines more flags, from `0x20` to `0x100`.
+- `firestarter.h` defines more flags, from `0x20` to `0x200`.
+- `FLAG_SKIP_FINAL_VERIFY (0x200)` — skips the final full-block verify pass on `0x07`/`0x08`.
 
 `firestarter_app/firestarter/constants.py` duplicates these values. Change both sides together.
 

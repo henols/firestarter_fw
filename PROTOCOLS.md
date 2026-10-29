@@ -131,7 +131,9 @@ Algorithm 2" flowchart and ST M27C512 Rev. 3, Fig. 4. The 50 ms cap on `0x0B` is
 per-location pulse `t_w(PR)` in the TI TMS 2516 datasheet (programming timing table).
 
 **Verify.** With `VERIFY_PER_PULSE_PLUS_FINAL` the firmware reads the full block one more time
-after the loop. A mismatch sends `MSG_ERR_VERIFY` (`0xAF`). `0x0B` does no final pass.
+after the loop. A mismatch sends `MSG_ERR_VERIFY` (`0xAF`). `0x0B` does no final pass. The host
+sets `FLAG_SKIP_FINAL_VERIFY` (`0x200`) for `write --verify`, which reads the region back itself,
+and the firmware then skips the final pass.
 
 **Erase.** The firmware erases only when the host sets `FLAG_CAN_ERASE`. A UV-EPROM has no
 electrical erase. For an electrically erasable part, the firmware puts VPE on A9 and on OE/VPP and

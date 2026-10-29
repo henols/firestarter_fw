@@ -150,6 +150,12 @@ static inline bool is_memory_cmd(uint8_t cmd) {
 // MSG_WARN_SDP_UNLOCK_SKIPPED rather than a silent no-op.
 #define FLAG_SKIP_SDP_UNLOCK 0x100
 
+// Skips the final full-block verify pass of a VERIFY_PER_PULSE_PLUS_FINAL
+// EPROM row (0x07/0x08). The host sets it for `write --verify`, which reads
+// the whole region back itself. The per-pulse verify still runs: the
+// programming algorithm needs it.
+#define FLAG_SKIP_FINAL_VERIFY 0x200
+
 #define is_flag_set(flag) \
     ((handle->ctrl_flags & flag) == flag)
 
@@ -178,7 +184,7 @@ typedef struct firestarter_handle {
     uint32_t pulse_delay;
     uint32_t read_settling_us;   /* address-settling delay before /CE assert (µs; 0 = no settling delay) */
     uint32_t read_strobe_us;     /* /CE read-strobe pulse width (µs; 0 = use default 3µs) */
-    uint16_t ctrl_flags;         /* largest flag is 0x100 (FLAG_SKIP_SDP_UNLOCK). A flag above
+    uint16_t ctrl_flags;         /* largest flag is 0x200 (FLAG_SKIP_FINAL_VERIFY). A flag above
                                    * 0xFFFF needs this field widened. */
     uint16_t chip_id;
     uint16_t page_size;          /* per-chip page-write size delivered by the host over the wire;

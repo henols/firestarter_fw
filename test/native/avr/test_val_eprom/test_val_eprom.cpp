@@ -51,6 +51,7 @@ extern "C" rurp_register_t recorded_data(int i);
  * derivation and for why this invariant lives in THIS suite. */
 extern "C" void val_readback_reset();
 extern "C" void val_readback_seed(uint8_t idx, uint8_t target, uint8_t converge_after);
+extern "C" uint8_t val_readback_read_count(uint8_t idx);
 extern "C" int  val_recording_saturated();
 
 /* 201-01 Task 1 -- address-keyed shadow model. See host_stubs.cpp for the
@@ -398,6 +399,32 @@ void test_writeperf_route_assert_count_tracks_passes_not_pulses(void) {
         "route asserts must never scale with the programmed-byte count");
 }
 
+/* FLAG_SKIP_FINAL_VERIFY drops exactly the final full-block pass on 0x07
+ * (VERIFY_PER_PULSE_PLUS_FINAL): every byte is read once less, and the
+ * per-pulse verify still runs, so the block still converges. */
+static uint8_t reads_of_byte0_after_write(uint16_t extra_flags) {
+    const uint8_t block[8] = { 0x3C, 0x55, 0xAA, 0x0F, 0x11, 0x22, 0x44, 0x88 };
+    firestarter_handle_t h = make_write_handle();
+    h.ctrl_flags |= extra_flags;
+    val_readback_reset();
+    for (uint8_t i = 0; i < 8; i++) {
+        val_readback_seed(i, block[i], 1);
+    }
+    drive_val_write(&h, block, 8);
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "the block must converge with and without the final pass");
+    return val_readback_read_count(0);
+}
+
+void test_skip_final_verify_drops_only_the_final_pass(void) {
+    const uint8_t with_final = reads_of_byte0_after_write(0);
+    const uint8_t without_final = reads_of_byte0_after_write(FLAG_SKIP_FINAL_VERIFY);
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(2, without_final,
+        "non-vacuity: the per-pulse loop must still read the byte (skip-check and verify)");
+    TEST_ASSERT_EQUAL_MESSAGE(with_final - 1, without_final,
+        "FLAG_SKIP_FINAL_VERIFY must remove exactly one read per byte: the final pass");
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  * 201-01 Task 1 -- positive control for the address-keyed shadow model.
  * ═══════════════════════════════════════════════════════════════════════ */
@@ -669,6 +696,7 @@ int main(int argc, char** argv) {
      * pinned native envs. See the block comment above these two cases. */
     RUN_TEST(test_writeperf_route_is_asserted_once_per_pass_not_once_per_byte);
     RUN_TEST(test_writeperf_route_assert_count_tracks_passes_not_pulses);
+    RUN_TEST(test_skip_final_verify_drops_only_the_final_pass);
 
     /* 201-01 Task 1 control: the address-keyed shadow model is not aliased
      * modulo 16 like the legacy 16-slot model above. */
