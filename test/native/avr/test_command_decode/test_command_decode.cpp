@@ -58,6 +58,8 @@ static uint8_t load_vector(firestarter_handle_t* h, const char* name) {
 
 /* Fill every command parameter with a value no vector uses. */
 static void poison(firestarter_handle_t* h) {
+    h->cmd = 0xEE;
+    h->ctrl_flags = 0xEEEE;
     h->mem_size = 0xDEADBEEF;
     h->address = 0xDEADBEEF;
     h->region_end = 0xDEADBEEF;
@@ -81,6 +83,8 @@ static void poison(firestarter_handle_t* h) {
 static void assert_poisoned(const firestarter_handle_t* h, const char* name) {
     uint8_t poisoned_lines[ADDRESS_LINES_SIZE];
     memset(poisoned_lines, 0xEE, sizeof(poisoned_lines));
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xEE, h->cmd, name);
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xEEEE, h->ctrl_flags, name);
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h->mem_size, name);
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h->address, name);
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h->region_end, name);
@@ -169,8 +173,8 @@ void test_every_refuse_vector_is_refused_with_its_code(void) {
     }
 }
 
-/* A refused memory frame writes no command parameter: nothing half-applied
- * can reach configure_memory. */
+/* A refused frame writes no handle field, the command and its flags
+ * included: nothing half-applied can reach configure_memory. */
 void test_refused_memory_frame_leaves_every_parameter_untouched(void) {
     for (size_t i = 0; i < CF_REFUSE_VECTOR_COUNT; i++) {
         const cf_refuse_vector_t* v = &CF_REFUSE_VECTORS[i];

@@ -165,13 +165,14 @@ uint8_t cmd_decode(firestarter_handle_t* handle) {
         return CMD_DECODE_BAD_VERSION;
     }
 
-    handle->cmd = frame[CF_OFF_CMD];
-    handle->ctrl_flags = be16(frame + CF_OFF_FLAGS);
-    if (handle->ctrl_flags & (uint16_t)~CF_FLAGS_MASK) {
+    // Locals until the whole frame passes: a refused frame writes no handle field.
+    uint8_t cmd = frame[CF_OFF_CMD];
+    uint16_t flags = be16(frame + CF_OFF_FLAGS);
+    if (flags & (uint16_t)~CF_FLAGS_MASK) {
         return CF_REFUSE_FLAGS;
     }
 
-    uint8_t kind = cf_payload_kind(handle->cmd);
+    uint8_t kind = cf_payload_kind(cmd);
     uint16_t expected = kind == CF_KIND_MEMORY ? CF_MEMORY_SIZE : kind == CF_KIND_CONFIG ? CF_CONFIG_SIZE : 0;
     uint16_t length = be16(frame + CF_OFF_LENGTH);
     if (length != expected || size != (uint32_t)CF_HEADER_SIZE + length) {
@@ -180,10 +181,12 @@ uint8_t cmd_decode(firestarter_handle_t* handle) {
 
     const uint8_t* payload = frame + CF_HEADER_SIZE;
     if (kind == CF_KIND_MEMORY) {
-        uint8_t res = validate_memory(handle->cmd, payload);
+        uint8_t res = validate_memory(cmd, payload);
         if (res != CMD_DECODE_OK) {
             return res;
         }
+        handle->cmd = cmd;
+        handle->ctrl_flags = flags;
         apply_memory(handle, payload);
         return CMD_DECODE_OK;
     }
@@ -193,6 +196,8 @@ uint8_t cmd_decode(firestarter_handle_t* handle) {
             return res;
         }
     }
+    handle->cmd = cmd;
+    handle->ctrl_flags = flags;
     // No field of an earlier chip may stay in the handle.
     handle->protocol = 0;
     handle->pulse_delay = 0;
