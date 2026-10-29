@@ -202,8 +202,8 @@ There is no erase.
 ## Pulse-width override and program-VCC limit
 
 The host option `firestarter write --pulse-us N` accepts 1 to 65535 µs. That range copies the
-minipro `-o pulse=N` option, which is a `uint16`. It is not a wire limit. `json_parser.c` reads
-`pulse-delay` into a `uint32_t` with no clamp. `configure_eprom()` refuses a pulse wider than
+minipro `-o pulse=N` option, which is a `uint16`. It is not a wire limit. The command frame
+carries `pulse-delay` as a `uint32_t` with no clamp. `configure_eprom()` refuses a pulse wider than
 `energy_cap_us` with `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`), before any high voltage is on. Only `0x0B`
 has a cap, so only `0x0B` can refuse a pulse width.
 

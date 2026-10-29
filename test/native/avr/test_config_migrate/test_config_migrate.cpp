@@ -21,8 +21,7 @@ extern "C" {
 #include "rurp_shield.h"
 #include "rurp_voltage_math.h"
 }
-#include "jsmn.h"
-#include "json_parser.h"
+#include "command_decoder.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -255,115 +254,107 @@ static void test_a_refused_commit_leaves_the_live_config_unchanged(void) {
     TEST_ASSERT_EQUAL_UINT16(1050, live.bandgap_mv);
 }
 
-// The config command's flow without the calibration step: parse the frame
-// into a copy of the live configuration, then commit the copy when a field
-// changed. Returns false where the firmware answers MSG_ERR_PARSE_CFG.
-static bool apply_config_frame(const char* json, rurp_configuration_t* live) {
-    jsmntok_t tokens[NUMBER_JSNM_TOKENS];
-    jsmn_parser parser;
-    jsmn_init(&parser);
-    int token_count = jsmn_parse(&parser, json, strlen(json), tokens, NUMBER_JSNM_TOKENS);
-    TEST_ASSERT_TRUE_MESSAGE(token_count > 0, json);
+// One CMD_CONFIG frame: the fields the host sets, the rest absent.
+struct config_frame {
+    const char* name;
+    uint8_t present;
+    uint32_t r1;
+    uint32_t r2;
+    uint8_t rev;
+    uint16_t bg;
+    uint16_t flags;
+};
+
+static void put_be16(uint8_t* p, uint16_t v) {
+    p[0] = (uint8_t)(v >> 8);
+    p[1] = (uint8_t)v;
+}
+
+static void put_be32(uint8_t* p, uint32_t v) {
+    put_be16(p, (uint16_t)(v >> 16));
+    put_be16(p + 2, (uint16_t)v);
+}
+
+// The config command's flow without the calibration step: decode the frame,
+// apply it to a copy of the live configuration, then commit the copy when a
+// field changed. Returns false where the firmware refuses the command.
+static bool apply_config_frame(const config_frame& f, rurp_configuration_t* live) {
     firestarter_handle_t handle = {};
-    rurp_configuration_t copy = *live;
-    int res = json_parse_config(json, tokens, token_count, &copy, &handle);
-    if (res < 0) {
+    uint8_t* frame = (uint8_t*)handle.data_buffer;
+    frame[CF_OFF_MAGIC] = CF_MAGIC;
+    frame[CF_OFF_VERSION] = CF_VERSION;
+    frame[CF_OFF_CMD] = CMD_CONFIG;
+    put_be16(frame + CF_OFF_FLAGS, f.flags);
+    put_be16(frame + CF_OFF_LENGTH, CF_CONFIG_SIZE);
+    uint8_t* p = frame + CF_HEADER_SIZE;
+    p[CF_CONFIG_OFF_PRESENT] = f.present;
+    put_be32(p + CF_CONFIG_OFF_R1, f.r1);
+    put_be32(p + CF_CONFIG_OFF_R2, f.r2);
+    p[CF_CONFIG_OFF_REV] = f.rev;
+    put_be16(p + CF_CONFIG_OFF_BG, f.bg);
+    handle.data_size = CF_HEADER_SIZE + CF_CONFIG_SIZE;
+    if (cmd_decode(&handle) != CMD_DECODE_OK) {
         return false;
     }
-    if (res & JSON_CFG_FIELD_CHANGED) {
+    rurp_configuration_t copy = *live;
+    if (cmd_apply_config(&handle, &copy) & CMD_CFG_FIELD_CHANGED) {
         return rurp_config_commit(live, &copy);
     }
     return true;
 }
 
+#define R1 CF_CONFIG_PRESENT_R1
+#define R2 CF_CONFIG_PRESENT_R2
+#define REV CF_CONFIG_PRESENT_REV
+#define BG CF_CONFIG_PRESENT_BG
+
 static void test_an_out_of_band_config_frame_is_refused_not_corrected(void) {
-    const char* refused[] = {
-        "{\"state\":14,\"r1\":390000}",
-        "{\"state\":14,\"r1\":202499}",
-        "{\"state\":14,\"r2\":55001}",
-        "{\"state\":14,\"r2\":32999}",
-        "{\"state\":14,\"bg\":999}",
-        "{\"state\":14,\"bg\":1201}",
-        "{\"state\":14,\"rev\":6}",
-        "{\"state\":14,\"rev\":254}",
+    const config_frame refused[] = {
+        {"r1 390000", R1, 390000, 0, 0, 0, 0},
+        {"r1 202499", R1, 202499, 0, 0, 0, 0},
+        {"r2 55001", R2, 0, 55001, 0, 0, 0},
+        {"r2 32999", R2, 0, 32999, 0, 0, 0},
+        {"bg 999", BG, 0, 0, 0, 999, 0},
+        {"bg 1201", BG, 0, 0, 0, 1201, 0},
+        {"rev 6", REV, 0, 0, 6, 0, 0},
+        {"rev 254", REV, 0, 0, 254, 0, 0},
         // One good field does not carry a bad one.
-        "{\"state\":14,\"r1\":300000,\"r2\":60000}",
-        // A field the parser does not know refuses the frame part-way.
-        "{\"state\":14,\"r1\":300000,\"zz\":1}",
-        // A negative or oversized number is refused, never read as 0 or
-        // wrapped into a value that passes the band check.
-        "{\"state\":14,\"rev\":-1}",
-        "{\"state\":14,\"rev\":256}",
-        "{\"state\":14,\"r1\":-300000}",
-        "{\"state\":14,\"r1\":4295267296}",
-        "{\"state\":14,\"r2\":4295017296}",
-        "{\"state\":14,\"bg\":66636}",
+        {"r1 good, r2 bad", R1 | R2, 300000, 60000, 0, 0, 0},
+        // A field the decoder does not know refuses the whole frame.
+        {"unknown field", R1 | 0x20, 300000, 0, 0, 0, 0},
     };
     for (unsigned i = 0; i < sizeof(refused) / sizeof(refused[0]); i++) {
         rurp_configuration_t live = good();
         const rurp_configuration_t before = live;
-        TEST_ASSERT_FALSE_MESSAGE(apply_config_frame(refused[i], &live), refused[i]);
-        TEST_ASSERT_EQUAL_MEMORY_MESSAGE(&before, &live, sizeof(live), refused[i]);
+        TEST_ASSERT_FALSE_MESSAGE(apply_config_frame(refused[i], &live), refused[i].name);
+        TEST_ASSERT_EQUAL_MEMORY_MESSAGE(&before, &live, sizeof(live), refused[i].name);
     }
 }
 
 static void test_every_frame_the_host_sends_is_accepted(void) {
-    struct { const char* json; long r1; long r2; uint8_t rev; uint16_t bg; } ok[] = {
-        {"{\"state\":14}", VALUE_R1, VALUE_R2, 4, 1100},
-        {"{\"state\":14,\"flags\":32}", VALUE_R1, VALUE_R2, 4, 1100},
-        {"{\"state\":14,\"rev\":255}", VALUE_R1, VALUE_R2, 0xFF, 1100},
-        {"{\"state\":14,\"rev\":0}", VALUE_R1, VALUE_R2, 0, 1100},
-        {"{\"state\":14,\"rev\":5}", VALUE_R1, VALUE_R2, 5, 1100},
-        {"{\"state\":14,\"r1\":202500,\"r2\":55000}", 202500, 55000, 4, 1100},
-        {"{\"state\":14,\"rev\":2,\"r1\":337500,\"r2\":33000}", 337500, 33000, 2, 1100},
-        {"{\"state\":14,\"bg\":1100}", VALUE_R1, VALUE_R2, 4, 1100},
-        {"{\"state\":14,\"bg\":1000}", VALUE_R1, VALUE_R2, 4, 1000},
-        {"{\"state\":14,\"bg\":1200}", VALUE_R1, VALUE_R2, 4, 1200},
+    struct { config_frame frame; long r1; long r2; uint8_t rev; uint16_t bg; } ok[] = {
+        {{"no field", 0, 0, 0, 0, 0, 0}, VALUE_R1, VALUE_R2, 4, 1100},
+        {{"flag only", 0, 0, 0, 0, 0, FLAG_OUTPUT_ENABLE}, VALUE_R1, VALUE_R2, 4, 1100},
+        {{"rev 255", REV, 0, 0, 255, 0, 0}, VALUE_R1, VALUE_R2, 0xFF, 1100},
+        {{"rev 0", REV, 0, 0, 0, 0, 0}, VALUE_R1, VALUE_R2, 0, 1100},
+        {{"rev 5", REV, 0, 0, 5, 0, 0}, VALUE_R1, VALUE_R2, 5, 1100},
+        {{"r1 and r2 at the band edges", R1 | R2, 202500, 55000, 0, 0, 0}, 202500, 55000, 4, 1100},
+        {{"rev 2 divider", REV | R1 | R2, 337500, 33000, 2, 0, 0}, 337500, 33000, 2, 1100},
+        {{"bg 1100", BG, 0, 0, 0, 1100, 0}, VALUE_R1, VALUE_R2, 4, 1100},
+        {{"bg 1000", BG, 0, 0, 0, 1000, 0}, VALUE_R1, VALUE_R2, 4, 1000},
+        {{"bg 1200", BG, 0, 0, 0, 1200, 0}, VALUE_R1, VALUE_R2, 4, 1200},
     };
     for (unsigned i = 0; i < sizeof(ok) / sizeof(ok[0]); i++) {
+        const char* name = ok[i].frame.name;
         rurp_configuration_t live = good();
-        TEST_ASSERT_TRUE_MESSAGE(apply_config_frame(ok[i].json, &live), ok[i].json);
-        TEST_ASSERT_EQUAL_INT32_MESSAGE(ok[i].r1, live.r1, ok[i].json);
-        TEST_ASSERT_EQUAL_INT32_MESSAGE(ok[i].r2, live.r2, ok[i].json);
-        TEST_ASSERT_EQUAL_UINT8_MESSAGE(ok[i].rev, live.hardware_revision, ok[i].json);
-        TEST_ASSERT_EQUAL_UINT16_MESSAGE(ok[i].bg, live.bandgap_mv, ok[i].json);
+        TEST_ASSERT_TRUE_MESSAGE(apply_config_frame(ok[i].frame, &live), name);
+        TEST_ASSERT_EQUAL_INT32_MESSAGE(ok[i].r1, live.r1, name);
+        TEST_ASSERT_EQUAL_INT32_MESSAGE(ok[i].r2, live.r2, name);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(ok[i].rev, live.hardware_revision, name);
+        TEST_ASSERT_EQUAL_UINT16_MESSAGE(ok[i].bg, live.bandgap_mv, name);
     }
 }
 
-#if RURP_HAS_BANDGAP_CAL
-// The measured supply voltage feeds the bandgap back-solve. A value above
-// 10 V cannot be a supply reading, and a large one would overflow the
-// back-solve product, so the frame is refused.
-static void test_a_calibration_frame_with_an_implausible_vcc_is_refused(void) {
-    const char* refused[] = {
-        "{\"state\":14,\"vcc\":10001}",
-        "{\"state\":14,\"vcc\":4199999}",
-        "{\"state\":14,\"vcc\":-5000}",
-    };
-    for (unsigned i = 0; i < sizeof(refused) / sizeof(refused[0]); i++) {
-        jsmntok_t tokens[NUMBER_JSNM_TOKENS];
-        jsmn_parser parser;
-        jsmn_init(&parser);
-        int token_count = jsmn_parse(&parser, refused[i], strlen(refused[i]), tokens, NUMBER_JSNM_TOKENS);
-        TEST_ASSERT_TRUE_MESSAGE(token_count > 0, refused[i]);
-        firestarter_handle_t handle = {};
-        rurp_configuration_t copy = good();
-        TEST_ASSERT_TRUE_MESSAGE(json_parse_config(refused[i], tokens, token_count, &copy, &handle) < 0,
-                                 refused[i]);
-    }
-
-    const char* ok = "{\"state\":14,\"vcc\":5000}";
-    jsmntok_t tokens[NUMBER_JSNM_TOKENS];
-    jsmn_parser parser;
-    jsmn_init(&parser);
-    int token_count = jsmn_parse(&parser, ok, strlen(ok), tokens, NUMBER_JSNM_TOKENS);
-    firestarter_handle_t handle = {};
-    rurp_configuration_t copy = good();
-    int res = json_parse_config(ok, tokens, token_count, &copy, &handle);
-    TEST_ASSERT_TRUE(res >= 0 && (res & JSON_CFG_CALIBRATE));
-    TEST_ASSERT_EQUAL_INT32(5000, json_config_measured_vcc_mv());
-}
-#endif
 
 int main(int, char**) {
     UNITY_BEGIN();
@@ -383,8 +374,5 @@ int main(int, char**) {
     RUN_TEST(test_a_refused_commit_leaves_the_live_config_unchanged);
     RUN_TEST(test_an_out_of_band_config_frame_is_refused_not_corrected);
     RUN_TEST(test_every_frame_the_host_sends_is_accepted);
-#if RURP_HAS_BANDGAP_CAL
-    RUN_TEST(test_a_calibration_frame_with_an_implausible_vcc_is_refused);
-#endif
     return UNITY_END();
 }

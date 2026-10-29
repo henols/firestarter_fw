@@ -12,7 +12,7 @@
 
 #include "eprom_operations.h"
 #include "hardware_operations.h"
-#include "json_parser.h"
+#include "command_decoder.h"
 #include "logging_id.h"
 #include "memory.h"
 #include "operation_utils.h"
@@ -29,7 +29,7 @@
 #define TX 1
 
 bool init_programmer_framed(firestarter_handle_t* handle);
-bool parse_json(firestarter_handle_t* handle);
+bool parse_command(firestarter_handle_t* handle);
 void command_done(firestarter_handle_t* handle);
 
 firestarter_handle_t handle;
@@ -52,65 +52,49 @@ void setup() {
     LOG_DEBUG_ID_SUB_U8(DBG_HARDWARE_REVISION, (uint8_t)rurp_get_physical_hardware_revision());
 }
 
-bool parse_json(firestarter_handle_t* handle) {
-    LOG_DEBUG_ID_SUB(DBG_PARSE_JSON);
+bool parse_command(firestarter_handle_t* handle) {
+    LOG_DEBUG_ID_SUB(DBG_PARSE_COMMAND);
 
-    jsmn_parser parser;
-    static jsmntok_t tokens[NUMBER_JSNM_TOKENS];
-
-    jsmn_init(&parser);
-    int token_count = jsmn_parse(&parser, handle->data_buffer, handle->data_size, tokens, NUMBER_JSNM_TOKENS);
-    if (token_count <= 0) {
-        handle->ctrl_flags = 0x80;
+    uint8_t res = cmd_decode(handle);
+    if (res == CMD_DECODE_BAD_FRAME) {
+        // A JSON-era host lands here too: its first byte is '{', not CF_MAGIC.
         LOG_DEBUG_ID_SUB_U8(DBG_BUF_VAL, handle->data_buffer[0]);
-        LOG_ERROR_ID(MSG_ERR_BAD_JSON);
-
+        LOG_ERROR_ID(MSG_ERR_BAD_FRAME);
         return false;
     }
-
-    handle->cmd = json_get_cmd(handle->data_buffer, tokens, token_count, handle);
-    LOG_DEBUG_ID_SUB_U16(DBG_TOKEN_COUNT, (uint16_t)token_count);
-    if (handle->cmd == 0xFF) {
-        LOG_ERROR_ID(MSG_ERR_NO_CMD);
+    if (res == CMD_DECODE_BAD_VERSION) {
+        // Send the version this firmware reads, so the host can tell which side is older.
+        LOG_ERROR_ID_U8(MSG_ERR_FRAME_VERSION, CF_VERSION);
+        return false;
+    }
+    if (res != CMD_DECODE_OK) {
+        LOG_ERROR_ID_U8(MSG_ERR_BAD_COMMAND, res);
         return false;
     }
 
     LOG_DEBUG_ID_SUB_U8(DBG_CMD, (uint8_t)handle->cmd);
-    if (is_memory_cmd(handle->cmd) || handle->cmd < CMD_READ_VPP) {
-        if (json_parse(handle->data_buffer, tokens, token_count, handle) < 0 ||
-            (is_memory_cmd(handle->cmd) && !json_memory_params_valid(handle))) {
-            LOG_ERROR_ID(MSG_ERR_BAD_JSON);
+    if (is_memory_cmd(handle->cmd)) {
+        LOG_DEBUG_ID_SUB_U8(DBG_FLAG_FORCE, is_flag_set(FLAG_FORCE));
+        LOG_DEBUG_ID_SUB_U8(DBG_FLAG_CAN_ERASE, is_flag_set(FLAG_CAN_ERASE));
+        LOG_DEBUG_ID_SUB_U8(DBG_FLAG_SKIP_ERASE, is_flag_set(FLAG_SKIP_ERASE));
+        LOG_DEBUG_ID_SUB_U8(DBG_FLAG_VPE_AS_VPP, is_flag_set(FLAG_VPE_AS_VPP));
+        if (!op_execute_function(configure_memory, handle)) {
+            LOG_ERROR_ID(MSG_ERR_SETUP);
             return false;
         }
-        // All memory commands require parameter parsing, regardless of their
-        // wire ordinal. Existing command numbers must remain stable.
-        if (is_memory_cmd(handle->cmd)) {
-            LOG_DEBUG_ID_SUB_U8(DBG_FLAG_FORCE, is_flag_set(FLAG_FORCE));
-            LOG_DEBUG_ID_SUB_U8(DBG_FLAG_CAN_ERASE, is_flag_set(FLAG_CAN_ERASE));
-            LOG_DEBUG_ID_SUB_U8(DBG_FLAG_SKIP_ERASE, is_flag_set(FLAG_SKIP_ERASE));
-            LOG_DEBUG_ID_SUB_U8(DBG_FLAG_VPE_AS_VPP, is_flag_set(FLAG_VPE_AS_VPP));
-            if (!op_execute_function(configure_memory, handle)) {
-                LOG_ERROR_ID(MSG_ERR_SETUP);
-                return false;
-            }
-        } else {
+    } else if (handle->cmd < CMD_READ_VPP) {
 #if DEV_TOOLS
-            LOG_DEBUG_ID_SUB_U8(DBG_FLAG_OUTPUT_EN, is_flag_set(FLAG_OUTPUT_ENABLE));
-            LOG_DEBUG_ID_SUB_U8(DBG_FLAG_CHIP_EN, is_flag_set(FLAG_CHIP_ENABLE));
+        LOG_DEBUG_ID_SUB_U8(DBG_FLAG_OUTPUT_EN, is_flag_set(FLAG_OUTPUT_ENABLE));
+        LOG_DEBUG_ID_SUB_U8(DBG_FLAG_CHIP_EN, is_flag_set(FLAG_CHIP_ENABLE));
 #endif
-        }
     } else if (handle->cmd == CMD_CONFIG) {
         // Parse into a copy. The live configuration changes only after every
         // field has parsed, any calibration has back-solved and the result
         // is valid, so a refused command leaves nothing behind in RAM.
         rurp_configuration_t config = *rurp_get_config();
-        int res = json_parse_config(handle->data_buffer, tokens, token_count, &config, handle);
-        if (res < 0) {
-            LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
-            return false;
-        }
+        uint8_t cfg = cmd_apply_config(handle, &config);
 #if RURP_HAS_BANDGAP_CAL
-        if (res & JSON_CFG_CALIBRATE) {
+        if (cfg & CMD_CFG_CALIBRATE) {
             // Back-solve this MCU's bandgap from the operator's meter reading
             // of the supply pin. Refused, never clamped: a stored bandgap is
             // a value the firmware trusts to judge programming voltages.
@@ -124,17 +108,17 @@ bool parse_json(firestarter_handle_t* handle) {
             uint32_t bandgap_adc = (uint32_t)rurp_get_bandgap_adc_reading();
             rurp_set_communication_mode();
             uint16_t measured = rurp_bandgap_from_measured_vcc(
-                (uint32_t)json_config_measured_vcc_mv(), bandgap_adc,
+                (uint32_t)cmd_config_measured_vcc_mv(handle), bandgap_adc,
                 RURP_ADC_FULL_SCALE);
             if (measured == 0) {
                 LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
                 return false;
             }
             config.bandgap_mv = measured;
-            res |= JSON_CFG_FIELD_CHANGED;
+            cfg |= CMD_CFG_FIELD_CHANGED;
         }
 #endif
-        if (res & JSON_CFG_FIELD_CHANGED) {
+        if (cfg & CMD_CFG_FIELD_CHANGED) {
             // Refused, never corrected: a corrected value would be acked as
             // if the operator's value had been stored. Boot-time migration
             // still corrects, because no operator is there to tell.
@@ -162,7 +146,7 @@ bool init_programmer_framed(firestarter_handle_t* handle) {
     }
     LOG_DEBUG_ID_SUB(DBG_SETUP);
 
-    if (!parse_json(handle)) {
+    if (!parse_command(handle)) {
         return false;
     };
 
@@ -224,7 +208,7 @@ void loop() {
         command_done(&handle);
     } else if (handle.cmd == CMD_IDLE) {
         if (rurp_communication_available() > 0) {
-            /* The transport reads complete COBS frames and checks CRC8 before JSON parsing.
+            /* The transport reads complete COBS frames and checks CRC8 before command decoding.
  * It drains invalid frames to the next delimiter for bounded recovery;
  * a decoded payload must have positive length to become a command. */
             int n = rurp_communication_read_data(handle.data_buffer, DATA_BUFFER_SIZE - 1);

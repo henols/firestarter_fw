@@ -7,8 +7,9 @@
 #   tools/release.sh 3.2.0     # stable release, Latest if it is the highest
 #
 # A plain `git tag X && git push origin X` works too. This script only adds
-# checks first: the shape of the version, a clean tree, and a version higher
-# than every earlier release tag (of its line, on release/X.Y).
+# checks first: the shape of the version, the binary-frame floor, a clean and
+# current branch, and a version higher than every earlier release tag (of its
+# line, on release/X.Y).
 set -euo pipefail
 
 VERSION="${1:-}"
@@ -28,6 +29,21 @@ if git rev-parse -q --verify "refs/remotes/origin/release/$LINE" >/dev/null; the
 else
     BRANCH=main
     PATTERN='[0-9]*'
+fi
+
+# A commit that carries the binary command frame must not be tagged below its
+# first feature version: a JSON-era CLI of that feature version would install
+# the firmware and then could not drive it. A commit without the frame has no
+# floor. release.yml makes the same check.
+FLOOR=$(git show "origin/main:include/command_frame.h" 2>/dev/null | sed -n 's/^#define CF_MIN_FEATURE "\([0-9]*\.[0-9]*\)"$/\1/p' || true)
+if [ -n "$FLOOR" ]; then
+    IFS=. read -r V_MAJOR V_MINOR _ <<<"$VERSION"
+    IFS=. read -r F_MAJOR F_MINOR <<<"$FLOOR"
+    if (( V_MAJOR < F_MAJOR || (V_MAJOR == F_MAJOR && V_MINOR < F_MINOR) )); then
+        echo "error: $VERSION is below $FLOOR, the first version of the binary command frame" >&2
+        echo "       on origin/main. A JSON-era CLI of version $V_MAJOR.$V_MINOR would install it." >&2
+        exit 1
+    fi
 fi
 
 if [ -n "$(git status --porcelain)" ]; then

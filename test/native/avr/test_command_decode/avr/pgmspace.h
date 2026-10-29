@@ -2,12 +2,12 @@
  * host-side stub for <avr/pgmspace.h>
  *
  * Copied from test/native/avr/test_dispatch/avr/pgmspace.h (exact copy).
- * The read-timing test runs on platform = native (no AVR libc available).
- * `rurp_shield.h` and `json_parser.c` use PROGMEM/PSTR/pgm_read_* — on host
+ * The command-decode test runs on platform = native (no AVR libc available).
+ * `rurp_shield.h` uses PROGMEM/PSTR/pgm_read_* — on host
  * we neutralize these to no-ops / direct memory access so the test binary
  * can link.
  *
- * Scope: ONLY for the test_read_timing native unit test. Not for production
+ * Scope: ONLY for the test_command_decode native unit test. Not for production
  * builds. Production builds use the real AVR libc header via the Arduino
  * framework.
  */

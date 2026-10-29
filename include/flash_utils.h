@@ -12,52 +12,31 @@ extern "C" {
 #endif
 #include "firestarter.h"
 
-#define flash_execute_command(command) \
-    flash_util_byte_flipping(handle, command, sizeof(command) / sizeof(command[0]));
+/* The command tables below live in flash (PROGMEM). This macro copies one
+ * into a stack buffer before it is emitted, so the bus timing is the same as
+ * from a RAM table. */
+#define flash_execute_command(command)                                              \
+    do {                                                                            \
+        static_assert(sizeof(command) / sizeof(command[0]) <= FLASH_COMMAND_MAX_LEN, \
+                      "flash command longer than FLASH_COMMAND_MAX_LEN");           \
+        flash_util_byte_flipping_P(handle, command, sizeof(command) / sizeof(command[0])); \
+    } while (0)
 
+#define FLASH_COMMAND_MAX_LEN 6
 
     typedef struct byte_flip {
         uint32_t address;
         uint8_t byte;
     } byte_flip_t;
 
-    const byte_flip_t FLASH_ENABLE_ID[] = {
-        {0x5555, 0xAA},
-        {0x2AAA, 0x55},
-        {0x5555, 0x90},
-    };
-    const byte_flip FLASH_DISABLE_ID[] = {
-        {0x5555, 0xAA},
-        {0x2AAA, 0x55},
-        {0x5555, 0xF0},
-    };
-    const byte_flip_t FLASH_ERASE[] = {
-        {0x5555, 0xAA},
-        {0x2AAA, 0x55},
-        {0x5555, 0x80},
-        {0x5555, 0xAA},
-        {0x2AAA, 0x55},
-        {0x5555, 0x10},
-    };
-    const byte_flip_t FLASH_ENABLE_WRITE[] = {
-        {0x5555, 0xAA},
-        {0x2AAA, 0x55},
-        {0x5555, 0xA0},
-    };
-
-    const byte_flip_t FLASH_ENABLE_WRITE_PROTECTION[] = {
-        {0x5555, 0xAA},
-        {0x2AAA, 0x55},
-        {0x5555, 0xA0},
-    };
-    const byte_flip_t FLASH_DISABLE_WRITE_PROTECTION[] = {
-        {0x5555, 0xAA},
-        {0x2AAA, 0x55},
-        {0x5555, 0x80},
-        {0x5555, 0xAA},
-        {0x2AAA, 0x55},
-        {0x5555, 0x20},
-    };
+    /* Defined in flash_utils.cpp, in PROGMEM. Read them only through
+     * flash_execute_command or pgm_read_*: on AVR a direct read returns RAM. */
+    extern const byte_flip_t FLASH_ENABLE_ID[3];
+    extern const byte_flip_t FLASH_DISABLE_ID[3];
+    extern const byte_flip_t FLASH_ERASE[6];
+    extern const byte_flip_t FLASH_ENABLE_WRITE[3];
+    extern const byte_flip_t FLASH_ENABLE_WRITE_PROTECTION[3];
+    extern const byte_flip_t FLASH_DISABLE_WRITE_PROTECTION[6];
 
     /* Protection-status read address & decode constants.
      *
@@ -98,6 +77,8 @@ extern "C" {
     #define FLASH_5V_PAGE_BOOT_BLOCK_LOCKED        0xFE
 
     void flash_util_byte_flipping(firestarter_handle_t* handle, const byte_flip_t* byte_flips, size_t size);
+    void flash_util_byte_flipping_P(firestarter_handle_t* handle, const byte_flip_t* byte_flips_P, size_t size);
+    void flash_util_verify_operation(firestarter_handle_t* handle, uint8_t expected_data);
 
     /* Data# polling bit. While an embedded program or erase algorithm runs,
      * DQ7 reads the complement of the byte being written (0 during an erase). */

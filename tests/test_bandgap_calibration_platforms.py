@@ -3,7 +3,7 @@ Project Name: Firestarter
 Copyright (c) 2026 Henrik Olsson
 Permission is hereby granted under MIT license.
 
-Compile and execute the production config-frame parser for an AVR-class
+Compile and execute the production command-frame decoder for an AVR-class
 target and for the PY32F071 target. Assert that the PY32 build refuses a
 bandgap calibration request (vcc or bg), because that port never reads the
 stored bandgap, and that the AVR build accepts the same frames.
@@ -21,15 +21,11 @@ import pytest
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent
 _INCLUDE = _REPO_ROOT / "include"
-_JSMN = _REPO_ROOT / "lib" / "jsmn" / "src"
-_SOURCES = (_REPO_ROOT / "src" / "json_parser.c", _JSMN / "jsmn.c")
+_SOURCES = (_REPO_ROOT / "src" / "command_decoder.c",)
 
-_FRAMES = (
-    '{"state":14,"vcc":5000}',
-    '{"state":14,"bg":1100}',
-    '{"state":14,"r1":270000}',
-)
-_RESULT_RE = re.compile(r"^FRAME (\d+) (-?\d+)$")
+# The config field each CMD_CONFIG frame carries.
+_FRAMES = ("vcc", "bg", "r1")
+_RESULT_RE = re.compile(r"^FRAME (\d+) (\d+)$")
 
 
 def _resolve_compiler():
@@ -39,33 +35,36 @@ def _resolve_compiler():
     return compiler
 
 
-def _c_string(text):
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
 def _write_driver(tmp_path):
-    frames = ", ".join(_c_string(f) for f in _FRAMES)
     tu_path = tmp_path / "config_frames_main.c"
     tu_path.write_text(
         "#include <stdio.h>\n"
         "#include <string.h>\n"
-        '#include "json_parser.h"\n'
-        '#include "jsmn.h"\n'
+        '#include "command_decoder.h"\n'
+        "\n"
+        "static const uint8_t present[] = {\n"
+        "    CF_CONFIG_PRESENT_VCC, CF_CONFIG_PRESENT_BG, CF_CONFIG_PRESENT_R1};\n"
         "\n"
         "int main(void) {\n"
-        f"    const char* frames[] = {{{frames}}};\n"
-        "    for (unsigned i = 0; i < sizeof(frames) / sizeof(frames[0]); i++) {\n"
-        "        jsmntok_t tokens[NUMBER_JSNM_TOKENS];\n"
-        "        jsmn_parser parser;\n"
-        "        jsmn_init(&parser);\n"
-        "        int count = jsmn_parse(&parser, frames[i], strlen(frames[i]), tokens,\n"
-        "                               NUMBER_JSNM_TOKENS);\n"
-        "        rurp_configuration_t config;\n"
-        "        memset(&config, 0, sizeof(config));\n"
+        "    for (unsigned i = 0; i < sizeof(present); i++) {\n"
         "        firestarter_handle_t handle;\n"
         "        memset(&handle, 0, sizeof(handle));\n"
-        '        printf("FRAME %u %d\\n", i,\n'
-        "               json_parse_config(frames[i], tokens, count, &config, &handle));\n"
+        "        uint8_t* f = (uint8_t*)handle.data_buffer;\n"
+        "        f[CF_OFF_MAGIC] = CF_MAGIC;\n"
+        "        f[CF_OFF_VERSION] = CF_VERSION;\n"
+        "        f[CF_OFF_CMD] = CMD_CONFIG;\n"
+        "        f[CF_OFF_LENGTH + 1] = CF_CONFIG_SIZE;\n"
+        "        uint8_t* p = f + CF_HEADER_SIZE;\n"
+        "        p[CF_CONFIG_OFF_PRESENT] = present[i];\n"
+        "        p[CF_CONFIG_OFF_R1 + 1] = 0x04;  /* 270000 = 0x00041EB0 */\n"
+        "        p[CF_CONFIG_OFF_R1 + 2] = 0x1E;\n"
+        "        p[CF_CONFIG_OFF_R1 + 3] = 0xB0;\n"
+        "        p[CF_CONFIG_OFF_VCC] = 0x13;     /* 5000 */\n"
+        "        p[CF_CONFIG_OFF_VCC + 1] = 0x88;\n"
+        "        p[CF_CONFIG_OFF_BG] = 0x04;      /* 1100 */\n"
+        "        p[CF_CONFIG_OFF_BG + 1] = 0x4C;\n"
+        "        handle.data_size = CF_HEADER_SIZE + CF_CONFIG_SIZE;\n"
+        '        printf("FRAME %u %u\\n", i, (unsigned)cmd_decode(&handle));\n'
         "    }\n"
         "    return 0;\n"
         "}\n"
@@ -80,7 +79,7 @@ def _parse_results(tmp_path, defines):
     argv = [
         compiler, "-std=gnu11", "-Wall", "-Wextra", "-DHARDWARE_REVISION",
         *defines,
-        "-I", str(_INCLUDE), "-I", str(_JSMN),
+        "-I", str(_INCLUDE),
         *(str(s) for s in _SOURCES), str(driver),
         "-o", str(binary),
     ]
@@ -99,10 +98,14 @@ def _parse_results(tmp_path, defines):
     return results
 
 
+_DECODE_OK = 0
+_REFUSE_CONFIG_FIELD = 9  # CF_REFUSE_CONFIG_FIELD in include/command_frame.h
+
+
 @pytest.mark.parametrize("frame", _FRAMES[:2])
 def test_py32_refuses_a_bandgap_calibration_frame(tmp_path, frame):
     results = _parse_results(tmp_path, ["-DRURP_PLATFORM_PY32F071=1"])
-    assert results[frame] < 0, (
+    assert results[frame] == _REFUSE_CONFIG_FIELD, (
         f"the PY32 port never reads the stored bandgap, so {frame} must be "
         f"refused; got {results[frame]}"
     )
@@ -110,11 +113,11 @@ def test_py32_refuses_a_bandgap_calibration_frame(tmp_path, frame):
 
 def test_py32_still_accepts_a_divider_frame(tmp_path):
     results = _parse_results(tmp_path, ["-DRURP_PLATFORM_PY32F071=1"])
-    assert results[_FRAMES[2]] > 0, results
+    assert results[_FRAMES[2]] == _DECODE_OK, results
 
 
 @pytest.mark.parametrize("frame", _FRAMES)
 def test_avr_accepts_every_calibration_frame(tmp_path, frame):
-    # Non-vacuity: the same frames parse where calibration exists.
+    # Non-vacuity: the same frames decode where calibration exists.
     results = _parse_results(tmp_path, [])
-    assert results[frame] > 0, results
+    assert results[frame] == _DECODE_OK, results
