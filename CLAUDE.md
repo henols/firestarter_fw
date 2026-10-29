@@ -325,8 +325,8 @@ The decoder checks the full frame before it writes any handle field. The refusal
   length that does not agree with the command, an address line outside bus lines 0–23, a duplicate
   address line, a gap in the address lines, a control or static-high line outside the bus, a read
   timing above 1000 µs, a `vpp_mv` above 25000, a start address past the end, an unknown config
-  value, a calibration `vcc` above 10000 mV, or a `rev` that is not 0–5 or 255. A memory command
-  (`is_memory_cmd()`) also needs a non-zero `mem_size`, `protocol`, `pins` and `vpp_mv`.
+  value (this includes the retired calibration `vcc` bit, `0x08`), or a `rev` that is not 0–5 or
+  255. A memory command (`is_memory_cmd()`) also needs a non-zero `mem_size`, `protocol`, `pins` and `vpp_mv`.
 
 Before the binary protocol, the JSON parser clamped the read timings to 1000 µs. The decoder
 refuses them. It also refuses the bus-line values that the JSON parser used as unchecked shift
@@ -368,6 +368,15 @@ pre-flight refusal `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`) in `configure_eprom`. It ru
 voltage is on. It refuses a pulse above `EPROM_PULSE_MAX_US` (65535µs) on every row, and a pulse
 above `energy_cap_us` on the `0x0B` row. The host range never reaches the first limit, so the host
 copies no table value to prevent it.
+
+### Bandgap Calibration
+
+The host calculates the calibration. `hw_get_config` sends `MSG_OK_CFG` with the stored bandgap
+and the raw bandgap ADC count. The firmware takes that count in programmer mode, because every
+voltage measurement is taken in that mode. `firestarter cal --vcc` calculates
+`bandgap_mv = meter_mv * count / 1024`, refuses a result outside 1000–1200 mV, and writes the result
+with the config `bg` value. The firmware refuses a stored bandgap outside the same window
+(`rurp_config_commit`). On py32f071 the count is 0, and the decoder refuses `bg`.
 
 ### Key Files
 

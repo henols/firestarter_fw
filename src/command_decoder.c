@@ -139,14 +139,10 @@ static uint8_t validate_config(const uint8_t* p) {
 #endif
 #if !RURP_HAS_BANDGAP_CAL
     // This port never reads the stored bandgap, so it takes no calibration.
-    if (present & (CF_CONFIG_PRESENT_BG | CF_CONFIG_PRESENT_VCC)) {
+    if (present & CF_CONFIG_PRESENT_BG) {
         return CF_REFUSE_CONFIG_FIELD;
     }
 #endif
-    /* A larger supply overflows the bandgap back-solve product. */
-    if ((present & CF_CONFIG_PRESENT_VCC) && be16(p + CF_CONFIG_OFF_VCC) > CF_CALIBRATION_VCC_MAX_MV) {
-        return CF_REFUSE_CALIBRATION_VCC;
-    }
     /* 0xFF clears the override; any other value must name a revision. */
     uint8_t rev = p[CF_CONFIG_OFF_REV];
     if ((present & CF_CONFIG_PRESENT_REV) && rev != 0xFF && rev > CF_REVISION_MAX) {
@@ -226,13 +222,5 @@ uint8_t cmd_apply_config(const firestarter_handle_t* handle, rurp_configuration_
         config->bandgap_mv = be16(p + CF_CONFIG_OFF_BG);
         res |= CMD_CFG_FIELD_CHANGED;
     }
-    if (present & CF_CONFIG_PRESENT_VCC) {
-        res |= CMD_CFG_CALIBRATE;
-    }
     return res;
-}
-
-uint16_t cmd_config_measured_vcc_mv(const firestarter_handle_t* handle) {
-    const uint8_t* p = (const uint8_t*)handle->data_buffer + CF_HEADER_SIZE;
-    return be16(p + CF_CONFIG_OFF_VCC);
 }

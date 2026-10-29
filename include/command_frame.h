@@ -25,7 +25,6 @@
 #define CF_READ_TIMING_MAX_US 1000UL
 #define CF_FLAGS_MASK 0x03F7
 #define CF_VPP_MAX_MV 25000U
-#define CF_CALIBRATION_VCC_MAX_MV 10000U
 #define CF_REVISION_MAX 5
 
 #define CF_KIND_NONE 0
@@ -60,9 +59,9 @@
 #define CF_CONFIG_PRESENT_R1 0x01
 #define CF_CONFIG_PRESENT_R2 0x02
 #define CF_CONFIG_PRESENT_REV 0x04
-#define CF_CONFIG_PRESENT_VCC 0x08
+/* 0x08 was VCC: retired, refused */
 #define CF_CONFIG_PRESENT_BG 0x10
-#define CF_CONFIG_PRESENT_MASK 0x1F
+#define CF_CONFIG_PRESENT_MASK 0x17
 
 #define CF_REFUSE_LENGTH 1  /* payload length does not match the command */
 #define CF_REFUSE_FLAGS 2  /* an undefined flag bit is set */
@@ -76,7 +75,7 @@
 #define CF_REFUSE_MISSING_FIELD 10  /* a memory command lacks memory-size, algorithm, pin-count or vpp_mv */
 #define CF_REFUSE_ADDRESS_RANGE 11  /* the start address is past the end of the device or the write region */
 #define CF_REFUSE_VPP_RANGE 12  /* vpp_mv is above 25000 mV, the highest VPP in the chip database */
-#define CF_REFUSE_CALIBRATION_VCC 13  /* the calibration supply voltage is above 10000 mV */
+#define CF_REFUSE_CALIBRATION_VCC 13  /* the calibration supply voltage is above 10000 mV (no longer sent) */
 #define CF_REFUSE_REVISION 14  /* the hardware revision is not 0 to 5, or 255 to clear it */
 
 /* The payload a command carries. Unlisted commands carry none. */
