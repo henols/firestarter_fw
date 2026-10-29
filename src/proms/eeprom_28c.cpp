@@ -24,9 +24,9 @@
  * select the right value.
  *
  * AT28C_PAGE_SIZE_MAX is a board-INVARIANT validation ceiling, deliberately
- * not DATA_BUFFER_SIZE (512 on uno/native, 1024 on leonardo), so the
- * validation rule is the same on every build. It sits above the largest page
- * any database row carries. */
+ * not DATA_BUFFER_SIZE (1024 on uno/uno328pb, 1536 on leonardo, 512 on
+ * native), so the validation rule is the same on every build. It sits above
+ * the largest page any database row carries. */
 #define AT28C_PAGE_SIZE_FALLBACK 64
 #define AT28C_PAGE_SIZE_MAX 512
 
@@ -276,10 +276,9 @@ static void eeprom28c_emit_sdp_sequence_timed(firestarter_handle_t* handle, cons
     // The tables are in PROGMEM. Copy to the stack BEFORE the micros()
     // bracket, so the timed window and the inter-byte timing do not change.
     byte_flip_t sequence[FLASH_COMMAND_MAX_LEN];
-    if (length > FLASH_COMMAND_MAX_LEN) {
+    if (!flash_util_copy_P(sequence, sequence_P, length)) {
         return;
     }
-    memcpy_P(sequence, sequence_P, length * sizeof(byte_flip_t));
     LOG_ID(emitted_msg_id);
     uint32_t sdp_emit_start_us = micros();
     eeprom28c_emit_command_sequence(handle, sequence, length);

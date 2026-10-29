@@ -78,6 +78,9 @@ extern "C" {
 
     void flash_util_byte_flipping(firestarter_handle_t* handle, const byte_flip_t* byte_flips, size_t size);
     void flash_util_byte_flipping_P(firestarter_handle_t* handle, const byte_flip_t* byte_flips_P, size_t size);
+    /* Copy `size` byte flips from PROGMEM to `dst`, which holds FLASH_COMMAND_MAX_LEN.
+     * Returns false, and copies nothing, when `size` is larger. */
+    bool flash_util_copy_P(byte_flip_t* dst, const byte_flip_t* src_P, size_t size);
     void flash_util_verify_operation(firestarter_handle_t* handle, uint8_t expected_data);
 
     /* Data# polling bit. While an embedded program or erase algorithm runs,

@@ -58,12 +58,19 @@ const byte_flip_t FLASH_DISABLE_WRITE_PROTECTION[6] PROGMEM = {
 // Copies the PROGMEM table to the stack first, so the emit loop below runs
 // exactly as it does for a RAM table. A table longer than the buffer sends
 // nothing: a cut-off command sequence is worse than none.
+bool flash_util_copy_P(byte_flip_t* dst, const byte_flip_t* src_P, size_t size) {
+    if (size > FLASH_COMMAND_MAX_LEN) {
+        return false;
+    }
+    memcpy_P(dst, src_P, size * sizeof(byte_flip_t));
+    return true;
+}
+
 void flash_util_byte_flipping_P(firestarter_handle_t* handle, const byte_flip_t* byte_flips_P, size_t size) {
     byte_flip_t byte_flips[FLASH_COMMAND_MAX_LEN];
-    if (size > FLASH_COMMAND_MAX_LEN) {
+    if (!flash_util_copy_P(byte_flips, byte_flips_P, size)) {
         return;
     }
-    memcpy_P(byte_flips, byte_flips_P, size * sizeof(byte_flip_t));
     flash_util_byte_flipping(handle, byte_flips, size);
 }
 
