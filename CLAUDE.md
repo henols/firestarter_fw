@@ -323,8 +323,9 @@ The decoder checks the full frame before it writes any handle field. The refusal
 - `MSG_ERR_BAD_COMMAND` (`0xC2`), with a `CF_REFUSE_*` reason code: an undefined flag bit, a
   length that does not agree with the command, an address line outside bus lines 0–23, a duplicate
   address line, a gap in the address lines, a control or static-high line outside the bus, a read
-  timing above 1000 µs, or an unknown config value. A memory command (`is_memory_cmd()`) also
-  needs a non-zero `mem_size`, `protocol`, `pins` and `vpp_mv`.
+  timing above 1000 µs, a `vpp_mv` above 25000, a start address past the end, an unknown config
+  value, a calibration `vcc` above 10000 mV, or a `rev` that is not 0–5 or 255. A memory command
+  (`is_memory_cmd()`) also needs a non-zero `mem_size`, `protocol`, `pins` and `vpp_mv`.
 
 Before the binary protocol, the JSON parser clamped the read timings to 1000 µs. The decoder
 refuses them. It also refuses the bus-line values that the JSON parser used as unchecked shift

@@ -66,6 +66,10 @@ static uint8_t validate_memory(uint8_t cmd, const uint8_t* p) {
          p[CF_MEMORY_OFF_PINS] == 0 || be16(p + CF_MEMORY_OFF_VPP_MV) == 0)) {
         return CF_REFUSE_MISSING_FIELD;
     }
+    /* No chip in the database needs more; the JSON parser refused it too. */
+    if (be16(p + CF_MEMORY_OFF_VPP_MV) > CF_VPP_MAX_MV) {
+        return CF_REFUSE_VPP_RANGE;
+    }
     /* Refuse a bad cursor before configure_memory() touches bus registers
      * (#120). A read uses the whole device; a write may end at region_end. */
     if (cmd == CMD_READ || cmd == CMD_WRITE) {
@@ -139,6 +143,15 @@ static uint8_t validate_config(const uint8_t* p) {
         return CF_REFUSE_CONFIG_FIELD;
     }
 #endif
+    /* A larger supply overflows the bandgap back-solve product. */
+    if ((present & CF_CONFIG_PRESENT_VCC) && be16(p + CF_CONFIG_OFF_VCC) > CF_CALIBRATION_VCC_MAX_MV) {
+        return CF_REFUSE_CALIBRATION_VCC;
+    }
+    /* 0xFF clears the override; any other value must name a revision. */
+    uint8_t rev = p[CF_CONFIG_OFF_REV];
+    if ((present & CF_CONFIG_PRESENT_REV) && rev != 0xFF && rev > CF_REVISION_MAX) {
+        return CF_REFUSE_REVISION;
+    }
     return CMD_DECODE_OK;
 }
 

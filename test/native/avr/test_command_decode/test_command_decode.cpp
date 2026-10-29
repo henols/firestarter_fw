@@ -22,6 +22,7 @@ extern "C" {
 }
 #include "command_vectors.h"
 #include "firestarter.h"
+#include "rurp_shield.h"
 
 using namespace fakeit;
 
@@ -317,6 +318,12 @@ void test_config_apply_writes_only_present_values(void) {
     TEST_ASSERT_EQUAL_UINT16(1100, config.bandgap_mv);
 }
 
+/* The frame's revision limit is a copy of the highest shield revision. A
+ * new revision must raise both, or the decoder refuses its override. */
+void test_revision_limit_is_the_highest_shield_revision(void) {
+    TEST_ASSERT_EQUAL_UINT8(REVISION_2_3, CF_REVISION_MAX);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -332,5 +339,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_eprom_default_pulse_is_for_the_current_chip);
     RUN_TEST(test_dev_address_needs_no_chip_fields);
     RUN_TEST(test_config_apply_writes_only_present_values);
+    RUN_TEST(test_revision_limit_is_the_highest_shield_revision);
     return UNITY_END();
 }

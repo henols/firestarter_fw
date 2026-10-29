@@ -24,6 +24,9 @@
 #define CF_LINE_ABSENT 0xFF
 #define CF_READ_TIMING_MAX_US 1000UL
 #define CF_FLAGS_MASK 0x03F7
+#define CF_VPP_MAX_MV 25000U
+#define CF_CALIBRATION_VCC_MAX_MV 10000U
+#define CF_REVISION_MAX 5
 
 #define CF_KIND_NONE 0
 #define CF_KIND_MEMORY 1
@@ -72,6 +75,9 @@
 #define CF_REFUSE_CONFIG_FIELD 9  /* the config frame names an unknown or unsupported value */
 #define CF_REFUSE_MISSING_FIELD 10  /* a memory command lacks memory-size, algorithm, pin-count or vpp_mv */
 #define CF_REFUSE_ADDRESS_RANGE 11  /* the start address is past the end of the device or the write region */
+#define CF_REFUSE_VPP_RANGE 12  /* vpp_mv is above 25000 mV, the highest VPP in the chip database */
+#define CF_REFUSE_CALIBRATION_VCC 13  /* the calibration supply voltage is above 10000 mV */
+#define CF_REFUSE_REVISION 14  /* the hardware revision is not 0 to 5, or 255 to clear it */
 
 /* The payload a command carries. Unlisted commands carry none. */
 static inline uint8_t cf_payload_kind(uint8_t cmd) {
