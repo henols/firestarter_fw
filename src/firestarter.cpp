@@ -278,16 +278,17 @@ void loop() {
         case CMD_CHECK_CHIP_ID:
             finished = eprom_check_chip_id(&handle);
             break;
-                // Standalone lock operations use the normal INIT/MAIN/END ACKs.
-                // They have no data frames or write-path DONE handshake.
+        // Standalone lock operations use the normal INIT/MAIN/END ACKs.
+        // They have no data frames or write-path DONE handshake. The
+        // operation layer refuses a protocol that installs no main callback.
+        // The RAM test runs in bounded batches: its main callback keeps the
+        // operation in progress until the last March element ends, so it is
+        // called again on each loop() iteration.
         case CMD_SDP_UNLOCK:
-            finished = eprom_sdp_unlock(&handle);
-            break;
         case CMD_SDP_LOCK:
-            finished = eprom_sdp_lock(&handle);
-            break;
         case CMD_LOCK_STATUS:
-            finished = eprom_lock_status(&handle);
+        case CMD_RAM_TEST:
+            finished = op_execute_simple_operation(&handle);
             break;
         case CMD_READ_VPP:
         case CMD_READ_VPE:
@@ -310,9 +311,11 @@ void loop() {
         case CMD_DEV_ADDRESS:
             finished = dt_set_address(&handle);
             break;
+#ifdef CMD_DEV_ADC
         case CMD_DEV_ADC:
             finished = dt_read_adc(&handle);
             break;
+#endif
 #endif
 
         case CMD_CONFIG:

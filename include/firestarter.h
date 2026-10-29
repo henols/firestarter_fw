@@ -66,7 +66,16 @@
 // injects and the stable build does not. Ordinals 4 and 6 are retired and
 // must never be reused. It is not a memory command: it configures no protocol
 // handler and is absent from is_memory_cmd() below.
+//
+// leonardo sets DEV_ADC_SUPPORTED=0 to keep its DEV_TOOLS image under the
+// 28672 B Caterina cliff. There, ordinal 17 answers UNKNOWN_CMD like any
+// command the image does not implement.
+#ifndef DEV_ADC_SUPPORTED
+#define DEV_ADC_SUPPORTED 1
+#endif
+#if DEV_ADC_SUPPORTED
 #define CMD_DEV_ADC 17
+#endif
 #endif
 
 // Standalone SDP (Software Data Protection) enable/disable commands on
@@ -91,6 +100,12 @@
 // CMD_READ/CMD_WRITE/etc do.
 #define CMD_LOCK_STATUS 16
 
+// CMD_RAM_TEST runs a March C- test on a volatile SRAM (march.cpp). It is a
+// memory command: the test reads and writes through the protocol handler's
+// get/set data pointers. Only configure_sram() installs its main callback, so
+// every other protocol is refused with MSG_ERR_NOT_SUPPORTED.
+#define CMD_RAM_TEST 18
+
 // Access-control gate: this decides which commands may call configure_memory()
 // and so configure the hardware bus. configure_eprom(), reachable only
 // through this gate, enables the 12 V VPP boost regulator, a hazard on a 5 V
@@ -101,7 +116,7 @@
 // use this predicate and do not list the set again.
 //
 // Hard constraints:
-//  - No preprocessor conditional in this function's body. All seven named
+//  - No preprocessor conditional in this function's body. All eight named
 //    macros are unconditionally defined.
 //  - static inline, in this header. [env:native]'s build_src_filter compiles
 //    only src/proms/, rurp_serial_utils.cpp and json_parser.c, so a
@@ -117,6 +132,7 @@ static inline bool is_memory_cmd(uint8_t cmd) {
         case CMD_SDP_UNLOCK:
         case CMD_SDP_LOCK:
         case CMD_LOCK_STATUS:
+        case CMD_RAM_TEST:
             return true;
         default:
             return false;

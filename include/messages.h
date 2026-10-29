@@ -12,7 +12,7 @@
  * then synced here. Edit the catalog there and re-sync.
  *
  * Catalog version: 1
- * Total messages: 83
+ * Total messages: 84
  */
 
 #ifndef __MESSAGES_H__
@@ -111,6 +111,7 @@ extern "C" {
 #define MSG_ERR_FL4_PAGE_SIZE             0xBF
 #define MSG_ERR_FL4_PAGE_ALIGN            0xC0
 #define MSG_ERR_CALIBRATION               0xC1
+#define MSG_ERR_RAM_TEST                  0xC2
 #define MSG_DATA_PROGRESS                 0xE0
 #define MSG_DATA_PROTECTION_STATUS        0xE1
 #define MSG_DATA_SENDING                  0xE2

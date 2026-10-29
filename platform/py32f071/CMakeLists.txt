@@ -55,6 +55,7 @@ set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/proms/flash_intel.cpp"
     "${REPOSITORY_ROOT}/src/proms/flash_utils.cpp"
     "${REPOSITORY_ROOT}/src/proms/sram.cpp"
+    "${REPOSITORY_ROOT}/src/proms/march.cpp"
     "${REPOSITORY_ROOT}/src/proms/not_implemented.cpp"
     "${REPOSITORY_ROOT}/lib/jsmn/src/jsmn.c"
 )
