@@ -51,7 +51,6 @@ tag into `include/version.h` before it builds, because the CMake build of py32f0
 holds Python harness tests that compile and execute production code or preprocess production
 safety guards. Do not add tests that enforce comments, exact source snippets, line numbers,
 Git blob hashes, commit ancestry, design-record prose, or historical development decisions.
-Refer to `agent-os/standards/testing/no-source-introspection.md` in the meta repository.
 Both trees run in `build.yml`. No CI job runs a `pio` environment other than `native` and
 `native_nodevtools`.
 
