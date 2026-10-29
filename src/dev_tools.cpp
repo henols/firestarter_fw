@@ -39,11 +39,12 @@ static bool dt_wait_for_button(void) {
 #define DT_VIEW_REG_FIRESTARTER 1 // dev reg --firestarter: 9-bit CTRL and its remap
 #define DT_VIEW_ADDR 2            // dev addr: CTRL holds the TOP address register
 
-// One frame with the raw values. The host draws the bit table.
-static void dt_report_registers(firestarter_handle_t* handle, uint8_t msb, uint8_t lsb, uint16_t ctrl, uint8_t remapped,
-                                uint8_t view) {
+// One frame with the raw values. The host draws the bit table. Not gated on
+// FLAG_VERBOSE: the table is what dev reg and dev addr are for, and no host
+// command sets that flag.
+static void dt_report_registers(uint8_t msb, uint8_t lsb, uint16_t ctrl, uint8_t remapped, uint8_t view) {
     uint8_t _b[6] = {msb, lsb, (uint8_t)(ctrl >> 8), (uint8_t)ctrl, remapped, view};
-    LOG_INFO_ID_BYTES(MSG_INFO_REGISTERS, _b, 6);
+    LOG_ID_BYTES(MSG_INFO_REGISTERS, _b, 6);
 }
 
 bool dt_set_registers(firestarter_handle_t* handle) {
@@ -78,7 +79,7 @@ bool dt_set_registers(firestarter_handle_t* handle) {
 #else
     uint8_t ctrl_version = (uint8_t)ctrl_reg;
 #endif
-    dt_report_registers(handle, msb, lsb, ctrl_reg, ctrl_version,
+    dt_report_registers(msb, lsb, ctrl_reg, ctrl_version,
                         firestarter_reg ? DT_VIEW_REG_FIRESTARTER : DT_VIEW_REG_RAW);
     LOG_OK_ID_U16(MSG_OK_READY, (uint16_t)DATA_BUFFER_SIZE);  // semantics ≈ "setup done, waiting on user button"
     rurp_set_programmer_mode();
@@ -124,7 +125,7 @@ bool dt_set_address(firestarter_handle_t* handle) {
 #else
     uint8_t ctrl_version = top_address;
 #endif
-    dt_report_registers(handle, msb, lsb, top_address, ctrl_version, DT_VIEW_ADDR);
+    dt_report_registers(msb, lsb, top_address, ctrl_version, DT_VIEW_ADDR);
     LOG_OK_ID_U16(MSG_OK_READY, (uint16_t)DATA_BUFFER_SIZE);  // semantics ≈ "setup done, waiting on user button"
     rurp_set_programmer_mode();
     mem_util_set_address(handle, address);
