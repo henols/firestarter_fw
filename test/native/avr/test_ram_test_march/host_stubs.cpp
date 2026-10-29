@@ -7,7 +7,8 @@
  * Suite-specific extensions: a bus-level SRAM model for the RAM test.
  *   - HOST_STUBS_RECORD_BUS: every rurp_write_to_register call is recorded
  *     (no cache elision), so the latest LSB/MSB/CONTROL entry is what the
- *     latches hold. The buffer is sized for a full 2 KB March C- run.
+ *     latches hold. The buffer is sized for a full 2 KB run on all four
+ *     data backgrounds.
  *   - HOST_STUBS_CUSTOM_DATA_BUFFER / _CONTROL_PIN / _READ_DATA_BUFFER: the
  *     model drives the data bus. A CE falling edge with WE low stores the
  *     data bus at the latched address; a read returns the stored byte.
@@ -26,7 +27,7 @@ extern "C" {
 }
 
 #define HOST_STUBS_RECORD_BUS
-#define HOST_STUBS_MAX_RECORDING 131072
+#define HOST_STUBS_MAX_RECORDING 524288
 #define HOST_STUBS_CUSTOM_DATA_BUFFER
 #define HOST_STUBS_CUSTOM_CONTROL_PIN
 #define HOST_STUBS_CUSTOM_READ_DATA_BUFFER

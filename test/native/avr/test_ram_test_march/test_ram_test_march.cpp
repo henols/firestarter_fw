@@ -11,7 +11,8 @@
  * operation loop does: once per call, until the operation is no longer in
  * progress or the response is an error. Each fault case asserts the exact
  * first failure (element, address, expected, actual) that March C- must
- * report for it, read back from the emitted MSG_ERR_RAM_TEST frame.
+ * report for it, read back from the emitted MSG_ERR_RAM_TEST frame. The
+ * element index counts over all data backgrounds: background * 6 + element.
  *
  * Bus cases go through configure_memory() and the real memory_get_data /
  * memory_set_data, against the bus-level model in host_stubs.cpp.
@@ -87,7 +88,8 @@ enum fault_kind_t {
     FAULT_TRANSITION_DOWN,    // the cell cannot go 1 -> 0
     FAULT_ADDRESS_ALIAS,      // `other` decodes to the cell at `address`
     FAULT_COUPLING_INVERSION, // a rising write at `other` inverts `address`
-    FAULT_COUPLING_IDEMPOTENT // a rising write at `other` forces `address` to 0
+    FAULT_COUPLING_IDEMPOTENT, // a rising write at `other` forces `address` to 0
+    FAULT_DATA_BRIDGE         // the data lines in `mask` are shorted (wired-AND), at every address
 };
 
 struct fault_t {
@@ -96,6 +98,9 @@ struct fault_t {
     uint32_t other;
     uint8_t mask;
 };
+
+// The last data background: a good RAM ends with every cell holding it.
+#define MARCH_LAST_BACKGROUND 0x0F
 
 static std::vector<uint8_t> model;
 static fault_t fault;
@@ -107,6 +112,14 @@ static uint32_t model_decode(uint32_t address) {
         return fault.address;
     }
     return address;
+}
+
+// Shorted data lines read and drive the AND of their levels.
+static uint8_t model_bridge(uint8_t value) {
+    if (fault.kind == FAULT_DATA_BRIDGE && (value & fault.mask) != fault.mask) {
+        value &= (uint8_t)~fault.mask;
+    }
+    return value;
 }
 
 static uint8_t model_cell(uint32_t cell) {
@@ -124,7 +137,7 @@ static void model_set(firestarter_handle_t* handle, uint32_t address, uint8_t da
     ops_this_call++;
     const uint32_t cell = model_decode(address);
     const uint8_t old = model[cell];
-    uint8_t value = data;
+    uint8_t value = model_bridge(data);
     if (cell == fault.address && fault.kind == FAULT_TRANSITION_UP) {
         value = (uint8_t)((value & ~fault.mask) | (old & value & fault.mask));
     }
@@ -143,7 +156,7 @@ static uint8_t model_get(firestarter_handle_t* handle, uint32_t address) {
     (void)handle;
     touches[address]++;
     ops_this_call++;
-    return model_cell(model_decode(address));
+    return model_bridge(model_cell(model_decode(address)));
 }
 
 static firestarter_handle_t handle;
@@ -228,12 +241,12 @@ static void check_good_ram_passes(uint32_t size) {
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, handle.response_code, "a good RAM must pass");
     TEST_ASSERT_FALSE_MESSAGE(is_operation_in_progress(&handle), "the test must end");
     for (uint32_t a = 0; a < size; a++) {
-        if (touches[a] != MARCH_C_MINUS_OPS_PER_ADDRESS) {
+        if (touches[a] != MARCH_C_MINUS_OPS_PER_ADDRESS * MARCH_BACKGROUNDS) {
             char msg[64];
             snprintf(msg, sizeof(msg), "address 0x%06x touched %u times", (unsigned)a, (unsigned)touches[a]);
             TEST_FAIL_MESSAGE(msg);
         }
-        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x00, model[a], "March C- leaves every cell at 0");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(MARCH_LAST_BACKGROUND, model[a], "the test leaves every cell at the last background");
     }
 }
 
@@ -259,12 +272,13 @@ void test_progress_is_monotonic_and_bounded(void) {
         progress++;
         const uint32_t done = be32(frames[i].params, 0);
         const uint32_t total = be32(frames[i].params, 4);
-        TEST_ASSERT_EQUAL_UINT32_MESSAGE(6 * size, total, "total is elements x size");
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(6 * MARCH_BACKGROUNDS * size, total, "total is elements x backgrounds x size");
         TEST_ASSERT_TRUE_MESSAGE(done > last, "progress must advance on every frame");
         TEST_ASSERT_TRUE_MESSAGE(done <= total, "progress must not pass the total");
         last = done;
     }
-    TEST_ASSERT_EQUAL_INT_MESSAGE(calls - 1, progress, "one progress frame per batch, none after the last");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(calls, progress, "one progress frame per batch, the last batch included");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(6 * MARCH_BACKGROUNDS * size, last, "the last frame reports the total");
 }
 
 /* ─── Engine: each fault class is found, at the expected first failure ── */
@@ -325,7 +339,23 @@ void test_idempotent_coupling_needs_descending_element(void) {
     assert_first_failure(4, 0x060, 0xFF, 0xFD);
 }
 
-/* ─── Dispatch: only the RAM-test protocols install the engine ─────────── */
+/* Two shorted data lines: the solid backgrounds 0x00/0xFF drive them to the
+ * same level, so only a data background where they differ finds the short.
+ * D0/D1 differ in 0x55: the first read of background 1 (element 7) fails. */
+void test_data_bridge_d0_d1_found_in_background_0x55(void) {
+    engine_setup(2048, fault_t{FAULT_DATA_BRIDGE, 0xFFFFFFFF, 0xFFFFFFFF, 0x03});
+    engine_run();
+    assert_first_failure(7, 0x000, 0x55, 0x54);
+}
+
+/* D3/D7 are equal in 0x00, 0x55 and 0x33, and differ only in 0x0F. */
+void test_data_bridge_d3_d7_found_in_background_0x0f(void) {
+    engine_setup(2048, fault_t{FAULT_DATA_BRIDGE, 0xFFFFFFFF, 0xFFFFFFFF, 0x88});
+    engine_run();
+    assert_first_failure(19, 0x000, 0x0F, 0x07);
+}
+
+/* ─── Dispatch: every SRAM protocol installs the engine ────────────────── */
 
 static bus_config_t sram_model_bus_config() {
     bus_config_t config;
@@ -348,8 +378,10 @@ static void dispatch(uint8_t protocol) {
     configure_memory(&handle);
 }
 
-void test_dispatch_installs_engine_for_ram_test_protocols(void) {
-    const uint8_t protocols[] = {PROTO_SRAM_24PIN, PROTO_SRAM_28PIN, PROTO_SRAM_32PIN_NVRAM};
+/* The firmware cannot tell a volatile row from a non-volatile one, so 0x0E
+ * installs the engine too. The host refuses non-volatile rows. */
+void test_dispatch_installs_engine_for_sram_protocols(void) {
+    const uint8_t protocols[] = {PROTO_SRAM_24PIN, PROTO_SRAM_28PIN, PROTO_SRAM_32PIN_NVRAM, PROTO_SRAM_32PIN};
     for (size_t i = 0; i < sizeof(protocols); i++) {
         dispatch(protocols[i]);
         TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, handle.response_code, "configure must succeed");
@@ -359,14 +391,14 @@ void test_dispatch_installs_engine_for_ram_test_protocols(void) {
     }
 }
 
-/* 0x0E reaches only NVRAM read/write rows; 0x07 and 0x0D are not RAM. A NULL
- * main is refused with MSG_ERR_NOT_SUPPORTED before any INIT callback runs. */
+/* 0x07 and 0x0D are not RAM. A NULL main is refused with
+ * MSG_ERR_NOT_SUPPORTED before any INIT callback runs. */
 void test_dispatch_refuses_other_protocols(void) {
-    const uint8_t protocols[] = {PROTO_SRAM_32PIN, PROTO_EPROM_28PIN, PROTO_EEPROM_PARALLEL};
+    const uint8_t protocols[] = {PROTO_EPROM_28PIN, PROTO_EEPROM_PARALLEL};
     for (size_t i = 0; i < sizeof(protocols); i++) {
         dispatch(protocols[i]);
         TEST_ASSERT_NULL_MESSAGE(handle.firestarter_operation_main,
-            "a protocol that is not a RAM-test protocol must leave main NULL");
+            "a protocol that is not an SRAM protocol must leave main NULL");
     }
 }
 
@@ -390,7 +422,7 @@ void test_bus_good_ram_passes_with_no_high_voltage(void) {
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, handle.response_code, "a good RAM must pass on the real bus path");
     TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(), "the recording must hold the whole run");
     for (uint32_t a = 0; a < 2048; a++) {
-        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x00, sram_model_peek(a), "March C- leaves every cell at 0");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(MARCH_LAST_BACKGROUND, sram_model_peek(a), "the test leaves every cell at the last background");
     }
     const rurp_register_t high_voltage =
         CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE | CTRL_VPE_ENABLE | CTRL_VPP_A9_ENABLE;
@@ -429,7 +461,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_inversion_coupling_aggressor_below_victim);
     RUN_TEST(test_inversion_coupling_aggressor_above_victim);
     RUN_TEST(test_idempotent_coupling_needs_descending_element);
-    RUN_TEST(test_dispatch_installs_engine_for_ram_test_protocols);
+    RUN_TEST(test_data_bridge_d0_d1_found_in_background_0x55);
+    RUN_TEST(test_data_bridge_d3_d7_found_in_background_0x0f);
+    RUN_TEST(test_dispatch_installs_engine_for_sram_protocols);
     RUN_TEST(test_dispatch_refuses_other_protocols);
     RUN_TEST(test_bus_good_ram_passes_with_no_high_voltage);
     RUN_TEST(test_bus_reports_the_decoded_address);

@@ -12,8 +12,8 @@
 #include "messages.h"
 #include "operation_utils.h"
 
-// One March operation is two bits: bit 0 selects the all-1 background (0xFF)
-// over all-0 (0x00), bit 1 selects a write over a read.
+// One March operation is two bits: bit 0 selects the inverted background
+// (~bg) over the background (bg), bit 1 selects a write over a read.
 #define R0 0x0
 #define R1 0x1
 #define W0 0x2
@@ -33,6 +33,13 @@ static const uint8_t march_c_minus[] = {
 };
 #define MARCH_C_MINUS_ELEMENTS (sizeof(march_c_minus) / sizeof(march_c_minus[0]))
 
+// March C- runs once for each data background. Any two data bits differ in at
+// least one of 0x55, 0x33 and 0x0F, so two shorted data lines and coupling
+// between bits of one byte are found. 0x00 alone writes only 0x00 and 0xFF.
+static const uint8_t march_backgrounds[MARCH_BACKGROUNDS] = {0x00, 0x55, 0x33, 0x0F};
+#define MARCH_ELEMENTS (MARCH_BACKGROUNDS * MARCH_C_MINUS_ELEMENTS)
+
+// The element over all backgrounds: background * 6 + March C- element.
 static uint8_t march_element;
 static uint32_t march_index;
 
@@ -44,7 +51,8 @@ void march_begin(firestarter_handle_t* handle) {
 
 void march_execute(firestarter_handle_t* handle) {
     const uint32_t size = handle->mem_size;
-    const uint8_t element = march_c_minus[march_element];
+    const uint8_t element = march_c_minus[march_element % MARCH_C_MINUS_ELEMENTS];
+    const uint8_t background = march_backgrounds[march_element / MARCH_C_MINUS_ELEMENTS];
     uint32_t index = march_index;
 
     for (uint16_t batch = MARCH_BATCH_SIZE; batch && index < size; batch--, index++) {
@@ -52,7 +60,7 @@ void march_execute(firestarter_handle_t* handle) {
         const uint32_t address = (element & 0x80) ? size - 1 - index : index;
         uint8_t ops = element;
         for (uint8_t n = (element >> 4) & 0x3; n; n--, ops >>= 2) {
-            const uint8_t value = (ops & R1) ? 0xFF : 0x00;
+            const uint8_t value = (ops & R1) ? (uint8_t)~background : background;
             if (ops & W0) {
                 handle->firestarter_set_data(handle, address, value);
                 continue;
@@ -79,14 +87,14 @@ void march_execute(firestarter_handle_t* handle) {
         index = 0;
     }
     march_index = index;
-    if (march_element < MARCH_C_MINUS_ELEMENTS) {
+    // One progress frame per batch, counted in address steps. The last batch
+    // reports the total. On SERIAL_ON_IO boards the frame waits in the
+    // deferred log until the callback returns; one frame per callback cannot
+    // fill it. The host does not ack it: a simple operation reads no input in
+    // MAIN, so an ack would wait and answer the END phase's ACK wait too early.
+    LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, march_element * size + index, MARCH_ELEMENTS * size);
+    if (march_element < MARCH_ELEMENTS) {
         set_operation_in_progress(handle);
-        // One progress frame per batch, counted in address steps. On
-        // SERIAL_ON_IO boards the frame waits in the deferred log until the
-        // callback returns; one frame per callback cannot fill it. The host
-        // does not ack it: a simple operation reads no input in MAIN, so an
-        // ack would wait and answer the END phase's ACK wait too early.
-        LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, march_element * size + index, MARCH_C_MINUS_ELEMENTS * size);
     } else {
         clear_operation_in_progress(handle);
     }

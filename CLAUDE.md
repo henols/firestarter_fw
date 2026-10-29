@@ -143,7 +143,7 @@ are in `src/proms/`.
 | `0x08` | `PROTO_EPROM_32PIN` | `eprom.cpp` | Drop-resistor route | 32-pin UV-EPROM. Refer to the 27C section. |
 | `0x0B` | `PROTO_EPROM_24PIN` | `eprom.cpp` | Direct VPE route | 24-pin UV-EPROM. Refer to the 27C section. |
 | `0x0D` | `PROTO_EEPROM_PARALLEL` | `eeprom_28c.cpp` | None (5V) | SDP disable, then DQ7 page poll. Refer to the 0x0D section. |
-| `0x0E`, `0x27`, `0x28`, `0x29` | `PROTO_SRAM_32PIN`, `_24PIN`, `_28PIN`, `_32PIN_NVRAM` | `sram.cpp`, `march.cpp` | None (5V) | Generic read and write. `CMD_RAM_TEST` (`18`) runs a March C- test on `0x27`, `0x28` and `0x29` only. It stops at the first failure and sends `MSG_ERR_RAM_TEST` (`0xC2`) with the element, address, expected value and value read. `0x0E` refuses it, because only NVRAM read/write rows use `0x0E`. |
+| `0x0E`, `0x27`, `0x28`, `0x29` | `PROTO_SRAM_32PIN`, `_24PIN`, `_28PIN`, `_32PIN_NVRAM` | `sram.cpp`, `march.cpp` | None (5V) | Generic read and write. `CMD_RAM_TEST` (`18`) runs March C- on all four protocols, once for each data background (`0x00`, `0x55`, `0x33`, `0x0F`). It stops at the first failure and sends `MSG_ERR_RAM_TEST` (`0xC2`) with the element (`background × 6 + element`, 0-23), address, expected value and value read. The firmware cannot tell a non-volatile row from a volatile one: only the host refuses non-volatile rows, unless the operator gives `--force`. |
 | `0x06` | `PROTO_FLASH_NOR_UNLOCK` | `flash_nor_unlock.cpp` | None (5V) | AMD unlock. Chip erase, or sector erase at a non-zero address. Each program and erase waits on DQ7. A write at a non-zero address does not erase. |
 | `0x05` | `PROTO_FLASH_5V_PAGE` | `flash_5v_page.cpp` | None (5V) | Page write, then DQ7 poll. Software chip erase. |
 | `0x35` | `PROTO_PHANTOM_0x35` | `flash_5v_page.cpp` | None (5V) | Phantom. No database chips. The upstream label names an ITE EC MCU. |
@@ -178,8 +178,9 @@ polling is a flash-family method.
 
 **Progress inside a block.** The per-byte loop sends `MSG_DATA_PROGRESS` (`0xE0`). A timer at
 `EPROM_PROGRESS_EMIT_INTERVAL_MS` (1000 ms) controls the send. A byte count does not. The payload
-is the absolute chip address and the operation end address. This loop is the only sender of `0xE0`.
-Two limits apply:
+is the absolute chip address and the operation end address. Two code paths send `0xE0`: this loop,
+and `march_execute()` in `march.cpp` (refer to "The RAM test progress frame" below). Two limits
+apply to this loop:
 
 - **EPROM path only.** Flash, EEPROM (`0x0D`), SRAM and all other families send progress once per
   block.
@@ -197,6 +198,14 @@ Two limits apply:
   The `test_messages` suite tests the buffer rule in `deferred_log.h`. Native tests do not compile
   `src/boards/uno_rurp_shield.cpp`, and the capture stub lacks its `com_mode` gate. Verify the
   behavior on the target board before changing this path.
+
+**The RAM test progress frame.** `march_execute()` sends one `MSG_DATA_PROGRESS` frame per batch
+callback (`MARCH_BATCH_SIZE` addresses), on every target, `uno` and `uno328pb` included. The last
+batch reports the total. The host does not ack these frames. The rule that keeps this safe on
+`SERIAL_ON_IO` targets: **one `march_execute()` callback sends at most one frame.** A batch that
+finds a bad cell sends `MSG_ERR_RAM_TEST` and returns before the progress send. A second frame in
+the same callback could fill the 4-slot buffer and lose `MSG_ERR_RAM_TEST`. Verify the behavior on
+the target board before you change either sender.
 
 Per-row differences:
 

@@ -32,7 +32,7 @@ static std::string incoming;
 static unsigned reads = 0;
 static unsigned configured = 0;
 static unsigned writes = 0;
-static unsigned ram_tests = 0;
+static unsigned simple_ops = 0;
 static unsigned logged = 0;
 static int ce_level = 0;
 static int cleared[3] = {};
@@ -95,10 +95,7 @@ extern "C" bool eprom_read(firestarter_handle_t*) { reads++; return true; }
 extern "C" bool eprom_write(firestarter_handle_t*) { writes++; return true; }
 extern "C" bool eprom_erase(firestarter_handle_t*) { writes++; return true; }
 extern "C" bool eprom_check_chip_id(firestarter_handle_t*) { return true; }
-extern "C" bool eprom_sdp_unlock(firestarter_handle_t*) { return true; }
-extern "C" bool eprom_sdp_lock(firestarter_handle_t*) { return true; }
-extern "C" bool eprom_lock_status(firestarter_handle_t*) { return true; }
-extern "C" bool eprom_ram_test(firestarter_handle_t*) { ram_tests++; return true; }
+extern "C" bool op_execute_simple_operation(firestarter_handle_t*) { simple_ops++; return true; }
 extern "C" bool hw_read_voltage(firestarter_handle_t*) { return true; }
 extern "C" bool hw_get_version(firestarter_handle_t*) { return true; }
 extern "C" bool hw_get_config(firestarter_handle_t*) { return true; }
@@ -124,7 +121,7 @@ static void reset() {
     fake_ms = 100;
     timeout_started_ms = 0;
     incoming.clear();
-    reads = configured = writes = ram_tests = logged = 0;
+    reads = configured = writes = simple_ops = logged = 0;
     ce_level = 0;
     memset(latch, 0, sizeof(latch));
     memset(cleared, 0, sizeof(cleared));
@@ -198,7 +195,7 @@ int main() {
     assert(handle.cmd == CMD_RAM_TEST && configured == 1);
     arm();
     loop();
-    assert(ram_tests == 1);
+    assert(simple_ops == 1);
     assert_idle();
     puts("PASS ram-test dispatch");
     return 0;
