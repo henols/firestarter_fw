@@ -142,8 +142,9 @@ jobs:
               echo "::error::$ENV image does not carry the version string '$TAG:$ENV'"
               exit 1
             fi
-            # 'CTRL remapped' exists only in an image built with DEV_TOOLS=1.
-            if grep -Fq -- 'CTRL remapped' "$STRINGS_OUT"; then HAS_DEV=true; else HAS_DEV=false; fi
+            # The firestarter_dev_tools_image symbol exists only in an image built
+            # with DEV_TOOLS=1 (src/dev_tools.cpp).
+            if grep -Fq -- 'firestarter_dev_tools_image' "$STRINGS_OUT"; then HAS_DEV=true; else HAS_DEV=false; fi
             if [ "$HAS_DEV" != "$PRERELEASE" ]; then
               echo "::error::$ENV image: dev commands present=$HAS_DEV, expected $PRERELEASE"
               exit 1

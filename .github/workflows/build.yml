@@ -70,14 +70,15 @@ jobs:
       - name: Run the Python test tree
         run: pytest tests/ -v
 
-      # The same needle check that release.yml runs on each image:
-      # 'CTRL remapped' exists only in an image built with DEV_TOOLS=1.
+      # The same needle check that release.yml runs on each image: the
+      # firestarter_dev_tools_image symbol exists only in an image built with
+      # DEV_TOOLS=1 (src/dev_tools.cpp).
       - name: Build the stable configuration (no dev tools)
         run: |
           set -euo pipefail
           pio run
           for ENV in uno uno328pb leonardo; do
-            if strings .pio/build/"$ENV"/firestarter_*.elf | grep -Fq -- 'CTRL remapped'; then
+            if strings .pio/build/"$ENV"/firestarter_*.elf | grep -Fq -- 'firestarter_dev_tools_image'; then
               echo "::error::$ENV stable image implements the dev commands"
               exit 1
             fi
@@ -90,7 +91,7 @@ jobs:
           set -euo pipefail
           pio run
           for ENV in uno uno328pb leonardo; do
-            if ! strings .pio/build/"$ENV"/firestarter_*.elf | grep -Fq -- 'CTRL remapped'; then
+            if ! strings .pio/build/"$ENV"/firestarter_*.elf | grep -Fq -- 'firestarter_dev_tools_image'; then
               echo "::error::$ENV pre-release image does not implement the dev commands"
               exit 1
             fi

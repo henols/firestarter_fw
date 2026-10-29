@@ -20,6 +20,12 @@
 #include "rurp_voltage_math.h"
 #include "messages.h"
 
+// The release and CI workflows look for this symbol name in the ELF to prove
+// that an image was built with the dev commands. The register table text that
+// they looked for before is drawn on the host now. One byte of flash; `used`
+// keeps it through LTO.
+extern "C" const uint8_t firestarter_dev_tools_image PROGMEM __attribute__((used)) = 1;
+
 // Time, in milliseconds, a dev command waits for the user button.
 #define DT_BUTTON_WAIT_MS 30000UL
 
