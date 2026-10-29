@@ -185,46 +185,6 @@ static void test_nominal_bandgap_is_the_identity(void) {
     TEST_ASSERT_EQUAL_UINT16(5006, rurp_scale_vcc_mv(225, 1100));
 }
 
-static void test_back_solve_from_a_measured_supply(void) {
-    // Vbg = VCC_meter * bandgap_adc / adc_full_scale, the whole measurement.
-    // Three measured boards, at the AVR's 10-bit full scale.
-    TEST_ASSERT_EQUAL_UINT16(1024, rurp_bandgap_from_measured_vcc(5090, 206, 1024));
-    TEST_ASSERT_EQUAL_UINT16(1100, rurp_bandgap_from_measured_vcc(4940, 228, 1024));
-    TEST_ASSERT_EQUAL_UINT16(1050, rurp_bandgap_from_measured_vcc(5120, 210, 1024));
-}
-
-static void test_back_solve_scales_with_the_adc_width(void) {
-    // This unit is linked into both the AVR and the PY32 targets. The PY32
-    // ADC is 12-bit, so the full scale is a parameter.
-    //
-    // A 12-bit ADC reading the SAME physical voltage gives four times the
-    // count, and must back-solve to the same bandgap.
-    TEST_ASSERT_EQUAL_UINT16(1024, rurp_bandgap_from_measured_vcc(5090, 206 * 4, 4096));
-    TEST_ASSERT_EQUAL_UINT16(1100, rurp_bandgap_from_measured_vcc(4940, 228 * 4, 4096));
-    // Non-vacuity: the same count under the WRONG scale does not give the same
-    // answer, which is what makes the pair above a real check.
-    TEST_ASSERT_NOT_EQUAL(1024, rurp_bandgap_from_measured_vcc(5090, 206 * 4, 1024));
-    // A zero scale is refused like any other unusable input.
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(5090, 206, 0));
-}
-
-static void test_back_solve_refuses_rather_than_clamps(void) {
-    // Outside the ATmega datasheet window is a typo or a bad meter reading,
-    // not a calibration. A stored bandgap is trusted to judge programming
-    // voltages, so it must be refused -- and 0 is distinguishable from any
-    // in-band value, so the caller cannot mistake it for one.
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(509, 206, 1024));    // volts, not mV
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(50900, 206, 1024));  // 50.9 V
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(5090, 0, 1024));     // no reading
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(0, 206, 1024));
-    // Both boundaries land INSIDE and are kept -- the refusal is a band, not
-    // a blanket.
-    TEST_ASSERT_EQUAL_UINT16(RURP_BANDGAP_MIN_MV,
-                             rurp_bandgap_from_measured_vcc(1000UL * 1024 / 206, 206, 1024));
-    TEST_ASSERT_EQUAL_UINT16(RURP_BANDGAP_MAX_MV,
-                             rurp_bandgap_from_measured_vcc(1200UL * 1024 / 206, 206, 1024));
-}
-
 static void test_an_out_of_band_bandgap_is_never_used(void) {
     // The same band gates the conversion itself, so a calibration that
     // somehow reached storage still cannot produce a reading.
@@ -260,9 +220,6 @@ int main(int, char**) {
     RUN_TEST(test_vcc_conversion);
     RUN_TEST(test_vcc_readout_measures_the_bandgap_discrepancy);
     RUN_TEST(test_nominal_bandgap_is_the_identity);
-    RUN_TEST(test_back_solve_from_a_measured_supply);
-    RUN_TEST(test_back_solve_scales_with_the_adc_width);
-    RUN_TEST(test_back_solve_refuses_rather_than_clamps);
     RUN_TEST(test_an_out_of_band_bandgap_is_never_used);
     RUN_TEST(test_calibration_corrects_the_measured_leonardo);
     return UNITY_END();

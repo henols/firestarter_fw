@@ -69,20 +69,6 @@ static void test_scale_voltage_saturates_instead_of_wrapping(void) {
     TEST_ASSERT_EQUAL_UINT16(0xFFFF, rurp_scale_vcc_mv(1, RURP_BANDGAP_NOMINAL_MV));
 }
 
-static void test_back_solve_refuses_a_product_that_wraps_uint32(void) {
-    // 4294967 mV * 1023 counts is over 2^32.
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(0xFFFFFFFFUL, 1023, 1024));
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(4200000UL, 1023, 1024));
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(5000, 0xFFFFFFFFUL, 1024));
-    // A count above full scale is refused; full scale itself still evaluates.
-    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(1100, 1025, 1024));
-    TEST_ASSERT_EQUAL_UINT16(1100, rurp_bandgap_from_measured_vcc(1100, 1024, 1024));
-}
-
-static void test_back_solve_still_accepts_a_normal_reading(void) {
-    TEST_ASSERT_EQUAL_UINT16(1024, rurp_bandgap_from_measured_vcc(5090, 206, 1024));
-}
-
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_the_divider_sum_bound_fits_at_the_max_bandgap);
@@ -92,7 +78,5 @@ int main(int, char**) {
     RUN_TEST(test_sum_wraparound_is_refused);
     RUN_TEST(test_scale_factor_bound_follows_the_adc_width);
     RUN_TEST(test_scale_voltage_saturates_instead_of_wrapping);
-    RUN_TEST(test_back_solve_refuses_a_product_that_wraps_uint32);
-    RUN_TEST(test_back_solve_still_accepts_a_normal_reading);
     return UNITY_END();
 }

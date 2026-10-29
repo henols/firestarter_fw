@@ -17,7 +17,6 @@
 #include "memory.h"
 #include "operation_utils.h"
 #include "rurp_shield.h"
-#include "rurp_voltage_math.h"
 #include "rurp_config_migrate.h"
 #include "version.h"
 #include "timeout_utils.h"
@@ -89,35 +88,11 @@ bool parse_command(firestarter_handle_t* handle) {
 #endif
     } else if (handle->cmd == CMD_CONFIG) {
         // Parse into a copy. The live configuration changes only after every
-        // field has parsed, any calibration has back-solved and the result
-        // is valid, so a refused command leaves nothing behind in RAM.
+        // field has parsed and the result is valid, so a refused command
+        // leaves nothing behind in RAM. A calibration arrives as `bg`: the
+        // host back-solves it from the count in MSG_OK_CFG.
         rurp_configuration_t config = *rurp_get_config();
         uint8_t cfg = cmd_apply_config(handle, &config);
-#if RURP_HAS_BANDGAP_CAL
-        if (cfg & CMD_CFG_CALIBRATE) {
-            // Back-solve this MCU's bandgap from the operator's meter reading
-            // of the supply pin. Refused, never clamped: a stored bandgap is
-            // a value the firmware trusts to judge programming voltages.
-            // Sample in PROGRAMMER mode, because that is the mode every
-            // real measurement is taken in: hw_read_voltage and
-            // eprom_check_vpp both switch to it before reading. The I/O state
-            // differs between the two modes and moves the bandgap count by a
-            // whole count on a SERIAL_ON_IO board -- about 0.5 %, stored
-            // permanently. Calibrate under the conditions you measure under.
-            rurp_set_programmer_mode();
-            uint32_t bandgap_adc = (uint32_t)rurp_get_bandgap_adc_reading();
-            rurp_set_communication_mode();
-            uint16_t measured = rurp_bandgap_from_measured_vcc(
-                (uint32_t)cmd_config_measured_vcc_mv(handle), bandgap_adc,
-                RURP_ADC_FULL_SCALE);
-            if (measured == 0) {
-                LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
-                return false;
-            }
-            config.bandgap_mv = measured;
-            cfg |= CMD_CFG_FIELD_CHANGED;
-        }
-#endif
         if (cfg & CMD_CFG_FIELD_CHANGED) {
             // Refused, never corrected: a corrected value would be acked as
             // if the operator's value had been stored. Boot-time migration

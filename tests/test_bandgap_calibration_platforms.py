@@ -5,8 +5,9 @@ Permission is hereby granted under MIT license.
 
 Compile and execute the production command-frame decoder for an AVR-class
 target and for the PY32F071 target. Assert that the PY32 build refuses a
-bandgap calibration request (vcc or bg), because that port never reads the
-stored bandgap, and that the AVR build accepts the same frames.
+bandgap write (bg), because that port never reads the stored bandgap, and that
+the AVR build accepts it. Both builds refuse the retired vcc bit (0x08): the
+host now back-solves the bandgap and sends it as bg.
 """
 
 
@@ -43,7 +44,7 @@ def _write_driver(tmp_path):
         '#include "command_decoder.h"\n'
         "\n"
         "static const uint8_t present[] = {\n"
-        "    CF_CONFIG_PRESENT_VCC, CF_CONFIG_PRESENT_BG, CF_CONFIG_PRESENT_R1};\n"
+        "    0x08 /* retired vcc */, CF_CONFIG_PRESENT_BG, CF_CONFIG_PRESENT_R1};\n"
         "\n"
         "int main(void) {\n"
         "    for (unsigned i = 0; i < sizeof(present); i++) {\n"
@@ -59,8 +60,6 @@ def _write_driver(tmp_path):
         "        p[CF_CONFIG_OFF_R1 + 1] = 0x04;  /* 270000 = 0x00041EB0 */\n"
         "        p[CF_CONFIG_OFF_R1 + 2] = 0x1E;\n"
         "        p[CF_CONFIG_OFF_R1 + 3] = 0xB0;\n"
-        "        p[CF_CONFIG_OFF_VCC] = 0x13;     /* 5000 */\n"
-        "        p[CF_CONFIG_OFF_VCC + 1] = 0x88;\n"
         "        p[CF_CONFIG_OFF_BG] = 0x04;      /* 1100 */\n"
         "        p[CF_CONFIG_OFF_BG + 1] = 0x4C;\n"
         "        handle.data_size = CF_HEADER_SIZE + CF_CONFIG_SIZE;\n"
@@ -116,8 +115,13 @@ def test_py32_still_accepts_a_divider_frame(tmp_path):
     assert results[_FRAMES[2]] == _DECODE_OK, results
 
 
-@pytest.mark.parametrize("frame", _FRAMES)
-def test_avr_accepts_every_calibration_frame(tmp_path, frame):
-    # Non-vacuity: the same frames decode where calibration exists.
+@pytest.mark.parametrize("frame", _FRAMES[1:])
+def test_avr_accepts_a_bandgap_and_a_divider_frame(tmp_path, frame):
+    # Non-vacuity: the bg frame decodes where calibration exists.
     results = _parse_results(tmp_path, [])
     assert results[frame] == _DECODE_OK, results
+
+
+def test_avr_refuses_the_retired_vcc_bit(tmp_path):
+    results = _parse_results(tmp_path, [])
+    assert results["vcc"] == _REFUSE_CONFIG_FIELD, results

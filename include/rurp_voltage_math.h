@@ -135,21 +135,6 @@ uint16_t rurp_scale_vcc_mv(uint32_t bandgap_adc, uint32_t bandgap_mv);
  */
 uint8_t rurp_calibration_is_plausible(uint32_t r1, uint32_t r2, uint32_t bandgap_mv);
 
-/*
- * Back-solve this MCU's bandgap from an operator meter reading of the supply.
- *
- *   Vbg = VCC_meter * bandgap_adc / adc_full_scale
- *
- * Returns 0 when the result is outside RURP_BANDGAP_MIN_MV..MAX_MV, when
- * VCC_meter is above 65535 mV, or when bandgap_adc is above adc_full_scale --
- * a refusal, never a clamp. The two input bounds keep the product inside
- * uint32.
- * A stored bandgap is a value the firmware TRUSTS to
- * judge programming voltages, so an implausible one must not be written.
- */
-uint16_t rurp_bandgap_from_measured_vcc(uint32_t vcc_meter_mv, uint32_t bandgap_adc,
-                                        uint32_t adc_full_scale);
-
 #ifdef __cplusplus
 }
 #endif

@@ -23,7 +23,6 @@ extern "C" {
 
 /* cmd_apply_config result bits. */
 #define CMD_CFG_FIELD_CHANGED 1
-#define CMD_CFG_CALIBRATE 2
 
 /* Decode the binary command frame in handle->data_buffer[0..data_size).
  *
@@ -38,9 +37,6 @@ uint8_t cmd_decode(firestarter_handle_t* handle);
 /* Write the config values the frame carries into `config`. Call only after
  * cmd_decode accepted a CMD_CONFIG frame. Returns CMD_CFG_* bits. */
 uint8_t cmd_apply_config(const firestarter_handle_t* handle, rurp_configuration_t* config);
-
-/* The measured supply voltage a calibrating config frame carries, in mV. */
-uint16_t cmd_config_measured_vcc_mv(const firestarter_handle_t* handle);
 
 #ifdef __cplusplus
 }

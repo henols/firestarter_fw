@@ -51,10 +51,6 @@ extern "C" bool rurp_config_migrate(rurp_configuration_t*) { return false; }
 extern "C" bool rurp_config_commit(rurp_configuration_t*, const rurp_configuration_t*) {
     return true;
 }
-extern "C" long rurp_get_bandgap_adc_reading() { return 0; }
-extern "C" uint16_t rurp_bandgap_from_measured_vcc(uint32_t, uint32_t, uint32_t) {
-    return 1100;
-}
 extern "C" void rurp_set_control_pin(uint8_t pin, uint8_t value) {
     if (pin == CHIP_ENABLE) ce_level = value;
 }

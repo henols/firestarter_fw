@@ -114,8 +114,6 @@ static void assert_config_applied(const firestarter_handle_t* h, const cf_accept
     bool changes = v->cfg_present & (CF_CONFIG_PRESENT_R1 | CF_CONFIG_PRESENT_R2 |
                                      CF_CONFIG_PRESENT_REV | CF_CONFIG_PRESENT_BG);
     TEST_ASSERT_EQUAL_MESSAGE(changes, (res & CMD_CFG_FIELD_CHANGED) != 0, v->name);
-    TEST_ASSERT_EQUAL_MESSAGE((v->cfg_present & CF_CONFIG_PRESENT_VCC) != 0,
-                              (res & CMD_CFG_CALIBRATE) != 0, v->name);
     TEST_ASSERT_EQUAL_INT32_MESSAGE(
         v->cfg_present & CF_CONFIG_PRESENT_R1 ? (long)v->cfg_r1 : before.r1, config.r1, v->name);
     TEST_ASSERT_EQUAL_INT32_MESSAGE(
@@ -126,9 +124,6 @@ static void assert_config_applied(const firestarter_handle_t* h, const cf_accept
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(
         v->cfg_present & CF_CONFIG_PRESENT_BG ? v->cfg_bg : before.bandgap_mv, config.bandgap_mv,
         v->name);
-    if (v->cfg_present & CF_CONFIG_PRESENT_VCC) {
-        TEST_ASSERT_EQUAL_UINT16_MESSAGE(v->cfg_vcc, cmd_config_measured_vcc_mv(h), v->name);
-    }
 }
 
 void test_every_accept_vector_decodes_to_its_fields(void) {
@@ -314,11 +309,6 @@ void test_config_apply_writes_only_present_values(void) {
 
     TEST_ASSERT_EQUAL_UINT8(CMD_DECODE_OK, load_vector(&h, "config_bandgap"));
     TEST_ASSERT_EQUAL_UINT8(CMD_CFG_FIELD_CHANGED, cmd_apply_config(&h, &config));
-    TEST_ASSERT_EQUAL_UINT16(1100, config.bandgap_mv);
-
-    TEST_ASSERT_EQUAL_UINT8(CMD_DECODE_OK, load_vector(&h, "config_calibrate"));
-    TEST_ASSERT_EQUAL_UINT8(CMD_CFG_CALIBRATE, cmd_apply_config(&h, &config));
-    TEST_ASSERT_EQUAL_UINT16(5012, cmd_config_measured_vcc_mv(&h));
     TEST_ASSERT_EQUAL_UINT16(1100, config.bandgap_mv);
 }
 

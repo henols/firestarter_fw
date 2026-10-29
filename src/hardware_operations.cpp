@@ -10,6 +10,7 @@
 #include "rurp_serial_utils.h"
 #include "rurp_shield.h"
 #include "rurp_pinout.h"
+#include "rurp_voltage_math.h"
 #include "version.h"
 
 bool hw_read_voltage(firestarter_handle_t* handle) {
@@ -107,13 +108,24 @@ bool hw_get_version(firestarter_handle_t* handle) {
 bool hw_get_config(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_CONFIG);
     rurp_configuration_t* rurp_config = rurp_get_config();
-    // u32 r1 + u32 r2 + u8 override (0xFF = no override) + u16 bandgap_mv = 11 bytes.
-    // Widening a fixed-length frame: an older host rejects it on length rather
-    // than misreading it, and firmware ships before the host that needs it.
+    // u32 r1 + u32 r2 + u8 override (0xFF = no override) + u16 bandgap_mv
+    // + u16 bandgap_adc = 13 bytes. The host back-solves a calibration from
+    // the count: bandgap_mv = meter_mv * bandgap_adc / RURP_ADC_FULL_SCALE.
+    uint16_t bandgap_adc = 0;
+#if RURP_HAS_BANDGAP_CAL
+    // Sample in PROGRAMMER mode, because that is the mode every real
+    // measurement is taken in: hw_read_voltage and eprom_check_vpp both
+    // switch to it before reading. The I/O state differs between the two
+    // modes and moves the count by a whole count on a SERIAL_ON_IO board --
+    // about 0.5 %, stored permanently by a calibration.
+    rurp_set_programmer_mode();
+    bandgap_adc = (uint16_t)rurp_get_bandgap_adc_reading();
+    rurp_set_communication_mode();
+#endif
     uint8_t override_byte = (rurp_config->hardware_revision < 0xFF)
                             ? (uint8_t)rurp_config->hardware_revision
                             : 0xFF;
-    uint8_t _cfg[11];
+    uint8_t _cfg[13];
     _cfg[0] = (uint8_t)((rurp_config->r1 >> 24) & 0xFF);
     _cfg[1] = (uint8_t)((rurp_config->r1 >> 16) & 0xFF);
     _cfg[2] = (uint8_t)((rurp_config->r1 >>  8) & 0xFF);
@@ -125,7 +137,9 @@ bool hw_get_config(firestarter_handle_t* handle) {
     _cfg[8] = override_byte;
     _cfg[9] = (uint8_t)((rurp_config->bandgap_mv >> 8) & 0xFF);
     _cfg[10] = (uint8_t)((rurp_config->bandgap_mv) & 0xFF);
-    LOG_ID_BYTES(MSG_OK_CFG, _cfg, 11);
+    _cfg[11] = (uint8_t)(bandgap_adc >> 8);
+    _cfg[12] = (uint8_t)bandgap_adc;
+    LOG_ID_BYTES(MSG_OK_CFG, _cfg, 13);
     return true;
 }
 
