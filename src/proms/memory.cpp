@@ -191,10 +191,10 @@ void mem_util_check_vpp_window(firestarter_handle_t* handle, uint16_t vpp_mv) {
         // the part, where an under-set one only fails to program.
         bool force = is_flag_set(FLAG_FORCE);
         mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv,
-                                force ? MSG_WARN_VPP_HIGH : MSG_ERR_VPP_HIGH,
+                                force ? MSG_WARN_VPP_HIGH_MV : MSG_ERR_VPP_HIGH_MV,
                                 force ? RESPONSE_CODE_WARNING : RESPONSE_CODE_ERROR);
     } else if ((uint32_t)vpp_mv < target * (100 - RURP_VPP_LOW_TOLERANCE_PCT) / 100) {
-        mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv, MSG_WARN_VPP_LOW,
+        mem_util_report_voltage(handle, vpp_mv, handle->vpp_mv, MSG_WARN_VPP_LOW_MV,
                                 RESPONSE_CODE_WARNING);
     }
 }
@@ -234,28 +234,11 @@ bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle) {
     return true;
 }
 
-/* Shared VPP-mismatch report:
- *   [measured_V u16 BE][measured_tenths u16 BE][expected_V u16 BE][expected_tenths u16 BE]
- *
- * Both millivolt parameters are uint16_t deliberately: `(x + 50)` then
- * promotes to 16-bit and `/1000` compiles to __udivmodhi4 on AVR. Do not
- * widen them. */
+/* Shared VPP-mismatch report: [measured_mv u16 BE][expected_mv u16 BE].
+ * The host formats the millivolts. */
 void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
                               uint16_t expected_mv, uint8_t msg_id, uint8_t response_code) {
-    uint16_t _v0 = (uint16_t)((measured_mv + 50) / 1000);
-    uint16_t _v1 = (uint16_t)((((measured_mv + 50) / 100) % 10));
-    uint16_t _v2 = (uint16_t)((expected_mv + 50) / 1000);
-    uint16_t _v3 = (uint16_t)((((expected_mv + 50) / 100) % 10));
-    uint8_t _b[8];
-    _b[0] = (uint8_t)((_v0 >> 8) & 0xFF);
-    _b[1] = (uint8_t)(_v0 & 0xFF);
-    _b[2] = (uint8_t)((_v1 >> 8) & 0xFF);
-    _b[3] = (uint8_t)(_v1 & 0xFF);
-    _b[4] = (uint8_t)((_v2 >> 8) & 0xFF);
-    _b[5] = (uint8_t)(_v2 & 0xFF);
-    _b[6] = (uint8_t)((_v3 >> 8) & 0xFF);
-    _b[7] = (uint8_t)(_v3 & 0xFF);
-    LOG_ID_BYTES(msg_id, _b, 8);
+    LOG_DATA_ID_U16_U16(msg_id, measured_mv, expected_mv);
     handle->response_code = response_code;
 }
 
@@ -440,32 +423,34 @@ void memory_verify_execute(firestarter_handle_t* handle) {
 
 // Utility functions
 uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t address, uint8_t read_write) {
-    bus_config_t config = handle->bus_config;
-    uint32_t reorg_address = config.address_mask & address;
-    if (config.address_lines[0] != 0xFF) {
-        for (int i = config.matching_lines; i < ADDRESS_LINES_SIZE && config.address_lines[i] != 0xFF; i++) {
-            uint32_t line_bit = (uint32_t)1 << config.address_lines[i];
+    // A pointer, not a copy: this runs on every byte, and a copy of the
+    // struct cost about 300 cycles per call on AVR.
+    const bus_config_t* config = &handle->bus_config;
+    uint32_t reorg_address = config->address_mask & address;
+    if (config->address_lines[0] != 0xFF) {
+        for (int i = config->matching_lines; i < ADDRESS_LINES_SIZE && config->address_lines[i] != 0xFF; i++) {
+            uint32_t line_bit = (uint32_t)1 << config->address_lines[i];
             reorg_address &= ~line_bit;
             if (address & 1UL << i) {
                 reorg_address |= line_bit;
             }
         }
     }
-    if (config.rw_line != 0xFF) {
-        reorg_address |= (uint32_t)read_write << config.rw_line;
+    if (config->rw_line != 0xFF) {
+        reorg_address |= (uint32_t)read_write << config->rw_line;
     }
 
-    if (config.vpp_line != 0xFF && !using_p1_as_vpp(handle)) {
-        reorg_address |= 1UL << config.vpp_line;
+    if (config->vpp_line != 0xFF && !using_p1_as_vpp(handle)) {
+        reorg_address |= 1UL << config->vpp_line;
     }
     // Read the register cache directly: dt_set_address() gets here without
     // configure_memory(), so the handle's control-register getter is NULL.
-    if (read_write == READ_FLAG && config.read_high_mask &&
+    if (read_write == READ_FLAG && config->read_high_mask &&
         !(rurp_read_from_register(CONTROL_REGISTER) & CTRL_VPP_P1_ENABLE)) {
-        reorg_address |= config.read_high_mask;
+        reorg_address |= config->read_high_mask;
     }
 
-    reorg_address |= config.static_high_mask;
+    reorg_address |= config->static_high_mask;
     return reorg_address;
 }
 

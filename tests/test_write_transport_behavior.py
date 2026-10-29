@@ -171,7 +171,7 @@ static unsigned count(uint8_t id) {
 }
 
 static bool has_error() {
-    for (uint8_t i : ids) if (i >= MSG_ERR_BAD_JSON && i < MSG_DATA_PROGRESS) return true;
+    for (uint8_t i : ids) if (i >= MSG_ERR_BAD_FRAME && i < MSG_DATA_PROGRESS) return true;
     return false;
 }
 

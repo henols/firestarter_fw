@@ -20,6 +20,12 @@
 #include "rurp_voltage_math.h"
 #include "messages.h"
 
+// The release and CI workflows look for this symbol name in the ELF to prove
+// that an image was built with the dev commands. The register table text that
+// they looked for before is drawn on the host now. One byte of flash; `used`
+// keeps it through LTO.
+extern "C" const uint8_t firestarter_dev_tools_image PROGMEM __attribute__((used)) = 1;
+
 // Time, in milliseconds, a dev command waits for the user button.
 #define DT_BUTTON_WAIT_MS 30000UL
 
@@ -34,53 +40,17 @@ static bool dt_wait_for_button(void) {
     return true;
 }
 
-void dt_decode_register(firestarter_handle_t* handle, const char* reg_name, uint16_t reg, uint8_t size) {
-    {
-        uint8_t _len = (uint8_t)strlen(reg_name);
-        if (_len > 14) _len = 14;
-        uint8_t _b[16];
-        _b[0] = _len;
-        memcpy(&_b[1], reg_name, _len);
-        _b[1 + _len] = (uint8_t)reg;
-        LOG_INFO_ID_BYTES(MSG_INFO_REG_HEADER, _b, 1 + _len + 1);
-    }
+// MSG_INFO_REGISTERS views: which registers the host table shows.
+#define DT_VIEW_REG_RAW 0         // dev reg: CTRL written as given, no remap
+#define DT_VIEW_REG_FIRESTARTER 1 // dev reg --firestarter: 9-bit CTRL and its remap
+#define DT_VIEW_ADDR 2            // dev addr: CTRL holds the TOP address register
 
-    // Header
-    {
-        const char* _prefix = (size == 9 ? "|D8" : "");
-        uint8_t _len = (uint8_t)strlen(_prefix);
-        uint8_t _b[8];
-        _b[0] = _len;
-        memcpy(&_b[1], _prefix, _len);
-        LOG_INFO_ID_BYTES(MSG_INFO_BIT_HEADER, _b, 1 + _len);
-    }
-
-    // Values - build string manually to be more efficient than many-arg sprintf
-    char bit_str[40];  // "| 1" is 3 chars. 9 bits -> 3*9=27. 8 bits -> 3*8=24. 40 is safe.
-    char* p = bit_str;
-
-    if (size == 9) {
-        *p++ = '|';
-        *p++ = ' ';
-        *p++ = ((reg >> 8) & 1) ? '1' : '0';
-    }
-
-    for (int i = 7; i >= 0; i--) {
-        *p++ = '|';
-        *p++ = ' ';
-        *p++ = ((reg >> i) & 1) ? '1' : '0';
-    }
-    *p++ = '|';
-    *p = '\0';
-
-    {
-        uint8_t _len = (uint8_t)strlen(bit_str);
-        if (_len > 31) _len = 31;
-        uint8_t _b[32];
-        _b[0] = _len;
-        memcpy(&_b[1], bit_str, _len);
-        LOG_INFO_ID_BYTES(MSG_INFO_BIT_STR, _b, 1 + _len);
-    }
+// One frame with the raw values. The host draws the bit table. Not gated on
+// FLAG_VERBOSE: the table is what dev reg and dev addr are for, and no host
+// command sets that flag.
+static void dt_report_registers(uint8_t msb, uint8_t lsb, uint16_t ctrl, uint8_t remapped, uint8_t view) {
+    uint8_t _b[6] = {msb, lsb, (uint8_t)(ctrl >> 8), (uint8_t)ctrl, remapped, view};
+    LOG_ID_BYTES(MSG_INFO_REGISTERS, _b, 6);
 }
 
 bool dt_set_registers(firestarter_handle_t* handle) {
@@ -110,17 +80,13 @@ bool dt_set_registers(firestarter_handle_t* handle) {
         };
         LOG_INFO_ID_BYTES(MSG_INFO_CE_OE, _b, 2);
     }
-    dt_decode_register(handle, "MSB", msb, 8);
-    dt_decode_register(handle, "LSB", lsb, 8);
 #ifdef HARDWARE_REVISION
-    if (firestarter_reg) {
-        dt_decode_register(handle, "CTRL", ctrl_reg, 9);
-        uint8_t ctrl_version = rurp_map_ctrl_reg_for_hardware_revision(ctrl_reg);
-        dt_decode_register(handle, "CTRL remapped", ctrl_version, 8);
-    } else {
-        dt_decode_register(handle, "CTRL", ctrl_reg, 8);
-    }
+    uint8_t ctrl_version = firestarter_reg ? rurp_map_ctrl_reg_for_hardware_revision(ctrl_reg) : (uint8_t)ctrl_reg;
+#else
+    uint8_t ctrl_version = (uint8_t)ctrl_reg;
 #endif
+    dt_report_registers(msb, lsb, ctrl_reg, ctrl_version,
+                        firestarter_reg ? DT_VIEW_REG_FIRESTARTER : DT_VIEW_REG_RAW);
     LOG_OK_ID_U16(MSG_OK_READY, (uint16_t)DATA_BUFFER_SIZE);  // semantics ≈ "setup done, waiting on user button"
     rurp_set_programmer_mode();
 
@@ -162,11 +128,10 @@ bool dt_set_address(firestarter_handle_t* handle) {
     uint8_t top_address = mem_util_calculate_top_address_register(handle, address);
 #ifdef HARDWARE_REVISION
     uint8_t ctrl_version = rurp_map_ctrl_reg_for_hardware_revision(top_address);
-    dt_decode_register(handle, "MSB", msb, 8);
-    dt_decode_register(handle, "LSB", lsb, 8);
-    dt_decode_register(handle, "TOP addr", top_address, 8);
-    dt_decode_register(handle, "CTRL remapped", ctrl_version, 8);
+#else
+    uint8_t ctrl_version = top_address;
 #endif
+    dt_report_registers(msb, lsb, top_address, ctrl_version, DT_VIEW_ADDR);
     LOG_OK_ID_U16(MSG_OK_READY, (uint16_t)DATA_BUFFER_SIZE);  // semantics ≈ "setup done, waiting on user button"
     rurp_set_programmer_mode();
     mem_util_set_address(handle, address);

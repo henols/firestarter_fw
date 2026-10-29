@@ -13,8 +13,66 @@
 #include "logging_id.h"
 #include "timeout_utils.h"
 #include <stdio.h>
+#include "rurp_platform_compat.h"
 
 void fu_flash_flip_data(firestarter_handle_t* handle, uint32_t address, uint8_t data);
+
+const byte_flip_t FLASH_ENABLE_ID[3] PROGMEM = {
+    {0x5555, 0xAA},
+    {0x2AAA, 0x55},
+    {0x5555, 0x90},
+};
+const byte_flip_t FLASH_DISABLE_ID[3] PROGMEM = {
+    {0x5555, 0xAA},
+    {0x2AAA, 0x55},
+    {0x5555, 0xF0},
+};
+const byte_flip_t FLASH_ERASE[6] PROGMEM = {
+    {0x5555, 0xAA},
+    {0x2AAA, 0x55},
+    {0x5555, 0x80},
+    {0x5555, 0xAA},
+    {0x2AAA, 0x55},
+    {0x5555, 0x10},
+};
+const byte_flip_t FLASH_ENABLE_WRITE[3] PROGMEM = {
+    {0x5555, 0xAA},
+    {0x2AAA, 0x55},
+    {0x5555, 0xA0},
+};
+
+const byte_flip_t FLASH_ENABLE_WRITE_PROTECTION[3] PROGMEM = {
+    {0x5555, 0xAA},
+    {0x2AAA, 0x55},
+    {0x5555, 0xA0},
+};
+const byte_flip_t FLASH_DISABLE_WRITE_PROTECTION[6] PROGMEM = {
+    {0x5555, 0xAA},
+    {0x2AAA, 0x55},
+    {0x5555, 0x80},
+    {0x5555, 0xAA},
+    {0x2AAA, 0x55},
+    {0x5555, 0x20},
+};
+
+// Copies the PROGMEM table to the stack first, so the emit loop below runs
+// exactly as it does for a RAM table. A table longer than the buffer sends
+// nothing: a cut-off command sequence is worse than none.
+bool flash_util_copy_P(byte_flip_t* dst, const byte_flip_t* src_P, size_t size) {
+    if (size > FLASH_COMMAND_MAX_LEN) {
+        return false;
+    }
+    memcpy_P(dst, src_P, size * sizeof(byte_flip_t));
+    return true;
+}
+
+void flash_util_byte_flipping_P(firestarter_handle_t* handle, const byte_flip_t* byte_flips_P, size_t size) {
+    byte_flip_t byte_flips[FLASH_COMMAND_MAX_LEN];
+    if (!flash_util_copy_P(byte_flips, byte_flips_P, size)) {
+        return;
+    }
+    flash_util_byte_flipping(handle, byte_flips, size);
+}
 
 void flash_util_byte_flipping(firestarter_handle_t* handle, const byte_flip_t* byte_flips, size_t size) {
 

@@ -125,13 +125,15 @@ Rev 0 hardware the firmware skips the check and sends a warning.
 The pulse width does not change between pulses. The route must be off for each read, because
 Program Verify needs OE/VPP low (Winbond W27C512 datasheet, operating-mode table). After
 `max_pulses` pulses the write fails with `MSG_ERR_MAX_PULSES` (`0xBD`). On `0x0B`, a pulse total
-that reaches `energy_cap_us` fails with `MSG_ERR_ENERGY_CAP` (`0xBE`). No row applies an
+that reaches `energy_cap_us` fails with `MSG_ERR_ENERGY_CAP` (`0xBE`). The firmware has no
 overprogram pulse. The limit of 25 pulses comes from the Winbond W27C512 "Smart Programming
 Algorithm 2" flowchart and ST M27C512 Rev. 3, Fig. 4. The 50 ms cap on `0x0B` is the
 per-location pulse `t_w(PR)` in the TI TMS 2516 datasheet (programming timing table).
 
 **Verify.** With `VERIFY_PER_PULSE_PLUS_FINAL` the firmware reads the full block one more time
-after the loop. A mismatch sends `MSG_ERR_VERIFY` (`0xAF`). `0x0B` does no final pass.
+after the loop. A mismatch sends `MSG_ERR_VERIFY` (`0xAF`). `0x0B` does no final pass. The host
+sets `FLAG_SKIP_FINAL_VERIFY` (`0x200`) for `write --verify`, which reads the region back itself,
+and the firmware then skips the final pass.
 
 **Erase.** The firmware erases only when the host sets `FLAG_CAN_ERASE`. A UV-EPROM has no
 electrical erase. For an electrically erasable part, the firmware puts VPE on A9 and on OE/VPP and
@@ -200,8 +202,8 @@ There is no erase.
 ## Pulse-width override and program-VCC limit
 
 The host option `firestarter write --pulse-us N` accepts 1 to 65535 µs. That range copies the
-minipro `-o pulse=N` option, which is a `uint16`. It is not a wire limit. `json_parser.c` reads
-`pulse-delay` into a `uint32_t` with no clamp. `configure_eprom()` refuses a pulse wider than
+minipro `-o pulse=N` option, which is a `uint16`. It is not a wire limit. The command frame
+carries `pulse-delay` as a `uint32_t` with no clamp. `configure_eprom()` refuses a pulse wider than
 `energy_cap_us` with `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`), before any high voltage is on. Only `0x0B`
 has a cap, so only `0x0B` can refuse a pulse width.
 

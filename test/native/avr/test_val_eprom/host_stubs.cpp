@@ -107,6 +107,10 @@ extern "C" void val_readback_seed(uint8_t idx, uint8_t target, uint8_t converge_
     s_val_readback[idx].read_count = 0;
 }
 
+extern "C" uint8_t val_readback_read_count(uint8_t idx) {
+    return s_val_readback[idx].read_count;
+}
+
 /* Saturation reporter. The shared recorder drops silently past
  * HOST_STUBS_MAX_RECORDING (256) with no overflow flag of its own, and a
  * dropped tail would both corrupt the backward index scan below and make an

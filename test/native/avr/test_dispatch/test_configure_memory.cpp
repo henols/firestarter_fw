@@ -344,7 +344,7 @@ void test_case_group5_sram_erase_chip_id_null_main(void) {
 /* Case group 6 — the unchanged path. Lets a reviewer SEE the absence of a
  * regression rather than infer it: configure_not_implemented protocols set
  * response_code = RESPONSE_CODE_ERROR themselves, so op_execute_function
- * already returns false and parse_json already emits MSG_ERR_SETUP -- the
+ * already returns false and parse_command already emits MSG_ERR_SETUP -- the
  * op layer is never reached here, so this task's guard changes nothing. */
 void test_case_group6_not_implemented_protocol_unchanged_no_double_error(void) {
     firestarter_handle_t h = make_handle(0x11, 0, CMD_READ);
@@ -352,7 +352,7 @@ void test_case_group6_not_implemented_protocol_unchanged_no_double_error(void) {
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
         "Case group 6 (D-08 item 7): a configure_not_implemented protocol (0x11) must still produce "
         "RESPONSE_CODE_ERROR from configure_memory itself -- op_execute_function(configure_memory, "
-        "...) already returns false and parse_json already emits MSG_ERR_SETUP; the op layer is "
+        "...) already returns false and parse_command already emits MSG_ERR_SETUP; the op layer is "
         "NEVER reached for this protocol -- no double error, no new frame");
     TEST_ASSERT_NULL_MESSAGE(h.firestarter_operation_main,
         "Case group 6: configure_not_implemented leaves firestarter_operation_main NULL, unchanged "

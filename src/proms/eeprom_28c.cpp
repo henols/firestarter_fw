@@ -15,6 +15,7 @@
 #include "memory_utils.h"
 #include "operation_utils.h"
 #include "rurp_pinout.h"
+#include "rurp_platform_compat.h"
 #include "rurp_shield.h"
 
 /* Conservative page-size floor, used when the host delivers no page_size.
@@ -23,9 +24,9 @@
  * select the right value.
  *
  * AT28C_PAGE_SIZE_MAX is a board-INVARIANT validation ceiling, deliberately
- * not DATA_BUFFER_SIZE (512 on uno/native, 1024 on leonardo), so the
- * validation rule is the same on every build. It sits above the largest page
- * any database row carries. */
+ * not DATA_BUFFER_SIZE (1024 on uno/uno328pb, 1536 on leonardo, 512 on
+ * native), so the validation rule is the same on every build. It sits above
+ * the largest page any database row carries. */
 #define AT28C_PAGE_SIZE_FALLBACK 64
 #define AT28C_PAGE_SIZE_MAX 512
 
@@ -82,7 +83,7 @@ static bool eeprom28c_wait_for_page_write(firestarter_handle_t* handle, uint32_t
 static bool eeprom28c_verify_page_readback(firestarter_handle_t* handle, uint32_t first_index, uint32_t last_index);
 // The shared SDP timed-emit helper and the two standalone, payload-free
 // lock/unlock operations it drives.
-static void eeprom28c_emit_sdp_sequence_timed(firestarter_handle_t* handle, const byte_flip_t* sequence, size_t length,
+static void eeprom28c_emit_sdp_sequence_timed(firestarter_handle_t* handle, const byte_flip_t* sequence_P, size_t length,
                                                uint8_t emitted_msg_id, uint8_t done_us_msg_id);
 static void eeprom28c_sdp_unlock_execute(firestarter_handle_t* handle);
 static void eeprom28c_sdp_lock_execute(firestarter_handle_t* handle);
@@ -98,7 +99,7 @@ static void eeprom28c_erase_execute(firestarter_handle_t* handle);
 // INTERNAL linkage unless a prior extern declaration is visible, and the guard
 // must read this production array rather than a test-local copy.
 extern const byte_flip_t EEPROM_SDP_DISABLE[6];
-const byte_flip_t EEPROM_SDP_DISABLE[6] = {
+const byte_flip_t EEPROM_SDP_DISABLE[6] PROGMEM = {
     {0x5555, 0xAA},
     {0x2AAA, 0x55},
     {0x5555, 0x80},
@@ -124,7 +125,7 @@ const byte_flip_t EEPROM_SDP_DISABLE[6] = {
 //
 // The `extern` below is load-bearing for the same linkage reason as above.
 extern const byte_flip_t EEPROM_SDP_ENABLE[3];
-const byte_flip_t EEPROM_SDP_ENABLE[3] = {
+const byte_flip_t EEPROM_SDP_ENABLE[3] PROGMEM = {
     {0x5555, 0xAA},
     {0x2AAA, 0x55},
     {0x5555, 0xA0},
@@ -270,8 +271,14 @@ static void eeprom28c_wait_for_sdp_completion(firestarter_handle_t* handle) {
 //
 // LOG_ calls belong here by design. The real timing window is
 // eeprom28c_emit_command_sequence's body.
-static void eeprom28c_emit_sdp_sequence_timed(firestarter_handle_t* handle, const byte_flip_t* sequence, size_t length,
+static void eeprom28c_emit_sdp_sequence_timed(firestarter_handle_t* handle, const byte_flip_t* sequence_P, size_t length,
                                                uint8_t emitted_msg_id, uint8_t done_us_msg_id) {
+    // The tables are in PROGMEM. Copy to the stack BEFORE the micros()
+    // bracket, so the timed window and the inter-byte timing do not change.
+    byte_flip_t sequence[FLASH_COMMAND_MAX_LEN];
+    if (!flash_util_copy_P(sequence, sequence_P, length)) {
+        return;
+    }
     LOG_ID(emitted_msg_id);
     uint32_t sdp_emit_start_us = micros();
     eeprom28c_emit_command_sequence(handle, sequence, length);
@@ -438,8 +445,13 @@ void eeprom28c_write_execute(firestarter_handle_t* handle) {
     // The compare below tracks a MAXIMUM; it is deliberately not a budget
     // check. A per-byte comparison against t_BLC would cost flash and cycles
     // in a hot loop on a target with hundreds of bytes of headroom.
+    //
+    // DEV_TOOLS only: a bench measurement. The micros() call runs inside the
+    // byte-load window it measures, so a stable image leaves it out.
+#if DEV_TOOLS
     uint32_t page_load_worst_us = 0;
     uint32_t page_load_previous_us = micros();
+#endif
     // The loop exits by break, not early return, so the worst-interval report
     // below is reached on BOTH paths. With an empty socket the very first
     // page's poll fails, and a report placed only at the normal exit would
@@ -451,12 +463,14 @@ void eeprom28c_write_execute(firestarter_handle_t* handle) {
         uint8_t data = handle->data_buffer[i];
         handle->firestarter_set_data(handle, address, data);
 
+#if DEV_TOOLS
         uint32_t page_load_now_us = micros();
         uint32_t page_load_interval_us = (uint32_t)(page_load_now_us - page_load_previous_us);
         if (page_load_interval_us > page_load_worst_us) {
             page_load_worst_us = page_load_interval_us;
         }
         page_load_previous_us = page_load_now_us;
+#endif
 
         bool page_end = ((address + 1) & page_mask) == 0;
         bool last_byte = (i == handle->data_size - 1);
@@ -476,7 +490,9 @@ void eeprom28c_write_execute(firestarter_handle_t* handle) {
         }
     }
     (void)page_load_aborted;  // recorded for reader clarity only; both exits report identically
+#if DEV_TOOLS
     LOG_ID_U32(MSG_INFO_PAGE_LOAD_WORST_US, page_load_worst_us);
+#endif
 }
 
 // Completion detection ONLY -- a DQ7-complement poll. Compares just that one

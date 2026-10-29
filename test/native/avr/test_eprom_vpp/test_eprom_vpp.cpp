@@ -18,9 +18,11 @@
 #include <Arduino.h>
 #include <ArduinoFake.h>
 #include <unity.h>
+#include <vector>
 
 extern "C" {
 #include "memory.h"
+#include "messages.h"
 }
 #include "firestarter.h"
 #include "rurp_pinout.h"
@@ -42,12 +44,37 @@ static const rurp_register_t kHvBits = (rurp_register_t)(CTRL_VPP_REGULATOR_ENAB
                                                          CTRL_VPP_A9_ENABLE | CTRL_VPE_ENABLE |
                                                          CTRL_VPP_VPE_DROP_ENABLE);
 
+static std::vector<uint8_t> captured;
+
+/* The params of the first frame with this id, or an empty vector. Frame
+ * layout: 4 preamble bytes, u16 length, id, params, CRC. */
+static std::vector<uint8_t> frame_params(uint8_t id) {
+    size_t offset = 0;
+    while (offset + 7 <= captured.size()) {
+        uint16_t len = (uint16_t)(((uint16_t)captured[offset + 4] << 8) | captured[offset + 5]);
+        size_t frame_size = 4 + 2 + (size_t)len + 1;
+        if (offset + frame_size > captured.size()) {
+            break;
+        }
+        if (captured[offset + 6] == id) {
+            return std::vector<uint8_t>(captured.begin() + offset + 7, captured.begin() + offset + 6 + len - 1);
+        }
+        offset += frame_size;
+    }
+    return std::vector<uint8_t>();
+}
+
 void setUp(void) {
     ArduinoFakeReset();
     When(Method(ArduinoFake(), delay)).AlwaysReturn();
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
     When(Method(ArduinoFake(), millis)).AlwaysReturn(0);
-    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t))).AlwaysReturn(1);
+    captured.clear();
+    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t)))
+        .AlwaysDo([](uint8_t b) -> size_t {
+            captured.push_back(b);
+            return (size_t)1;
+        });
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
     clear_bus_recording();
@@ -168,6 +195,30 @@ void test_low_edge_is_five_percent(void) {
     TEST_ASSERT_EQUAL(RESPONSE_CODE_WARNING, run_at(12000, 11399, 0));
 }
 
+/* The mismatch reports carry [measured_mv u16 BE][expected_mv u16 BE]; the
+ * host formats them. */
+static void assert_mv_report(uint8_t id, uint16_t measured, uint16_t expected) {
+    std::vector<uint8_t> p = frame_params(id);
+    TEST_ASSERT_EQUAL_MESSAGE(4, p.size(), "the report carries two u16 values");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(measured, (uint16_t)((p[0] << 8) | p[1]), "measured mV");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(expected, (uint16_t)((p[2] << 8) | p[3]), "expected mV");
+}
+
+void test_a_high_reading_reports_both_values_in_millivolts(void) {
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, run_at(13000, 14449, 0));
+    assert_mv_report(MSG_ERR_VPP_HIGH_MV, 14449, 13000);
+}
+
+void test_a_forced_high_reading_reports_a_warning_in_millivolts(void) {
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_WARNING, run_at(13000, 14449, FLAG_FORCE));
+    assert_mv_report(MSG_WARN_VPP_HIGH_MV, 14449, 13000);
+}
+
+void test_a_low_reading_reports_both_values_in_millivolts(void) {
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_WARNING, run_at(13000, 12000, 0));
+    assert_mv_report(MSG_WARN_VPP_LOW_MV, 12000, 13000);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -181,5 +232,8 @@ int main(int argc, char** argv) {
     RUN_TEST(test_high_edge_below_the_crossover_uses_the_floor);
     RUN_TEST(test_high_edge_above_the_crossover_uses_the_percentage);
     RUN_TEST(test_low_edge_is_five_percent);
+    RUN_TEST(test_a_high_reading_reports_both_values_in_millivolts);
+    RUN_TEST(test_a_forced_high_reading_reports_a_warning_in_millivolts);
+    RUN_TEST(test_a_low_reading_reports_both_values_in_millivolts);
     return UNITY_END();
 }

@@ -5,8 +5,8 @@
       "src/proms/eprom_params.cpp"
     ],
     "blob_shas": {
-      "include/eprom_params.h": "f7fcb97a152d09d7392f0adb9a0b61239a9b6f55",
-      "src/proms/eprom_params.cpp": "b1e7188660ca0c3435ce871e4898b3697fd16057"
+      "include/eprom_params.h": "660b85ff486aab2b5e66347850bf372a8a3a9a5c",
+      "src/proms/eprom_params.cpp": "c7d1be9b264bff8bead966fb00211256d61a7ace"
     },
     "recorded_at_head": "3c165d5c32e068c254f33603cf804b4b64fe66b1",
     "recorded_by": "Phase 140 Plan 05",
@@ -29,14 +29,16 @@
         "row": "0x07",
         "column": "overprogram_factor",
         "statement": "PROJECT.md's throughput table implies 3 for 0x07, but the shipped value is 0; the 22 Intel-family 1ms parts on this row (Intel 2764 / 2764A / 27128 / 27128A / 27512, TI TMS2764, NEC UPD2764, ST M2764A and the rest of the 1000 microsecond sub-population) genuinely want a 3xN margin pulse, which the 0x07 datasheets cited for the shipped value of 0 do not apply.",
-        "phase_146_handoff": "Serving the Intel-family 1ms sub-population correctly requires splitting 0x07 into a second row, which TABLE-05's no-second-dispatch-key constraint forbids in this milestone. Recorded as a Phase 146 follow-up candidate, not silently dropped."
+        "phase_146_handoff": "Serving the Intel-family 1ms sub-population correctly requires splitting 0x07 into a second row, which TABLE-05's no-second-dispatch-key constraint forbids in this milestone. Recorded as a Phase 146 follow-up candidate, not silently dropped.",
+        "removed": "The overprogram feature and the overprogram_factor and overprogram_cap_us columns were removed: no row applied an overprogram pulse. Serving the parts named here needs that feature back, not only a nonzero factor."
       },
       {
         "id": "D-06",
         "row": "0x08",
         "column": "overprogram_factor",
         "statement": "PROJECT.md's own throughput table gives 0x08 a 3 x N x pulse overpulse, contradicting PROJECT.md's own prose ('not for Quick-Pulse / Flashrite / PRESTO, so it is gated per row') -- the two halves of the same document disagree with each other.",
-        "phase_146_handoff": "D-06 resolves this in favour of the prose and the primary datasheets (three independent vendors specify no overprogram pulse): 0x08 overprogram_factor = 0 ships. Phase 146 / CLOSE-04 reconciles PROJECT.md's throughput table text against this finding."
+        "phase_146_handoff": "D-06 resolves this in favour of the prose and the primary datasheets (three independent vendors specify no overprogram pulse): 0x08 overprogram_factor = 0 ships. Phase 146 / CLOSE-04 reconciles PROJECT.md's throughput table text against this finding.",
+        "removed": "The overprogram feature and the overprogram_factor and overprogram_cap_us columns were removed: no row applied an overprogram pulse. Serving the parts named here needs that feature back, not only a nonzero factor."
       },
       {
         "id": "F-140-07",
@@ -49,14 +51,6 @@
     "sweep_note": "The src/proms/eprom_params.cpp blob SHA below was re-derived by the provenance comment sweep (SWEEP-01, SWEEP-06) using `git hash-object` on the swept working-tree file, per this gate's own \"never hand-edit the SHA\" instruction. The sweep changed comment text ONLY: no cell value, no recorded site, no count, no table content and no other blob_shas entry changed. Verified for this record: the comment-stripped text of src/proms/eprom_params.cpp is byte-identical before and after the sweep."
   },
   "cells": [
-    {
-      "row": "0x07",
-      "column": "overprogram_cap_us",
-      "value": 75000,
-      "basis": "reasoned",
-      "reasoned_from": "no datasheet basis — reasoned from the Intel Intelligent worst case at this row's largest database pulse (1000 microseconds) times the datasheet max-pulse count (25): 3 x 25 x 1000us = 75000us. Also the exact figure publicly stated on gh#15's correction ('the 32-bit-safe helper is needed for the 75 ms overprogram pulse').",
-      "notes": "Explicitly inert on this row because overprogram_factor is 0; the clamp min(3 x overprogram_factor x pulse, cap) evaluates to 0 regardless of this cap's value while overprogram_factor stays 0."
-    },
     {
       "row": "0x07",
       "column": "energy_cap_us",
@@ -78,20 +72,6 @@
       "quote": "Flowchart decision box literal text: 'X = 25?' (Yes -> Device Failed; No -> Verify One Byte). Corroborated by ST M27C512, Rev 3, May 2007, Fig. 4 flowchart literal text '++n = 25' (also the FAIL branch).",
       "scope": "representative of this row; not asserted true of all 170 chips carrying this protocol_id.",
       "notes": "Mandatory note: Microchip 27C512A, DS11173G, 2004, §1.6 specifies 10 (verbatim: 'Up to 10 100-microsecond pulses are applied until the byte is verified'). 25 is the maximum across the row's cited datasheets, chosen deliberately so no compliant part is refused by a backstop set too low."
-    },
-    {
-      "row": "0x07",
-      "column": "overprogram_factor",
-      "value": 0,
-      "basis": "datasheet",
-      "family": "Intel Intelligent Programming / Winbond SMART Programming Algorithm 2 / ST PRESTO IIB (28-pin 27C family)",
-      "part": "Winbond W27C512 (row's representative part); corroborated by ST M27C512 and Microchip 27C512A",
-      "document": "W27C512 Data Sheet; ST M27C512 datasheet; Microchip 27C512A DS11173G",
-      "revision": "Winbond Rev A4 (Nov 1999); ST Rev 3 (May 2007); Microchip DS11173G (2004)",
-      "section": "Winbond 'SMART PROGRAMMING ALGORITHM 2' flowchart (no overprogram step present); ST §2.6 'PRESTO IIB programming algorithm'; Microchip §1.6 'Programming Mode'",
-      "quote": "ST M27C512 Rev 3 §2.6, verbatim: 'a sequence of 100us program pulses are applied to each byte until a correct verify occurs. No overprogram pulses are applied since the verify in MARGIN MODE provides the necessary margin.' Winbond W27C512's own two-algorithm flowchart and Microchip 27C512A's Fig. 1-3 flowchart both independently omit any overprogram step -- absence in the diagram, not a textual disclaimer, but the same conclusion from two more vendors.",
-      "scope": "representative of this row; not asserted true of all 170 chips carrying this protocol_id.",
-      "notes": "Operator decision (2026-08-09): 0 is locked and shipped. Basis: all three 0x07 datasheets read apply no overprogram, covering 113 of the row's 170 chips; also behaviour-preserving, since src/proms/eprom.cpp:161-178 is retry escalation of pulse_delay, not an Intel 3N margin pulse -- so 3 would be an unvalidated behaviour change to all 170 chips on this row. NAMED DIVERGENCE (F-140-05, see meta.named_divergences): PROJECT.md's throughput table implies 3, and the 22 Intel-family 1ms parts on this row (Intel 2764 / 2764A / 27128 / 27128A / 27512, TI TMS2764, NEC UPD2764, ST M2764A and the rest of the 1000 microsecond sub-population) genuinely want 3 x N. Serving them correctly requires splitting 0x07 into a second row, which TABLE-05's no-second-dispatch-key constraint forbids -- recorded as a Phase 146 follow-up candidate, not silently dropped."
     },
     {
       "row": "0x07",
@@ -123,14 +103,6 @@
     },
     {
       "row": "0x08",
-      "column": "overprogram_cap_us",
-      "value": 75000,
-      "basis": "reasoned",
-      "reasoned_from": "no datasheet basis — reasoned from a uniform ceiling with 0x07 and 0x0B (75000us = 3 x 25 x 1000us, the Intel Intelligent worst case). Explicitly inert on this row because overprogram_factor is 0.",
-      "notes": "D-08's phrase 'both overprogramming rows' presupposed two such rows in this milestone; research found none -- 0x07 and 0x08 both resolved overprogram_factor to 0."
-    },
-    {
-      "row": "0x08",
       "column": "energy_cap_us",
       "value": 0,
       "basis": "reasoned",
@@ -149,20 +121,6 @@
       "quote": "Winbond W27C020 flowchart literal text: 'X = 25?' (else Fail Device). ST M27C1001 Fig. 5 literal text: '++n = 25' -> FAIL.",
       "scope": "representative of this row; not asserted true of all 127 chips carrying this protocol_id.",
       "notes": "Mandatory note: the representative part itself, AMD Am27C020, states only 'until it verifies or the maximum is reached' -- without stating a number anywhere in its Flashrite description. The 25 figure is taken from the two corroborating 32-pin-family datasheets (Winbond W27C020, ST M27C1001), not from the representative part's own text."
-    },
-    {
-      "row": "0x08",
-      "column": "overprogram_factor",
-      "value": 0,
-      "basis": "datasheet",
-      "family": "Intel Quick-Pulse / AMD Flashrite / ST PRESTO II (32-pin 27C family)",
-      "part": "AMD Am27C020 (row's representative part); corroborated by ST M27C1001 and Winbond W27C020",
-      "document": "AMD Am27C020 datasheet (FINAL); ST M27C1001 datasheet; Winbond W27C020 (Preliminary)",
-      "revision": "AMD (FINAL); ST (27C010-class); Winbond (Preliminary)",
-      "section": "AMD 'Programming the Am27C020' (Flashrite description, no overprogram step); ST §2.6 'Presto II programming algorithm'; Winbond 'SMART PROGRAMMING ALGORITHM' flowchart",
-      "quote": "ST M27C1001 §2.6, verbatim: '...applying a sequence of 100us program pulses to each byte until a correct verify occurs... No overprogram pulse is applied since the verify in Margin mode provides necessary margin to each programmed cell.' AMD Am27C020's Flashrite description and Winbond W27C020's flowchart both independently contain no overprogram step.",
-      "scope": "representative of this row; not asserted true of all 127 chips carrying this protocol_id.",
-      "notes": "D-06 RESOLVED: three independent vendors, including the 27C010-class part D-06 names by name, agree on no overprogram pulse. NAMED CONTRADICTION (D-06, see meta.named_divergences): this agrees with PROJECT.md's prose ('not for Quick-Pulse / Flashrite / PRESTO, so it is gated per row') and CONTRADICTS PROJECT.md's own throughput table, which gives 0x08 a 3 x N x pulse overpulse. The contradiction is named here rather than silently resolved; the datasheets win per D-06's tie-break rule."
     },
     {
       "row": "0x08",
@@ -194,13 +152,6 @@
     },
     {
       "row": "0x0B",
-      "column": "overprogram_cap_us",
-      "value": 75000,
-      "basis": "reasoned",
-      "reasoned_from": "no datasheet basis — reasoned from a uniform ceiling with 0x07 and 0x08 (75000us). Explicitly inert on this row because overprogram_factor is 0."
-    },
-    {
-      "row": "0x0B",
       "column": "energy_cap_us",
       "value": 50000,
       "basis": "datasheet",
@@ -220,19 +171,6 @@
       "basis": "reasoned",
       "reasoned_from": "no datasheet basis — reasoned from a termination bound. F-140-06: the floor is 250 -- reaching the 50ms energy cap needs 250 pulses at 200us (5 of 32 chips), 100 at 500us (21 chips), and 50 at 1000us (6 chips), so a backstop below 250 pre-empts the energy cap on the 200us sub-population and silently under-programs 5 chips. 255 is the smallest uint8_t-representable value clearing the floor.",
       "notes": "This is the one max_pulses cell on the table with no datasheet basis at all -- TI TMS 2516 specifies a single 50ms pulse, not a pulse count, so there is nothing in the primary source to cite for a count."
-    },
-    {
-      "row": "0x0B",
-      "column": "overprogram_factor",
-      "value": 0,
-      "basis": "datasheet",
-      "family": "classic 2716 / 2732 50ms single-pulse programming",
-      "part": "TI TMS 2516-25/35/45 JL",
-      "document": "TI TMS 2516 datasheet",
-      "revision": "December 1979, revised May 1982",
-      "section": "'start programming' (p.138) and AC recommended timing requirements for programming (p.141)",
-      "quote": "TI TMS 2516, verbatim (p.138): 'a 50-millisecond TTL high-level pulse should be applied to the PGM pin at each address location to be programmed. Maximum pulse width is 55 milliseconds. Locations can be programmed in any order.' No overprogram step appears anywhere in the document -- a single pulse per location is the entire algorithm.",
-      "scope": "representative of this row; not asserted true of all 32 chips carrying this protocol_id."
     },
     {
       "row": "0x0B",

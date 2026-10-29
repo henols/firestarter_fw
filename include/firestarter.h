@@ -30,8 +30,8 @@
 #define DEV_TOOLS 0
 #endif
 
-/* CMD_FRAME_MAX: largest legitimate JSON command frame payload (bytes).
- * Worst-case JSON command is ~422 B; 512 B gives headroom.
+/* CMD_FRAME_MAX: largest frame payload the transport accepts (bytes).
+ * A binary command frame is at most CF_HEADER_SIZE + CF_MEMORY_SIZE (65 B).
  * Equals DATA_BUFFER_SIZE — the decoder's internal overflow cap.
  * Mirrors CMD_FRAME_MAX in the host's constants.py. */
 #define CMD_FRAME_MAX DATA_BUFFER_SIZE
@@ -97,14 +97,14 @@
 // part. Admitting a command here is a hardware-safety decision.
 //
 // It lists the memory commands by name instead of testing an ordinal range.
-// firestarter.cpp (the admission test in parse_json) and rurp_pinmap_guard.h
+// firestarter.cpp (the admission test in parse_command) and rurp_pinmap_guard.h
 // use this predicate and do not list the set again.
 //
 // Hard constraints:
 //  - No preprocessor conditional in this function's body. All seven named
 //    macros are unconditionally defined.
 //  - static inline, in this header. [env:native]'s build_src_filter compiles
-//    only src/proms/, rurp_serial_utils.cpp and json_parser.c, so a
+//    only src/proms/, rurp_serial_utils.cpp and command_decoder.c, so a
 //    definition elsewhere would not link into the native test binary.
 //  - It must not name CMD_DEV_ADDRESS or CMD_DEV_REGISTER: they do not exist
 //    in a build without DEV_TOOLS.
@@ -150,6 +150,12 @@ static inline bool is_memory_cmd(uint8_t cmd) {
 // MSG_WARN_SDP_UNLOCK_SKIPPED rather than a silent no-op.
 #define FLAG_SKIP_SDP_UNLOCK 0x100
 
+// Skips the final full-block verify pass of a VERIFY_PER_PULSE_PLUS_FINAL
+// EPROM row (0x07/0x08). The host sets it for `write --verify`, which reads
+// the whole region back itself. The per-pulse verify still runs: the
+// programming algorithm needs it.
+#define FLAG_SKIP_FINAL_VERIFY 0x200
+
 #define is_flag_set(flag) \
     ((handle->ctrl_flags & flag) == flag)
 
@@ -178,11 +184,12 @@ typedef struct firestarter_handle {
     uint32_t pulse_delay;
     uint32_t read_settling_us;   /* address-settling delay before /CE assert (µs; 0 = no settling delay) */
     uint32_t read_strobe_us;     /* /CE read-strobe pulse width (µs; 0 = use default 3µs) */
-    uint16_t ctrl_flags;         /* largest flag is 0x100 (FLAG_SKIP_SDP_UNLOCK). A flag above
+    uint16_t ctrl_flags;         /* largest flag is 0x200 (FLAG_SKIP_FINAL_VERIFY). A flag above
                                    * 0xFFFF needs this field widened. */
     uint16_t chip_id;
     uint16_t page_size;          /* per-chip page-write size delivered by the host over the wire;
-                                   * 0 = absent. Reset per command in json_parse. */
+                                   * 0 = absent. Written by every memory command frame,
+                                   * exactly like chip_id above. */
     uint32_t region_end;         /* absolute, EXCLUSIVE end address of the operation's region,
                                    * delivered by the host over the wire; 0 = absent. Unlike
                                    * page_size above, absent means the WHOLE DEVICE -- the
@@ -190,7 +197,8 @@ typedef struct firestarter_handle {
                                    * write, so refusing on absence is the safe direction, while
                                    * this field guards a relaxation of an existing check, so
                                    * falling back to the stricter whole-device behaviour is the
-                                   * safe direction instead. Reset per command in json_parse. */
+                                   * safe direction instead. Written by every memory command frame,
+                                   * exactly like page_size above. */
     char data_buffer[DATA_BUFFER_SIZE];
     uint32_t data_size;
     bus_config_t bus_config;

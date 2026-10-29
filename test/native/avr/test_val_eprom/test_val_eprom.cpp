@@ -51,6 +51,7 @@ extern "C" rurp_register_t recorded_data(int i);
  * derivation and for why this invariant lives in THIS suite. */
 extern "C" void val_readback_reset();
 extern "C" void val_readback_seed(uint8_t idx, uint8_t target, uint8_t converge_after);
+extern "C" uint8_t val_readback_read_count(uint8_t idx);
 extern "C" int  val_recording_saturated();
 
 /* 201-01 Task 1 -- address-keyed shadow model. See host_stubs.cpp for the
@@ -398,6 +399,102 @@ void test_writeperf_route_assert_count_tracks_passes_not_pulses(void) {
         "route asserts must never scale with the programmed-byte count");
 }
 
+/* FLAG_SKIP_FINAL_VERIFY drops exactly the final full-block pass on 0x07
+ * (VERIFY_PER_PULSE_PLUS_FINAL): every byte is read once less, and the
+ * per-pulse verify still runs, so the block still converges. */
+static uint8_t reads_of_byte0_after_write(uint16_t extra_flags) {
+    const uint8_t block[8] = { 0x3C, 0x55, 0xAA, 0x0F, 0x11, 0x22, 0x44, 0x88 };
+    firestarter_handle_t h = make_write_handle();
+    h.ctrl_flags |= extra_flags;
+    val_readback_reset();
+    for (uint8_t i = 0; i < 8; i++) {
+        val_readback_seed(i, block[i], 1);
+    }
+    drive_val_write(&h, block, 8);
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "the block must converge with and without the final pass");
+    return val_readback_read_count(0);
+}
+
+void test_skip_final_verify_drops_only_the_final_pass(void) {
+    const uint8_t with_final = reads_of_byte0_after_write(0);
+    const uint8_t without_final = reads_of_byte0_after_write(FLAG_SKIP_FINAL_VERIFY);
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(2, without_final,
+        "non-vacuity: the per-pulse loop must still read the byte (skip-check and verify)");
+    TEST_ASSERT_EQUAL_MESSAGE(with_final - 1, without_final,
+        "FLAG_SKIP_FINAL_VERIFY must remove exactly one read per byte: the final pass");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * PROGRAM GROUPS. The native envs set EPROM_PROGRAM_GROUP to 8, so a 16-byte
+ * block is two groups. Each group runs its own passes, so the route-assert
+ * count is the SUM of the per-group pass counts, and every pulse goes to the
+ * group's own addresses.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* LSB values written inside a pulse pass. mem_util_set_address writes LSB,
+ * MSB, then CONTROL_REGISTER, and that CONTROL_REGISTER write does not carry
+ * the route bit here (the stub register read-back is 0). So a pulse pass is
+ * bounded by STANDALONE CONTROL_REGISTER writes, the ones not directly after
+ * an MSB write: the route switched up, then down. The fixture's bus config
+ * maps address bits 0-7 one to one, so the LSB is the address. */
+static int pulsed_addresses(uint8_t* out, int max) {
+    const uint8_t route = (uint8_t)(CTRL_VPE_ENABLE | CTRL_VPP_P1_ENABLE);
+    int n = 0;
+    bool up = false;
+    for (int i = 0; i < bus_recording_count(); i++) {
+        if (recorded_reg(i) == CONTROL_REGISTER) {
+            bool standalone = i == 0 || recorded_reg(i - 1) != MOST_SIGNIFICANT_BYTE;
+            if (standalone) {
+                up = (recorded_data(i) & route) != 0;
+            }
+        } else if (up && recorded_reg(i) == LEAST_SIGNIFICANT_BYTE && n < max) {
+            out[n++] = recorded_data(i);
+        }
+    }
+    return n;
+}
+
+void test_write_programs_a_block_one_group_at_a_time(void) {
+    TEST_ASSERT_EQUAL_MESSAGE(8, EPROM_PROGRAM_GROUP,
+        "fixture assumes the native EPROM_PROGRAM_GROUP of 8 (platformio.ini native_base)");
+    const uint8_t block[16] = { 0x3C, 0x55, 0xAA, 0x0F, 0x11, 0x22, 0x44, 0x88,
+                                0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 };
+    firestarter_handle_t h = make_write_handle();
+    val_readback_reset();
+    for (uint8_t i = 0; i < 16; i++) {
+        val_readback_seed(i, block[i], (uint8_t)(i == 11 ? 2 : 1));
+    }
+    configure_memory(&h);
+    clear_bus_recording();
+    h.address = 0;
+    h.data_size = 16;
+    for (uint8_t i = 0; i < 16; i++) {
+        h.data_buffer[i] = (char)block[i];
+    }
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_FALSE_MESSAGE(val_recording_saturated(),
+        "recorder saturated -- every count below would be silently wrong; shrink the block");
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "both groups must converge -- a group that reads data_buffer at the wrong offset never does");
+
+    /* Group 0 needs one pass, group 1 two (byte 11). One group over the whole
+     * block would need only two passes in total. */
+    TEST_ASSERT_EQUAL_MESSAGE(3, route_assert_count(),
+        "route asserts must be the sum of the per-group passes: 1 (group 0) + 2 (group 1)");
+
+    const uint8_t expected[17] = { 0, 1, 2, 3, 4, 5, 6, 7,
+                                   8, 9, 10, 11, 12, 13, 14, 15,
+                                   11 };
+    uint8_t pulsed[32];
+    int n = pulsed_addresses(pulsed, 32);
+    TEST_ASSERT_EQUAL_MESSAGE(17, n,
+        "16 first pulses and one second pulse for byte 11");
+    TEST_ASSERT_EQUAL_UINT8_ARRAY_MESSAGE(expected, pulsed, 17,
+        "group 0's pass, then group 1's two passes, each at the group's own addresses");
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  * 201-01 Task 1 -- positive control for the address-keyed shadow model.
  * ═══════════════════════════════════════════════════════════════════════ */
@@ -669,6 +766,8 @@ int main(int argc, char** argv) {
      * pinned native envs. See the block comment above these two cases. */
     RUN_TEST(test_writeperf_route_is_asserted_once_per_pass_not_once_per_byte);
     RUN_TEST(test_writeperf_route_assert_count_tracks_passes_not_pulses);
+    RUN_TEST(test_skip_final_verify_drops_only_the_final_pass);
+    RUN_TEST(test_write_programs_a_block_one_group_at_a_time);
 
     /* 201-01 Task 1 control: the address-keyed shadow model is not aliased
      * modulo 16 like the legacy 16-slot model above. */

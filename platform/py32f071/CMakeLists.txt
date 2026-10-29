@@ -39,7 +39,7 @@ set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/eprom_operations.cpp"
     "${REPOSITORY_ROOT}/src/hardware_operations.cpp"
     "${REPOSITORY_ROOT}/src/operation_utils.cpp"
-    "${REPOSITORY_ROOT}/src/json_parser.c"
+    "${REPOSITORY_ROOT}/src/command_decoder.c"
     "${REPOSITORY_ROOT}/src/boards/rurp_serial_utils.cpp"
     "${REPOSITORY_ROOT}/src/rurp_vpp.cpp"
     "${REPOSITORY_ROOT}/src/rurp_config_utils.cpp"
@@ -48,7 +48,6 @@ set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/proms/memory.cpp"
     "${REPOSITORY_ROOT}/src/proms/eprom.cpp"
     "${REPOSITORY_ROOT}/src/proms/eprom_params.cpp"
-    "${REPOSITORY_ROOT}/src/proms/eprom_budget.cpp"
     "${REPOSITORY_ROOT}/src/proms/eeprom_28c.cpp"
     "${REPOSITORY_ROOT}/src/proms/flash_nor_unlock.cpp"
     "${REPOSITORY_ROOT}/src/proms/flash_5v_page.cpp"
@@ -56,7 +55,6 @@ set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/proms/flash_utils.cpp"
     "${REPOSITORY_ROOT}/src/proms/sram.cpp"
     "${REPOSITORY_ROOT}/src/proms/not_implemented.cpp"
-    "${REPOSITORY_ROOT}/lib/jsmn/src/jsmn.c"
 )
 
 set(PY32_PLATFORM_SOURCES
@@ -100,7 +98,6 @@ target_include_directories(
     PRIVATE
         "${CMAKE_CURRENT_LIST_DIR}/include"
         "${REPOSITORY_ROOT}/include"
-        "${REPOSITORY_ROOT}/lib/jsmn/src"
         "${PY32_SDK_ROOT}/Drivers/PY32F071_HAL_Driver/Inc"
         "${PY32_SDK_ROOT}/Drivers/PY32F071_HAL_Driver/Inc/Legacy"
         "${PY32_SDK_ROOT}/Drivers/CMSIS/Device/PY32F071/Include"

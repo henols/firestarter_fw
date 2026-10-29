@@ -4,9 +4,9 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Every case builds a fresh, zero-initialised handle and calls
- * configure_memory() directly, without json_parse(), so no state from one
- * case reaches the next.
+ * Every case builds a FRESH, zero-initialised handle, because these cases
+ * call configure_memory directly with no command frame to set the fields,
+ * so a shared handle would leak state between cases.
  */
 
 #include <Arduino.h>
@@ -40,8 +40,9 @@ void setUp(void) {
 
 void tearDown(void) {}
 
-/* Fresh handle per case, so no state from one case reaches the next.
- * FLAG_SKIP_ERASE keeps a CMD_WRITE dispatch from
+/* Fresh handle per case -- no command frame writes pulse_delay, protocol,
+ * mem_size, vpp_mv or pins here, so a shared handle would leak state
+ * between cases. FLAG_SKIP_ERASE keeps a CMD_WRITE dispatch from
  * wanting an erase path this suite never drives (configure_eprom only sets
  * up function pointers and the pulse_delay fallback for CMD_WRITE; neither
  * pointer is ever invoked here; write-init itself performs no blank check
@@ -131,34 +132,29 @@ void test_unknown_protocol_returns_null(void) {
     TEST_ASSERT_NULL_MESSAGE(eprom_params_for(0), "protocol 0 is unrecognised and must return NULL, never a default row");
 }
 
-static void assert_row_matches(uint32_t protocol, uint32_t expected_overprogram_cap_us,
-                                uint32_t expected_energy_cap_us, uint8_t expected_max_pulses,
-                                uint8_t expected_overprogram_factor, uint8_t expected_verify_mode,
+static void assert_row_matches(uint32_t protocol, uint32_t expected_energy_cap_us,
+                                uint8_t expected_max_pulses, uint8_t expected_verify_mode,
                                 uint8_t expected_vpp_path, const char* ctx) {
     const eprom_params_t* row = eprom_params_for(protocol);
     TEST_ASSERT_NOT_NULL_MESSAGE(row, ctx);
 
-    uint32_t overprogram_cap_us = pgm_read_dword(&row->overprogram_cap_us);
     uint32_t energy_cap_us = pgm_read_dword(&row->energy_cap_us);
     uint8_t max_pulses = pgm_read_byte(&row->max_pulses);
-    uint8_t overprogram_factor = pgm_read_byte(&row->overprogram_factor);
     uint8_t verify_mode = pgm_read_byte(&row->verify_mode);
     uint8_t vpp_path = pgm_read_byte(&row->vpp_path);
 
-    TEST_ASSERT_EQUAL_MESSAGE(expected_overprogram_cap_us, overprogram_cap_us, ctx);
     TEST_ASSERT_EQUAL_MESSAGE(expected_energy_cap_us, energy_cap_us, ctx);
     TEST_ASSERT_EQUAL_MESSAGE(expected_max_pulses, max_pulses, ctx);
-    TEST_ASSERT_EQUAL_MESSAGE(expected_overprogram_factor, overprogram_factor, ctx);
     TEST_ASSERT_EQUAL_MESSAGE(expected_verify_mode, verify_mode, ctx);
     TEST_ASSERT_EQUAL_MESSAGE(expected_vpp_path, vpp_path, ctx);
 }
 
 void test_row_values_match_the_frozen_table(void) {
-    assert_row_matches(0x07, 75000UL, 0UL, 25, 0, VERIFY_PER_PULSE_PLUS_FINAL, VPP_PATH_DROP_RESISTOR,
+    assert_row_matches(0x07, 0UL, 25, VERIFY_PER_PULSE_PLUS_FINAL, VPP_PATH_DROP_RESISTOR,
                         "0x07 row (plan 140-01 locked values)");
-    assert_row_matches(0x08, 75000UL, 0UL, 25, 0, VERIFY_PER_PULSE_PLUS_FINAL, VPP_PATH_DROP_RESISTOR,
+    assert_row_matches(0x08, 0UL, 25, VERIFY_PER_PULSE_PLUS_FINAL, VPP_PATH_DROP_RESISTOR,
                         "0x08 row (plan 140-01 locked values)");
-    assert_row_matches(0x0B, 75000UL, 50000UL, 255, 0, VERIFY_PER_PULSE, VPP_PATH_DIRECT_VPE,
+    assert_row_matches(0x0B, 50000UL, 255, VERIFY_PER_PULSE, VPP_PATH_DIRECT_VPE,
                         "0x0B row (plan 140-01 locked values)");
 }
 

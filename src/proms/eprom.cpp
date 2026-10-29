@@ -11,6 +11,7 @@
 
 #include "firestarter.h"
 #include "eprom_params.h"
+#include "eprom_rows.h"
 #include "logging_id.h"
 #include "memory_utils.h"
 #include "rurp_shield.h"
@@ -60,12 +61,14 @@ void configure_eprom(firestarter_handle_t* handle) {
     ep_set_control_register = handle->firestarter_set_control_register;
     handle->firestarter_set_control_register = eprom_internal_set_control_register;
 
-    // Set default pulse_delay from protocol when Python doesn't supply one
+    // Default pulse width when the host sends none. eprom_rows.h is generated
+    // from the meta repo's eprom_rows.toml; the host's write timeout uses the
+    // same values.
     if (handle->pulse_delay == 0) {
         switch (handle->protocol) {
-            case PROTO_EPROM_32PIN: handle->pulse_delay = 100;  break;  // 100µs
-            case PROTO_EPROM_24PIN: handle->pulse_delay = 500;  break;  // 500µs
-            default:                handle->pulse_delay = 1000; break;  // 1ms
+            case PROTO_EPROM_32PIN: handle->pulse_delay = EPROM_ROW_08_FALLBACK_PULSE_US; break;
+            case PROTO_EPROM_24PIN: handle->pulse_delay = EPROM_ROW_0B_FALLBACK_PULSE_US; break;
+            default:                handle->pulse_delay = EPROM_ROW_07_FALLBACK_PULSE_US; break;
         }
     }
 
@@ -150,20 +153,6 @@ void eprom_write_init(firestarter_handle_t* handle) {
 }
 
 /*
- * See include/eprom.h for the rationale. factor == 0 (every shipped row) always
- * yields 0, so the per-byte loop's overprogram call is inert on every live
- * protocol; the clamp below yields 0 for cap_us == 0 without a special case,
- * since a positive product always compares greater than a zero cap.
- */
-uint32_t __attribute__((noinline)) eprom_overprogram_us(uint8_t pulse_count, uint32_t pulse_us, uint8_t factor, uint32_t cap_us) {
-    if (factor == 0) {
-        return 0;
-    }
-    uint32_t product = (uint32_t)factor * pulse_count * pulse_us;
-    return product > cap_us ? cap_us : product;
-}
-
-/*
  * The single place a per-byte program-budget failure is reported: disables the
  * VPP route, packs a 4-byte big-endian {addr_hi, addr_mid, addr_lo,
  * pulse_count} payload matching MSG_ERR_MAX_PULSES / MSG_ERR_ENERGY_CAP, emits
@@ -179,34 +168,6 @@ static void eprom_internal_report_budget_failure(firestarter_handle_t* handle, u
     LOG_ERROR_ID_BYTES(msg_id, _b, 4);
     handle->response_code = RESPONSE_CODE_ERROR;
 }
-
-/*
- * ONE program pulse, with the program-voltage route asserted for its duration
- * and released before the caller's verify read. include/eprom.h has the setup
- * and hold values.
- *
- * Name CTRL_VPE_ENABLE here, never CTRL_VPP_P1_ENABLE:
- * eprom_internal_set_control_register substitutes P1 for VPE when
- * using_p1_as_vpp(handle) holds, and naming P1 directly breaks that
- * substitution on the two protocols that need it.
- *
- * The route bit survives the address latch memory_set_data performs between
- * the assert and the CE strobe -- mem_util_calculate_top_address_register
- * preserves both route bits on every revision.
- *
- * Guarded by EPROM_OVERPROGRAM_SUPPORTED because the overprogram site is its
- * only caller; unguarded it is an unreferenced static on leonardo, and the
- * AVR warning policy is zero.
- */
-#if EPROM_OVERPROGRAM_SUPPORTED
-static void eprom_internal_program_pulse(firestarter_handle_t* handle, uint32_t addr, uint8_t expected) {
-    handle->firestarter_set_control_register(handle, CTRL_VPE_ENABLE, 1);
-    delayMicroseconds(EPROM_VPP_SETUP_US);
-    handle->firestarter_set_data(handle, addr, expected);
-    delayMicroseconds(EPROM_VPP_HOLD_US);
-    handle->firestarter_set_control_register(handle, CTRL_VPE_ENABLE, 0);
-}
-#endif
 
 /*
  * Resolves which high-voltage route to assert for the current handle. Called
@@ -271,12 +232,6 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
 
     uint32_t energy_cap_us      = pgm_read_dword(&row->energy_cap_us);
     uint8_t  max_pulses         = pgm_read_byte(&row->max_pulses);
-#if EPROM_OVERPROGRAM_SUPPORTED
-    // Read only by the overprogram site below, so guarded with it: unused
-    // locals are -Wunused-variable and the AVR warning policy is zero.
-    uint32_t overprogram_cap_us = pgm_read_dword(&row->overprogram_cap_us);
-    uint8_t  overprogram_factor = pgm_read_byte(&row->overprogram_factor);
-#endif
     uint8_t  verify_mode        = pgm_read_byte(&row->verify_mode);
     uint32_t org_delay = handle->pulse_delay;
     // Per-byte progress state is absent on UART-shared Uno targets.
@@ -307,150 +262,144 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
      *     after the converged-early break, so a byte converging on its last
      *     permitted pulse still succeeds.
      *   - `pending` is deliberately NOT cleared between passes, so the scan can
-     *     distinguish "was flagged, now matches" (converged this pass) from
-     *     "never flagged" (matched all along) -- the state overprogram needs.
+     *     distinguish "was flagged, now matches" (converged this pass, cleared
+     *     so the next pass skips it) from "never flagged" (matched all along).
      *
      * The route is held up for the whole pulse pass, so every strobe after the
      * first sees a settled rail. OE/VPP still comes fully down before every
      * verify read, which the Program-Verify mode requires.
      *
-     * `pending` is a stack bitmask of DATA_BUFFER_SIZE/8 bytes. No static RAM.
+     * GROUPS. The loop runs over one EPROM_PROGRAM_GROUP of the block at a time,
+     * each group with its own passes, pulse count and energy total. Every count
+     * above is per byte, so grouping changes none of them; it adds one route
+     * settle per pass for each group after the first. `pending` is a stack
+     * bitmask of EPROM_PROGRAM_GROUP/8 bytes, so the stack cost does not grow
+     * with DATA_BUFFER_SIZE. No static RAM.
      */
+    static_assert(EPROM_PROGRAM_GROUP > 0 && EPROM_PROGRAM_GROUP % 8 == 0,
+                  "EPROM_PROGRAM_GROUP must be a positive multiple of 8");
     const uint16_t block_len = (uint16_t)handle->data_size;
-    uint8_t pending[DATA_BUFFER_SIZE / 8];
-    memset(pending, 0, sizeof(pending));
-    uint8_t pulses = 0;
-    uint32_t accumulated = 0;
+    uint8_t pending[EPROM_PROGRAM_GROUP / 8];
+    for (uint16_t base = 0; base < block_len; base += EPROM_PROGRAM_GROUP) {
+        const uint16_t group_len = (uint16_t)(block_len - base) < EPROM_PROGRAM_GROUP
+                                       ? (uint16_t)(block_len - base)
+                                       : (uint16_t)EPROM_PROGRAM_GROUP;
+        memset(pending, 0, sizeof(pending));
+        uint8_t pulses = 0;
+        uint32_t accumulated = 0;
 
-    for (;;) {
-        uint16_t remaining = 0;
-        uint32_t first_bad = handle->address;
-        for (uint16_t i = 0; i < block_len; i++) {
-            const uint8_t mask = (uint8_t)(1u << (i & 7));
-            const bool was_pending = (pending[i >> 3] & mask) != 0;
-            // After the first pass (pulses != 0), re-read ONLY the bytes the previous
-            // pulse pass actually strobed. This is what keeps the per-byte
-            // read count identical to the per-byte loop this replaces
-            // (1 skip-check read + one verify read per pulse + the final
-            // pass): a converged or never-flagged byte is never read again.
-            if (pulses && !was_pending) {
-                continue;
-            }
-            uint8_t expected = (uint8_t)handle->data_buffer[i];
-
-        /*
-         * Intra-block write progress. Compiled in on leonardo and native ONLY.
-         *
-         * On uno/uno328pb the whole loop runs inside one programmer-mode window, and
-         * rurp_set_programmer_mode() tears the UART down for its duration. The Uno's
-         * rurp_log_id() override defers rather than emits while com_mode is false,
-         * into a 4-slot buffer; a 5th deferred frame is silently DROPPED. That
-         * dropped slot would be one a subsequent MSG_ERR_MAX_PULSES frame needs,
-         * turning a program FAILURE into a host transport timeout. Hence a
-         * COMPILE-time guard, not a runtime one -- this site has no handle->cmd it
-         * could test.
-         *
-         * Payload is (absolute chip address, op_end), where op_end is the
-         * operation's end -- equal to mem_size for a whole-device operation
-         * and to the region end for a bounded one. The second field denotes the
-         * operation's range end, not necessarily the device size.
-         *
-         * Placed BEFORE the skips below so the cadence is independent of how many
-         * bytes are skipped. The unsigned-difference form means a millis() rollover
-         * cannot stall it.
-         */
-#ifndef SERIAL_ON_IO
-        // Gated on `first_pass`: the scan pass restarts at i == 0 every pass, so
-        // emitting from a later pass would send a LOWER address than one already sent
-        // and the host's write bar would visibly rewind. The first pass walks the
-        // block in ascending order exactly once, which is the monotonicity the host
-        // relies on.
-        if (pulses == 0 &&
-            (uint32_t)(millis() - last_emit_ms) >= EPROM_PROGRESS_EMIT_INTERVAL_MS) {
-            last_emit_ms = millis();
-            LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, handle->address + i, op_end);
-        }
-#endif
-            // Skips, before any pulse. 0xFF checked first, without a
-            // read: an already-erased target never needs a pulse on a UV
-            // EPROM (erased state is all-ones; programming only clears bits).
-            if (expected == 0xFF) {
-                continue;
-            }
-            const uint32_t addr = handle->address + i;
-            if (handle->firestarter_get_data(handle, addr) == expected) {
-                if (was_pending) {
-                    // Converged on this pass, after exactly `pulses` pulses.
-                    pending[i >> 3] &= (uint8_t)~mask;
-#if EPROM_OVERPROGRAM_SUPPORTED
-                    // Unreachable from any current database row: no chip sets
-                    // overprogram_factor, so eprom_overprogram_us returns 0 and no
-                    // margin pulse is emitted.
-                    //
-                    // The org_delay save/restore is immediate, so no failure exit
-                    // between save and restore can leak a modified pulse_delay into
-                    // the handle. Route-wrapped per byte, because an overprogram pulse
-                    // is a program pulse and this site runs with the pass's route down.
-                    //
-                    // Compiled out on leonardo to save flash. See
-                    // EPROM_OVERPROGRAM_SUPPORTED in include/eprom.h.
-                    uint32_t op_us = eprom_overprogram_us(pulses, org_delay, overprogram_factor, overprogram_cap_us);
-                    if (op_us) {
-                        handle->pulse_delay = op_us;
-                        eprom_internal_program_pulse(handle, addr, expected);
-                        handle->pulse_delay = org_delay;
-                    }
-#endif
+        for (;;) {
+            uint16_t remaining = 0;
+            uint32_t first_bad = handle->address + base;
+            for (uint16_t i = 0; i < group_len; i++) {
+                const uint8_t mask = (uint8_t)(1u << (i & 7));
+                const bool was_pending = (pending[i >> 3] & mask) != 0;
+                // After the first pass (pulses != 0), re-read ONLY the bytes the previous
+                // pulse pass actually strobed. This is what keeps the per-byte
+                // read count identical to the per-byte loop this replaces
+                // (1 skip-check read + one verify read per pulse + the final
+                // pass): a converged or never-flagged byte is never read again.
+                if (pulses && !was_pending) {
+                    continue;
                 }
-                continue;
+                uint8_t expected = (uint8_t)handle->data_buffer[base + i];
+
+            /*
+             * Intra-block write progress. Compiled in on leonardo and native ONLY.
+             *
+             * On uno/uno328pb the whole loop runs inside one programmer-mode window, and
+             * rurp_set_programmer_mode() tears the UART down for its duration. The Uno's
+             * rurp_log_id() override defers rather than emits while com_mode is false,
+             * into a 4-slot buffer; a 5th deferred frame is silently DROPPED. That
+             * dropped slot would be one a subsequent MSG_ERR_MAX_PULSES frame needs,
+             * turning a program FAILURE into a host transport timeout. Hence a
+             * COMPILE-time guard, not a runtime one -- this site has no handle->cmd it
+             * could test.
+             *
+             * Payload is (absolute chip address, op_end), where op_end is the
+             * operation's end -- equal to mem_size for a whole-device operation
+             * and to the region end for a bounded one. The second field denotes the
+             * operation's range end, not necessarily the device size.
+             *
+             * Placed BEFORE the skips below so the cadence is independent of how many
+             * bytes are skipped. The unsigned-difference form means a millis() rollover
+             * cannot stall it.
+             */
+#ifndef SERIAL_ON_IO
+            // Gated on `first_pass`: the scan pass restarts at i == 0 every pass, so
+            // emitting from a later pass would send a LOWER address than one already sent
+            // and the host's write bar would visibly rewind. The first pass walks the
+            // block in ascending order exactly once, which is the monotonicity the host
+            // relies on.
+            if (pulses == 0 &&
+                (uint32_t)(millis() - last_emit_ms) >= EPROM_PROGRESS_EMIT_INTERVAL_MS) {
+                last_emit_ms = millis();
+                LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, handle->address + base + i, op_end);
             }
-            if (!was_pending) {
-                pending[i >> 3] |= mask;
+#endif
+                // Skips, before any pulse. 0xFF checked first, without a
+                // read: an already-erased target never needs a pulse on a UV
+                // EPROM (erased state is all-ones; programming only clears bits).
+                if (expected == 0xFF) {
+                    continue;
+                }
+                const uint32_t addr = handle->address + base + i;
+                if (handle->firestarter_get_data(handle, addr) == expected) {
+                    if (was_pending) {
+                        // Converged on this pass, after exactly `pulses` pulses.
+                        pending[i >> 3] &= (uint8_t)~mask;
+                    }
+                    continue;
+                }
+                if (!was_pending) {
+                    pending[i >> 3] |= mask;
+                }
+                if (!remaining) {
+                    first_bad = addr;
+                }
+                remaining++;
             }
             if (!remaining) {
-                first_bad = addr;
+                break;  // whole block at target
             }
-            remaining++;
-        }
-        if (!remaining) {
-            break;  // whole block at target
-        }
-        // Budgets are checked only AFTER a failed verify (the scan above),
-        // so a byte that converges on its last permitted pulse succeeds
-        // instead of failing at the boundary.
-        if (pulses >= max_pulses) {
-            eprom_internal_report_budget_failure(handle, first_bad, pulses, MSG_ERR_MAX_PULSES);
-            return;
-        }
-        // energy_cap_us == 0 means UNCAPPED (eprom_params.h) -- without
-        // this guard, 0x07/0x08 (both ship energy_cap_us == 0) would
-        // abort after their very first pulse.
-        if (energy_cap_us && accumulated >= energy_cap_us) {
-            eprom_internal_report_budget_failure(handle, first_bad, pulses, MSG_ERR_ENERGY_CAP);
-            return;
-        }
+            // Budgets are checked only AFTER a failed verify (the scan above),
+            // so a byte that converges on its last permitted pulse succeeds
+            // instead of failing at the boundary.
+            if (pulses >= max_pulses) {
+                eprom_internal_report_budget_failure(handle, first_bad, pulses, MSG_ERR_MAX_PULSES);
+                return;
+            }
+            // energy_cap_us == 0 means UNCAPPED (eprom_params.h) -- without
+            // this guard, 0x07/0x08 (both ship energy_cap_us == 0) would
+            // abort after their very first pulse.
+            if (energy_cap_us && accumulated >= energy_cap_us) {
+                eprom_internal_report_budget_failure(handle, first_bad, pulses, MSG_ERR_ENERGY_CAP);
+                return;
+            }
 
-        // PULSE pass. The route assert is required: without it the CE strobe fires
-        // with the 12 V rail generated but never switched onto the part, so no cell
-        // changes and every byte exhausts max_pulses. Granularity is one per pass.
-        handle->firestarter_set_control_register(handle, CTRL_VPE_ENABLE, 1);
-        delayMicroseconds(EPROM_VPP_SETUP_US);
-        for (uint16_t i = 0; i < block_len; i++) {
-            if (pending[i >> 3] & (uint8_t)(1u << (i & 7))) {
-                handle->firestarter_set_data(handle, handle->address + i,
-                                             (uint8_t)handle->data_buffer[i]);
+            // PULSE pass. The route assert is required: without it the CE strobe fires
+            // with the 12 V rail generated but never switched onto the part, so no cell
+            // changes and every byte exhausts max_pulses. Granularity is one per pass.
+            handle->firestarter_set_control_register(handle, CTRL_VPE_ENABLE, 1);
+            delayMicroseconds(EPROM_VPP_SETUP_US);
+            for (uint16_t i = 0; i < group_len; i++) {
+                if (pending[i >> 3] & (uint8_t)(1u << (i & 7))) {
+                    handle->firestarter_set_data(handle, handle->address + base + i,
+                                                 (uint8_t)handle->data_buffer[base + i]);
+                }
             }
+            delayMicroseconds(EPROM_VPP_HOLD_US);
+            handle->firestarter_set_control_register(handle, CTRL_VPE_ENABLE, 0);
+            pulses++;
+            accumulated += org_delay;  // pulse widths only
         }
-        delayMicroseconds(EPROM_VPP_HOLD_US);
-        handle->firestarter_set_control_register(handle, CTRL_VPE_ENABLE, 0);
-        pulses++;
-        accumulated += org_delay;  // pulse widths only
     }
 
     // verify_mode: 0x07/0x08 ship VERIFY_PER_PULSE_PLUS_FINAL -- one more
     // full-block read-and-compare pass through memory_verify_execute. 0x0B
-    // ships VERIFY_PER_PULSE -- no final pass.
-    if (verify_mode == VERIFY_PER_PULSE_PLUS_FINAL) {
+    // ships VERIFY_PER_PULSE -- no final pass. FLAG_SKIP_FINAL_VERIFY drops
+    // the pass when the host reads the region back itself (write --verify).
+    if (verify_mode == VERIFY_PER_PULSE_PLUS_FINAL && !is_flag_set(FLAG_SKIP_FINAL_VERIFY)) {
         memory_verify_execute(handle);
     }
 }
