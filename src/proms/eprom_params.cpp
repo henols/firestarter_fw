@@ -34,7 +34,9 @@ static const eprom_params_t EPROM_PARAMS[] PROGMEM = {
     /* 0x0B PROTO_EPROM_24PIN */ { 50000UL, 255, VERIFY_PER_PULSE,            VPP_PATH_DIRECT_VPE,    0 },
 };
 
-const eprom_params_t* eprom_params_for(uint32_t protocol) {
+/* noinline: it has several callers in eprom.cpp, and LTO inlining it into
+ * each one costs more flash than the call. */
+const eprom_params_t* __attribute__((noinline)) eprom_params_for(uint32_t protocol) {
     for (size_t i = 0; i < sizeof(EPROM_PARAM_KEYS) / sizeof(EPROM_PARAM_KEYS[0]); i++) {
         if ((uint32_t)pgm_read_byte(&EPROM_PARAM_KEYS[i]) == protocol) {
             return &EPROM_PARAMS[i];

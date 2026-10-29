@@ -309,7 +309,7 @@ from an older host has no effect.
 is one byte blob. Its length tells the host which fields it contains:
 
 ```
-[buffer_size u16 BE][hw_revision u8][ver_len u8][ver bytes][write_budget_s u16 BE]
+[buffer_size u16 BE][hw_revision u8][ver_len u8][ver bytes]
 ```
 
 `src/hardware_operations.cpp` and `src/dev_tools.cpp` send a short form that holds `buffer_size`
@@ -321,15 +321,11 @@ only.
   string length changes with the board name. **Read `ver` at the offset that `ver_len` gives, never
   at a fixed index.** The host cannot connect to a firmware build that does not send this field.
   `_probe_port` in `firestarter_app` raises `FirmwareOutdatedError`.
-- **`write_budget_s`** — the worst-case write time per block, in **seconds**, as a `uint16_t`.
-  `eprom_block_budget_s()` calculates it and adds the margin, so the host adds no margin.
-  `include/eprom_budget.h` gives the margin rule. Write the field directly after the `ver` bytes, at
-  an offset calculated from `ver_len`. Never use a literal offset.
 
-  The firmware sends `write_budget_s` for **each** command, so the ack shape is the same for all
-  commands. The value is `0` for a non-EPROM protocol, and `0` when `configure_memory` did not run.
-  The host reads `0` as "not sent", because its plausibility range is `[1, 14400]`. It never reads
-  `0` as "no time needed".
+The ack has no write-time budget. The host calculates the worst-case time per block itself
+(`firestarter/write_budget.py` in `firestarter_app`), from the protocol, the pulse width and
+`buffer_size`. That module copies `max_pulses` and `energy_cap_us` from `src/proms/eprom_params.cpp`
+and the pulse fallbacks from `configure_eprom()`. Change both sides together.
 
 The catalog entry for `MSG_OK_READY` is a variable-length byte blob (`param_bytes = -1`). A new
 field at the end of the ack therefore needs no catalog edit and no codegen run.

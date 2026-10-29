@@ -79,7 +79,6 @@ extern "C" int rurp_communication_read_data(char* buf, size_t capacity) {
     incoming.clear();
     return length;
 }
-extern "C" uint16_t eprom_block_budget_s(uint32_t, uint32_t, uint32_t) { return 5; }
 extern "C" bool op_execute_function(void (*fn)(firestarter_handle_t*),
                                       firestarter_handle_t* h) {
     fn(h);

@@ -10,7 +10,6 @@
 #include <Arduino.h>
 #include <stdlib.h>
 
-#include "eprom_budget.h"
 #include "eprom_operations.h"
 #include "hardware_operations.h"
 #include "json_parser.h"
@@ -184,17 +183,15 @@ bool init_programmer_framed(firestarter_handle_t* handle) {
 #endif
     LOG_INFO_ID_U8(MSG_INFO_CMD, (uint8_t)handle->cmd);
     // MSG_OK_READY parameters are length-discriminated:
-    // [buffer_size u16 BE][hw_revision u8][ver_len u8][ver bytes][write_budget_s u16 BE].
+    // [buffer_size u16 BE][hw_revision u8][ver_len u8][ver bytes].
     // Keep the shape identical for every command so hosts can decode by length.
-    // The budget is zero for non-EPROM operations and already includes the
-    // firmware's settling, verification, and transfer overhead.
-    // Legacy hosts fall back to their default chunk size for unknown lengths.
+    // The host calculates the write-time budget itself (write_budget.py).
     // This reply is sent before HV is enabled, so a host can reject safely.
     {
         const char* _ver = FW_VERSION;
         uint8_t _vlen = (uint8_t)strlen(_ver);
         if (_vlen > 32) _vlen = 32;
-        uint8_t _ready[4 + 32 + 2];
+        uint8_t _ready[4 + 32];
         _ready[0] = (uint8_t)(((uint16_t)DATA_BUFFER_SIZE >> 8) & 0xFF);
         _ready[1] = (uint8_t)((uint16_t)DATA_BUFFER_SIZE & 0xFF);
 #ifdef HARDWARE_REVISION
@@ -204,15 +201,7 @@ bool init_programmer_framed(firestarter_handle_t* handle) {
 #endif
         _ready[3] = _vlen;
         memcpy(_ready + 4, _ver, _vlen);
-        // Only a memory command parses a protocol for this frame. Any other
-        // command could still hold the protocol of an earlier command.
-        uint16_t _budget = is_memory_cmd(handle->cmd)
-                               ? eprom_block_budget_s(handle->protocol, handle->pulse_delay,
-                                                      (uint32_t)DATA_BUFFER_SIZE)
-                               : 0;
-        _ready[4 + _vlen]     = (uint8_t)((_budget >> 8) & 0xFF);
-        _ready[4 + _vlen + 1] = (uint8_t)(_budget & 0xFF);
-        LOG_OK_ID_BYTES(MSG_OK_READY, _ready, (uint8_t)(4 + _vlen + 2));
+        LOG_OK_ID_BYTES(MSG_OK_READY, _ready, (uint8_t)(4 + _vlen));
     }
     op_reset_timeout();
     return true;
