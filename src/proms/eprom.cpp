@@ -11,6 +11,7 @@
 
 #include "firestarter.h"
 #include "eprom_params.h"
+#include "eprom_rows.h"
 #include "logging_id.h"
 #include "memory_utils.h"
 #include "rurp_shield.h"
@@ -60,12 +61,14 @@ void configure_eprom(firestarter_handle_t* handle) {
     ep_set_control_register = handle->firestarter_set_control_register;
     handle->firestarter_set_control_register = eprom_internal_set_control_register;
 
-    // Set default pulse_delay from protocol when Python doesn't supply one
+    // Default pulse width when the host sends none. eprom_rows.h is generated
+    // from the meta repo's eprom_rows.toml; the host's write timeout uses the
+    // same values.
     if (handle->pulse_delay == 0) {
         switch (handle->protocol) {
-            case PROTO_EPROM_32PIN: handle->pulse_delay = 100;  break;  // 100µs
-            case PROTO_EPROM_24PIN: handle->pulse_delay = 500;  break;  // 500µs
-            default:                handle->pulse_delay = 1000; break;  // 1ms
+            case PROTO_EPROM_32PIN: handle->pulse_delay = EPROM_ROW_08_FALLBACK_PULSE_US; break;
+            case PROTO_EPROM_24PIN: handle->pulse_delay = EPROM_ROW_0B_FALLBACK_PULSE_US; break;
+            default:                handle->pulse_delay = EPROM_ROW_07_FALLBACK_PULSE_US; break;
         }
     }
 

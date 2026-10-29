@@ -207,8 +207,9 @@ Per-row differences:
 | `energy_cap_us` | 0 (no cap) | 0 (no cap) | 50000 (50 ms) |
 | `--vpe-as-vpp` | Changes the route to direct VPE | Changes the route to direct VPE | No effect. The route is already direct. |
 
-The table values are in `src/proms/eprom_params.cpp`. The fallback widths are in
-`configure_eprom()` in `eprom.cpp`.
+The table is in `src/proms/eprom_params.cpp`, and `configure_eprom()` in `eprom.cpp` applies the
+fallback widths. `max_pulses`, `energy_cap_us` and the fallback widths come from the generated
+`include/eprom_rows.h` (meta `tools/protocol/eprom_rows.toml`).
 
 `VERIFY_PER_PULSE_PLUS_FINAL` reads the full array one more time after the loop is complete. A
 mismatch in that pass sends `MSG_ERR_VERIFY` (`0xAF`) with the same 5-byte payload that
@@ -352,8 +353,10 @@ only.
 
 The ack has no write-time budget. The host calculates the worst-case time per block itself
 (`firestarter/write_budget.py` in `firestarter_app`), from the protocol, the pulse width and
-`buffer_size`. That module copies `max_pulses` and `energy_cap_us` from `src/proms/eprom_params.cpp`
-and the pulse fallbacks from `configure_eprom()`. Change both sides together.
+`buffer_size`. `max_pulses`, `energy_cap_us` and the fallback pulse widths come from
+`include/eprom_rows.h`, which the meta repository generates from `tools/protocol/eprom_rows.toml`
+together with the host's `eprom_rows.py`. **`include/eprom_rows.h` is a generated file. Do not edit
+it.** Change the values in `eprom_rows.toml` and run the meta sync.
 
 The catalog entry for `MSG_OK_READY` is a variable-length byte blob (`param_bytes = -1`). A new
 field at the end of the ack therefore needs no catalog edit and no codegen run.
