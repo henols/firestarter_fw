@@ -9,10 +9,6 @@ extern "C" {
     bool eprom_write(firestarter_handle_t* handle);
     bool eprom_erase(firestarter_handle_t* handle);
     bool eprom_check_chip_id(firestarter_handle_t* handle);
-    bool eprom_sdp_unlock(firestarter_handle_t* handle);
-    bool eprom_sdp_lock(firestarter_handle_t* handle);
-    bool eprom_lock_status(firestarter_handle_t* handle);
-    bool eprom_ram_test(firestarter_handle_t* handle);
 
 #ifdef __cplusplus
 }
