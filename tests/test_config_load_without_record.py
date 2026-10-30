@@ -24,6 +24,7 @@ _SOURCES = (
 )
 
 _DEFAULTS_RE = re.compile(r"^DEFAULTS r1=(\d+) r2=(\d+) bg=(\d+)$")
+_BOOT_RE = re.compile(r"^BOOT rev=(\d+)$")
 _RESULT_RE = re.compile(
     r"^RESULT version=(\S*) r1=(\d+) r2=(\d+) rev=(\d+) bg=(\d+) saves=(\d+)$"
 )
@@ -67,6 +68,7 @@ def _write_driver(tmp_path, load_result):
         "\n"
         "int main(void) {\n"
         "    rurp_configuration_t* config = rurp_get_config();\n"
+        '    printf("BOOT rev=%u\\n", (unsigned)config->hardware_revision);\n'
         "    strcpy(config->version, CONFIG_VERSION);\n"
         "    config->r1 = 300000;\n"
         "    config->r2 = 40000;\n"
@@ -103,7 +105,11 @@ def _run(tmp_path, load_result):
     assert ran.returncode == 0, f"binary failed.\nstderr:\n{ran.stderr}"
     result = None
     defaults = None
+    boot_rev = None
     for line in ran.stdout.splitlines():
+        match = _BOOT_RE.match(line)
+        if match:
+            boot_rev = int(match.group(1))
         match = _RESULT_RE.match(line)
         if match:
             version, r1, r2, rev, bg, saves = match.groups()
@@ -114,14 +120,14 @@ def _run(tmp_path, load_result):
         match = _DEFAULTS_RE.match(line)
         if match:
             defaults = tuple(int(g) for g in match.groups())
-    assert result is not None and defaults is not None, (
-        f"expected RESULT and DEFAULTS lines in output:\n{ran.stdout}"
+    assert result is not None and defaults is not None and boot_rev is not None, (
+        f"expected BOOT, RESULT and DEFAULTS lines in output:\n{ran.stdout}"
     )
-    return result, defaults
+    return result, defaults, boot_rev
 
 
 def test_a_load_without_a_record_resets_the_override_and_saves(tmp_path):
-    result, defaults = _run(tmp_path, "false")
+    result, defaults, _boot_rev = _run(tmp_path, "false")
     assert result["rev"] == 0xFF, (
         "a store with no record must not leave a shield override behind; "
         f"got {result!r}"
@@ -133,7 +139,15 @@ def test_a_load_without_a_record_resets_the_override_and_saves(tmp_path):
 
 def test_a_load_with_a_record_keeps_it(tmp_path):
     # Non-vacuity: the same seed survives when the load reports a record.
-    result, _defaults = _run(tmp_path, "true")
+    result, _defaults, _boot_rev = _run(tmp_path, "true")
     assert result["rev"] == 4, result
     assert (result["r1"], result["r2"], result["bg"]) == (300000, 40000, 1050), result
     assert result["saves"] == 0, result
+
+
+def test_the_config_before_the_load_has_no_override(tmp_path):
+    # Board setup writes the control register before rurp_load_config()
+    # runs. Until then the shield revision must read as "no override" (0xFF),
+    # not as a REVISION_0 override.
+    _result, _defaults, boot_rev = _run(tmp_path, "true")
+    assert boot_rev == 0xFF, boot_rev
