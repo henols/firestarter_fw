@@ -42,14 +42,16 @@ void eprom_generic_init(firestarter_handle_t* handle);
 void configure_eprom(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CONFIGURING_EPROM);
 
-    handle->firestarter_operation_init = eprom_generic_init;
-
+    // Only the commands that drive high voltage get an init. A read (and the
+    // host's blank check, which is a read) never routes VPP to the socket, so
+    // it must not fail on a rail it does not use.
     switch (handle->cmd) {
         case CMD_WRITE:
             handle->firestarter_operation_init = eprom_write_init;
             handle->firestarter_operation_main = eprom_write_execute;
             break;
         case CMD_ERASE:
+            handle->firestarter_operation_init = eprom_generic_init;
             handle->firestarter_operation_main = eprom_erase_execute;
             break;
         case CMD_CHECK_CHIP_ID:
