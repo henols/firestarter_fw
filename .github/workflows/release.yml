@@ -52,9 +52,15 @@ jobs:
             exit 1
           fi
           # The meta release script makes the same check. A commit without the binary
-          # command frame has no floor.
-          FLOOR=$(sed -n 's/^#define CF_MIN_FEATURE "\([0-9]*\.[0-9]*\)"$/\1/p' include/command_frame.h 2>/dev/null || true)
-          if [ -n "$FLOOR" ]; then
+          # command frame has no floor. A frame file whose floor cannot be read stops
+          # the release: a skipped check could publish binary-frame firmware below it.
+          FRAME=include/command_frame.h
+          if [ -f "$FRAME" ]; then
+            FLOOR=$(sed -n 's/^#define CF_MIN_FEATURE "\([0-9]*\.[0-9]*\)"$/\1/p' "$FRAME")
+            if [ -z "$FLOOR" ]; then
+              echo "::error::cannot read CF_MIN_FEATURE from $FRAME"
+              exit 1
+            fi
             IFS=. read -r V_MAJOR V_MINOR _ <<<"$TAG"
             IFS=. read -r F_MAJOR F_MINOR <<<"$FLOOR"
             if (( V_MAJOR < F_MAJOR || (V_MAJOR == F_MAJOR && V_MINOR < F_MINOR) )); then
