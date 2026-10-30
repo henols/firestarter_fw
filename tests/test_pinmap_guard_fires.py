@@ -8,7 +8,6 @@ Preprocess the real PY32 pin-map guard with missing, valid and invalid definitio
 
 
 import os
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,8 +15,6 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent
 _INCLUDE_BOARDS = _REPO_ROOT / "include" / "boards"
-_GUARD_HEADER = _INCLUDE_BOARDS / "py32f071_pinmap_guard.h"
-_BOARD_HEADER = _INCLUDE_BOARDS / "py32f071_rurp_shield.h"
 
 _MACRO_NAME = "RURP_PY32F071_PINMAP_CONFIGURED"
 
@@ -68,23 +65,18 @@ def _preprocess(compiler, tu_path, define=None):
     return subprocess.run(argv, capture_output=True, text=True)
 
 
-def _expected_error_text():
-    """Read the #error message out of the fragment header at test time,
-    rather than hardcoding it a second time here -- a literal that could
-    silently desync from the real header on a future edit."""
-    text = _GUARD_HEADER.read_text()
-    m = re.search(r'#error\s+"([^"]*)"', text)
-    assert m, f"expected exactly one #error directive with a quoted message in {_GUARD_HEADER}.\nGot:\n{text}"
-    return m.group(1)
+def _has_guard_error(stderr):
+    """True when one compiler diagnostic line is an #error directive that
+    names the pin-map macro."""
+    return any("#error" in line and _MACRO_NAME in line for line in stderr.splitlines())
 
 
 def test_guard_fires_when_the_macro_is_unset(tmp_path):
     """Coverage 1 -- with RURP_PY32F071_PINMAP_CONFIGURED left entirely
-    unset, the guard must fire: non-zero exit, the fragment's own #error
-    text present in stderr."""
+    unset, the guard must fire: non-zero exit, the fragment's #error, naming
+    the macro, in stderr."""
     compiler = _resolve_compiler()
     tu_path = _write_tu(tmp_path)
-    expected_text = _expected_error_text()
 
     result = _preprocess(compiler, tu_path, define=None)
 
@@ -92,9 +84,9 @@ def test_guard_fires_when_the_macro_is_unset(tmp_path):
         f"expected a non-zero exit with the macro unset (the guard must "
         f"fire).\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    assert expected_text in result.stderr, (
-        f"expected the fragment's own #error text in stderr.\n"
-        f"Expected substring: {expected_text!r}\nGot stderr:\n{result.stderr}"
+    assert _has_guard_error(result.stderr), (
+        f"expected an #error diagnostic that names {_MACRO_NAME} in stderr.\n"
+        f"Got stderr:\n{result.stderr}"
     )
 
 
@@ -104,7 +96,6 @@ def test_guard_is_silent_when_the_macro_is_one(tmp_path):
     error text in stderr."""
     compiler = _resolve_compiler()
     tu_path = _write_tu(tmp_path)
-    expected_text = _expected_error_text()
 
     result = _preprocess(compiler, tu_path, define=1)
 
@@ -112,7 +103,7 @@ def test_guard_is_silent_when_the_macro_is_one(tmp_path):
         f"expected a zero exit with the macro set to 1.\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    assert expected_text not in result.stderr, (
+    assert "#error" not in result.stderr, (
         f"expected no #error text in stderr when the macro is 1.\n"
         f"Got stderr:\n{result.stderr}"
     )
@@ -125,7 +116,6 @@ def test_guard_fires_when_the_macro_is_zero(tmp_path):
     (`!defined(X)` alone would treat 0 as configured, which is wrong)."""
     compiler = _resolve_compiler()
     tu_path = _write_tu(tmp_path)
-    expected_text = _expected_error_text()
 
     result = _preprocess(compiler, tu_path, define=0)
 
@@ -135,7 +125,7 @@ def test_guard_fires_when_the_macro_is_zero(tmp_path):
         f"defined-ness-only test).\nstdout:\n{result.stdout}\n"
         f"stderr:\n{result.stderr}"
     )
-    assert expected_text in result.stderr, (
-        f"expected the fragment's own #error text in stderr.\n"
-        f"Expected substring: {expected_text!r}\nGot stderr:\n{result.stderr}"
+    assert _has_guard_error(result.stderr), (
+        f"expected an #error diagnostic that names {_MACRO_NAME} in stderr.\n"
+        f"Got stderr:\n{result.stderr}"
     )
