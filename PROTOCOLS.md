@@ -107,11 +107,14 @@ the correct socket pin. The
 [Shield Revisions](https://github.com/henols/firestarter/wiki/Shield-Revisions) wiki page gives the
 jumper settings.
 
-**VPP check.** Before a read, write, erase or chip-ID command, the firmware switches the route on, waits
+**VPP check.** Before a write, erase or chip-ID command, the firmware switches the route on, waits
 100 ms and reads the rail on A2. It does not connect the rail to the socket during this check. A
 value more than 500 mV above the requested VPP sends `MSG_ERR_VPP_HIGH` (`0xB8`). With `--force`
 it sends a warning. A value below 95 % of the requested VPP sends `MSG_WARN_VPP_LOW` (`0x81`). On
 Rev 0 hardware the firmware skips the check and sends a warning.
+
+A read does no VPP check and no chip-ID check. The host blank check is a read. A read never switches
+a high-voltage route on, so the state of the rail cannot make it fail.
 
 **Write.** The firmware writes one data block at a time:
 

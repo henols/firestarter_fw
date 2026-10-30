@@ -5,14 +5,16 @@
  * Permission is hereby granted under MIT license.
  *
  * eprom_check_vpp and eprom_generic_init, driven through configure_memory()
- * with a mocked rurp_read_voltage_mv. The suite records every register write
- * at the full register width and asserts:
+ * with a mocked rurp_read_voltage_mv. CMD_ERASE carries the check; a read must
+ * not. The suite records every register write at the full register width and
+ * asserts:
  *   - a reading above the window is an ERROR and the last control-register
  *     write clears every bit in EPROM_HV_ALL_OFF_MASK;
  *   - an unusable divider calibration is refused before any high-voltage bit
  *     is written;
  *   - the window edges, as value pairs: the value that passes and the
- *     adjacent value that does not.
+ *     adjacent value that does not;
+ *   - a read writes no high-voltage bit and does not fail on the rail.
  */
 
 #include <Arduino.h>
@@ -90,7 +92,7 @@ void tearDown(void) {}
 static firestarter_handle_t make_handle(uint16_t vpp_setpoint, uint32_t flags) {
     firestarter_handle_t h = {};
     h.protocol = 0x07;
-    h.cmd = CMD_READ;
+    h.cmd = CMD_ERASE;
     h.response_code = RESPONSE_CODE_OK;
     h.vpp_mv = vpp_setpoint;
     h.chip_id = 0; /* skip the chip-ID branch */
@@ -219,6 +221,46 @@ void test_a_low_reading_reports_both_values_in_millivolts(void) {
     assert_mv_report(MSG_WARN_VPP_LOW_MV, 12000, 13000);
 }
 
+/* Dispatch a read and run its init, if it has one. */
+static uint8_t run_read(uint8_t protocol, uint16_t chip_id, uint16_t measured_mv) {
+    firestarter_handle_t h = make_handle(13000, 0);
+    h.protocol = protocol;
+    h.cmd = CMD_READ;
+    h.chip_id = chip_id;
+    set_mock_vpp_mv(measured_mv);
+    configure_memory(&h);
+    if (h.firestarter_operation_init != NULL) {
+        h.firestarter_operation_init(&h);
+    }
+    return h.response_code;
+}
+
+void test_a_read_does_not_fail_on_a_high_rail(void) {
+    const uint8_t protocols[] = {0x07, 0x08, 0x0B};
+    for (uint8_t protocol : protocols) {
+        clear_bus_recording();
+        TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, run_read(protocol, 0, 14000),
+                                  "a read must not check a rail it does not use");
+        TEST_ASSERT_FALSE_MESSAGE(any_control_write_with(kHvBits), "a read must write no HV bit");
+    }
+}
+
+void test_a_read_with_a_chip_id_writes_no_hv_bit(void) {
+    const uint8_t protocols[] = {0x07, 0x08, 0x0B};
+    for (uint8_t protocol : protocols) {
+        clear_bus_recording();
+        TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, run_read(protocol, 0x9B8C, 13000));
+        TEST_ASSERT_FALSE_MESSAGE(any_control_write_with(kHvBits),
+                                  "a read must not put VPP on A9 for the chip-ID check");
+    }
+}
+
+void test_a_read_does_not_fail_on_a_bad_calibration(void) {
+    rurp_get_config()->r2 = 0;
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, run_read(0x07, 0, 13000));
+    TEST_ASSERT_FALSE(any_control_write_with(kHvBits));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -235,5 +277,8 @@ int main(int argc, char** argv) {
     RUN_TEST(test_a_high_reading_reports_both_values_in_millivolts);
     RUN_TEST(test_a_forced_high_reading_reports_a_warning_in_millivolts);
     RUN_TEST(test_a_low_reading_reports_both_values_in_millivolts);
+    RUN_TEST(test_a_read_does_not_fail_on_a_high_rail);
+    RUN_TEST(test_a_read_with_a_chip_id_writes_no_hv_bit);
+    RUN_TEST(test_a_read_does_not_fail_on_a_bad_calibration);
     return UNITY_END();
 }
