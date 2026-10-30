@@ -37,10 +37,11 @@ static unsigned logged = 0;
 static int ce_level = 0;
 static int cleared[3] = {};
 static rurp_register_t latch[256] = {};
+static std::string boot_order;
 
 unsigned long millis() { return fake_ms; }
-extern "C" void rurp_load_config() {}
-extern "C" void rurp_board_setup() {}
+extern "C" void rurp_load_config() { boot_order += "config;"; }
+extern "C" void rurp_board_setup() { boot_order += "board;"; }
 extern "C" uint8_t rurp_get_physical_hardware_revision() { return 0; }
 extern "C" rurp_configuration_t* rurp_get_config() {
     static rurp_configuration_t config = {};
@@ -160,6 +161,14 @@ static const std::string read_cmd = memory_frame(CMD_READ, 65536, 0, 28, 12500);
 
 int main() {
     reset();
+    boot_order.clear();
+    setup();
+    // The shield latches are cleared before the config load can write EEPROM.
+    assert(boot_order == "board;config;");
+    assert(handle.cmd == CMD_IDLE);
+    puts("PASS boot order");
+
+    reset();
     arm();
     handle.cmd = CMD_WRITE;
     command_done(&handle);
@@ -244,6 +253,7 @@ def test_command_lifecycle_and_safe_cleanup(tmp_path: Path) -> None:
         f"dispatcher integration test failed:\n{result.stdout}\n{result.stderr}"
     )
     assert set(result.stdout.splitlines()) == {
+        "PASS boot order",
         "PASS cleanup",
         "PASS timeout",
         "PASS completion",
