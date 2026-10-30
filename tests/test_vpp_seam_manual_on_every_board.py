@@ -4,14 +4,26 @@ Copyright (c) 2024 Henrik Olsson
 Permission is hereby granted under MIT license.
 
 Compile and execute the production VPP seam under supported board macro sets; assert manual-only behavior and fail-closed compilation.
+
+Board macro sets come from tools that resolve the build configuration, never
+from a scan of platformio.ini or CMakeLists.txt:
+
+- AVR envs: `pio project config --json-output` (interpolated build_flags).
+- py32f071: the compile_commands.json of a real CMake configure of
+  platform/py32f071 (`-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`), named by the
+  FIRESTARTER_PY32_COMPILE_COMMANDS environment variable. Without it, the
+  py32f071 case is skipped, because the configure needs the ARM toolchain
+  and the SDK download.
 """
 
 
-import configparser
+import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,58 +31,83 @@ import pytest
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent
 _INCLUDE = _REPO_ROOT / "include"
-_SEAM_HEADER = _INCLUDE / "rurp_vpp.h"
 _SEAM_SRC = _REPO_ROOT / "src" / "rurp_vpp.cpp"
-_PLATFORMIO_INI = _REPO_ROOT / "platformio.ini"
-_PY32_CMAKE = _REPO_ROOT / "platform" / "py32f071" / "CMakeLists.txt"
-_PY32_BOARD_HEADER = _INCLUDE / "boards" / "py32f071_rurp_shield.h"
+_PY32_COMPILE_COMMANDS_ENV = "FIRESTARTER_PY32_COMPILE_COMMANDS"
 
 _EXPECTED_MODE_MANUAL = 0
 _EXPECTED_RESULT_MANUAL_REQUIRED = 1
 
-def _expand(config, section, value):
-    """Expand PlatformIO `${section.option}` references; `this` is the
-    section being read."""
-    def substitute(match):
-        source = section if match.group(1) == "this" else match.group(1)
-        return _expand(config, source, config.get(source, match.group(2)))
 
-    return re.sub(r"\$\{(\w+)\.(\w+)\}", substitute, value)
+def _defines_from_argv(tokens):
+    """The -D definitions in a compiler argv, one token per argument."""
+    defines = []
+    for index, token in enumerate(tokens):
+        if token == "-D" and index + 1 < len(tokens):
+            defines.append(tokens[index + 1])
+        elif token.startswith("-D") and len(token) > 2:
+            defines.append(token[2:])
+    return defines
 
 
-def _platformio_macro_sets():
-    """One macro set per AVR env in platformio.ini: its -D flags as
-    PlatformIO passes them, plus `__AVR__`, which the AVR toolchain itself
-    defines."""
-    config = configparser.ConfigParser(interpolation=None, inline_comment_prefixes=(";",))
-    config.read(_PLATFORMIO_INI)
-    sets = []
-    for section in config.sections():
-        if not section.startswith("env:") or config.get(section, "platform", fallback="") != "atmelavr":
+def _avr_macro_sets():
+    """One macro set per atmelavr env, from `pio project config
+    --json-output`, plus `__AVR__`, which the AVR toolchain itself defines.
+    Returns (params, error); error is set when PlatformIO cannot resolve the
+    configuration, so the test fails instead of collecting nothing."""
+    result = subprocess.run(
+        [sys.executable, "-m", "platformio", "project", "config", "-d", str(_REPO_ROOT), "--json-output"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return [], f"`pio project config` exited {result.returncode}.\nstderr:\n{result.stderr}"
+    params = []
+    for section, options in json.loads(result.stdout):
+        options = dict(options)
+        if not section.startswith("env:") or options.get("platform") != "atmelavr":
             continue
-        flags = _expand(config, section, config.get(section, "build_flags", fallback=""))
-        defines = [d.replace('\\"', '"') for d in re.findall(r"-D\s*(\S+)", flags)]
-        sets.append(pytest.param(("__AVR__", *defines), id=section[len("env:"):]))
-    return sets
+        tokens = [token for flag in options.get("build_flags", []) for token in shlex.split(flag)]
+        defines = _defines_from_argv(tokens)
+        params.append(pytest.param(("__AVR__", *defines), id=section[len("env:"):]))
+    return params, None
 
 
 def _py32_macro_set():
-    """The definitions the py32 CMake build passes to the firmware target."""
-    match = re.search(
-        r"target_compile_definitions\(\s*\$\{TARGET_NAME\}\s*PRIVATE(.*?)\)",
-        _PY32_CMAKE.read_text(),
-        re.S,
-    )
-    assert match, f"no target_compile_definitions block in {_PY32_CMAKE}"
-    return pytest.param(tuple(match.group(1).split()), id="py32f071")
+    """The definitions the py32 CMake build passes when it compiles
+    src/rurp_vpp.cpp, read from the compile_commands.json that CMake wrote.
+    A skip mark when the environment variable is not set; an error string
+    (which fails the test) when the file has no entry for that source."""
+    path = os.environ.get(_PY32_COMPILE_COMMANDS_ENV)
+    if not path:
+        return pytest.param(
+            None,
+            id="py32f071",
+            marks=pytest.mark.skip(
+                reason=(
+                    f"{_PY32_COMPILE_COMMANDS_ENV} is not set: configure platform/py32f071 "
+                    "with -DCMAKE_EXPORT_COMPILE_COMMANDS=ON and point the variable at the "
+                    "compile_commands.json to test the py32f071 macro set"
+                )
+            ),
+        )
+    for entry in json.loads(Path(path).read_text()):
+        if (Path(entry["directory"]) / entry["file"]).resolve() == _SEAM_SRC:
+            tokens = entry["arguments"] if "arguments" in entry else shlex.split(entry["command"])
+            return pytest.param(tuple(_defines_from_argv(tokens)), id="py32f071")
+    return pytest.param(f"{path} has no entry for {_SEAM_SRC}", id="py32f071")
 
 
-_BOARD_MACRO_SETS = [*_platformio_macro_sets(), _py32_macro_set()]
+_AVR_MACRO_SETS, _AVR_CONFIG_ERROR = _avr_macro_sets()
+_BOARD_MACRO_SETS = [*_AVR_MACRO_SETS, _py32_macro_set()]
 
 
 def test_every_real_build_has_a_macro_set():
-    ids = [param.id for param in _BOARD_MACRO_SETS]
-    assert len(ids) >= 2 and "py32f071" in ids, ids
+    """Non-vacuity: PlatformIO resolved the configuration, it has at least
+    one AVR env, and every AVR env passes at least one -D besides __AVR__."""
+    assert _AVR_CONFIG_ERROR is None, _AVR_CONFIG_ERROR
+    assert _AVR_MACRO_SETS, "`pio project config` reported no atmelavr env"
+    for param in _AVR_MACRO_SETS:
+        assert len(param.values[0]) > 1, f"env {param.id} has no -D build flags: {param.values[0]!r}"
 
 
 def _resolve_compiler():
@@ -135,43 +172,20 @@ def _run_binary(binary_path):
     return subprocess.run([str(binary_path)], capture_output=True, text=True)
 
 
-def _expected_header_error_text():
-    """Read the #error message out of include/rurp_vpp.h at test time,
-    rather than hardcoding it a second time here -- a literal that could
-    silently desync from the real header on a future edit. Scoped to this
-    one file: the header and src/rurp_vpp.cpp each carry a DIFFERENT #error
-    message, so this "exactly one directive" assertion must never be
-    reused across both files."""
-    text = _SEAM_HEADER.read_text()
-    m = re.search(r'#\s*error\s+"([^"]*)"', text)
-    assert m, (
-        f"expected exactly one #error directive with a quoted message in "
-        f"{_SEAM_HEADER}.\nGot:\n{text}"
-    )
-    return m.group(1)
-
-
-def _expected_source_error_text():
-    """Read the #error message out of src/rurp_vpp.cpp at test time, rather
-    than hardcoding it a second time here. Scoped to this one file -- see
-    _expected_header_error_text's docstring for why the two are separate
-    helpers rather than one shared "exactly one" assertion."""
-    text = _SEAM_SRC.read_text()
-    m = re.search(r'#\s*error\s+"([^"]*)"', text)
-    assert m, (
-        f"expected exactly one #error directive with a quoted message in "
-        f"{_SEAM_SRC}.\nGot:\n{text}"
-    )
-    return m.group(1)
+def _has_error_directive_naming(stderr, text):
+    """True when one compiler diagnostic line is an #error directive whose
+    message contains text."""
+    return any("#error" in line and text in line for line in stderr.splitlines())
 
 
 @pytest.mark.parametrize("defines", _BOARD_MACRO_SETS)
 def test_manual_control_on_every_board_macro_set(tmp_path, defines):
     """Coverage 1 -- one parametrized test asserting the seam refuses
-    (control mode MANUAL, result MANUAL_ADJUSTMENT_REQUIRED) across all
-    four board macro-sets in one run (ROADMAP Criterion 2), compiled AND
-    run -- never a single-board spot check. Parses the result from stdout,
-    never the run subprocess's exit code (Trap 2)."""
+    (control mode MANUAL, result MANUAL_ADJUSTMENT_REQUIRED) for every
+    board macro set (each AVR env, plus py32f071 when its compile commands
+    are supplied), compiled AND run. Parses the result from stdout, never
+    the run subprocess's exit code (Trap 2)."""
+    assert not isinstance(defines, str), defines
     compiler = _resolve_compiler()
     tu_path = _write_shim_tu(tmp_path)
     binary_path = tmp_path / "seam_under_test"
@@ -223,7 +237,6 @@ def test_forced_capability_macro_fails_closed_in_the_source(tmp_path):
     harness non-vacuous: a header-only leg would pass vacuously and the
     "the macro is genuinely consulted" argument would evaporate."""
     compiler = _resolve_compiler()
-    expected_text = _expected_source_error_text()
     binary_path = tmp_path / "forced_capability"
 
     result = _compile(compiler, ("__AVR__", "RURP_HAS_VPP_DAC=1"), (_SEAM_SRC,), binary_path)
@@ -233,9 +246,9 @@ def test_forced_capability_macro_fails_closed_in_the_source(tmp_path):
         "while compiling src/rurp_vpp.cpp (the header alone cannot reject "
         f"this value).\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    assert expected_text in result.stderr, (
-        f"expected src/rurp_vpp.cpp's own #error text in stderr.\n"
-        f"Expected substring: {expected_text!r}\nGot stderr:\n{result.stderr}"
+    assert _has_error_directive_naming(result.stderr, "RURP_HAS_VPP_DAC=1"), (
+        "expected an #error diagnostic that names RURP_HAS_VPP_DAC=1 in stderr.\n"
+        f"Got stderr:\n{result.stderr}"
     )
 
 
@@ -248,7 +261,6 @@ def test_unset_and_non_avr_fails_closed_in_the_header(tmp_path):
     explanation for why that include does not exist."""
     compiler = _resolve_compiler()
     tu_path = _write_shim_tu(tmp_path)
-    expected_text = _expected_header_error_text()
     binary_path = tmp_path / "unset_non_avr"
 
     result = _compile(compiler, (), (tu_path,), binary_path)
@@ -258,7 +270,7 @@ def test_unset_and_non_avr_fails_closed_in_the_header(tmp_path):
         "RURP_HAS_VPP_DAC defined.\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    assert expected_text in result.stderr, (
-        f"expected include/rurp_vpp.h's own #error text in stderr.\n"
-        f"Expected substring: {expected_text!r}\nGot stderr:\n{result.stderr}"
+    assert _has_error_directive_naming(result.stderr, "RURP_HAS_VPP_DAC must be supplied"), (
+        "expected an #error diagnostic that says RURP_HAS_VPP_DAC must be "
+        f"supplied by the build in stderr.\nGot stderr:\n{result.stderr}"
     )
