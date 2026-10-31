@@ -14,9 +14,6 @@ pio test -e native -f "*test_dispatch*"     # run only the configure_memory disp
 pytest tests/ -v                            # run the Python test tree
 ```
 
-`platformio.ini` defines these environments: `uno`, `uno328pb`, `leonardo`, `native` and
-`native_nodevtools`.
-
 ## What CI runs
 
 Three workflows exist. Read the trigger before you decide that CI tested a commit.
@@ -379,37 +376,18 @@ with the config `bg` value. The firmware refuses a stored bandgap outside the sa
 
 ### Key Files
 
-- `src/command_decoder.c` — decodes a binary command frame into `firestarter_handle_t`. It
-  refuses a frame that it cannot decode completely.
 - `include/command_frame.h` — **a generated file. Do not edit it.** The frame layout and limits.
-- `src/proms/memory.cpp` — the top-level dispatch, `configure_memory()`.
-- `include/firestarter.h` — the `firestarter_handle_t` struct, the flag bits and the command codes.
-- `include/rurp_pinout.h` — the control-register bits and the ADC band thresholds.
 - `include/messages.h` — **a generated file. Do not edit it.** It holds message IDs only. The source
   of truth is `tools/catalog/messages.toml` in the meta repository. Codegen runs only there. To change
   a message, edit `messages.toml`, run the codegen in the meta repository, and sync the result here.
 
 ### Constants
 
-Control-register bits in `rurp_pinout.h`:
+`CTRL_VPP_VPE_DROP_ENABLE` in `rurp_pinout.h` is `0x01` in a build without `HARDWARE_REVISION`
+and `0x100` in a build with it.
 
-- `CTRL_VPP_REGULATOR_ENABLE (0x80)` — enables the VPP boost regulator.
-- `CTRL_VPP_VPE_DROP_ENABLE` — drops VPE through a resistor to the VPP level. It is `0x01` in a
-  build without `HARDWARE_REVISION` and `0x100` in a build with it.
-- `CTRL_VPP_P1_ENABLE (0x08)` — routes VPP to socket pin 1.
-- `CTRL_VPP_A9_ENABLE (0x02)` — routes VPP to A9 for the EPROM chip-ID read.
-- `CTRL_VPE_ENABLE (0x04)` — applies VPE directly to the PGM pin.
-
-Control flags in `firestarter.h`:
-
-- `FLAG_FORCE (0x01)` — makes an ID mismatch a warning, not an error.
-- `FLAG_CAN_ERASE (0x02)` — the chip supports erase before write.
-- `FLAG_SKIP_ERASE (0x04)` — skips the automatic erase in write init.
-- `0x08` — **reserved. Never reuse it.** It was the skip-blank-check flag. Shipped hosts still send
-  it. `constants.py` in `firestarter_app` records the same reservation.
-- `FLAG_VPE_AS_VPP (0x10)` — selects the direct VPE path.
-- `firestarter.h` defines more flags, from `0x20` to `0x200`.
-- `FLAG_SKIP_FINAL_VERIFY (0x200)` — skips the final full-block verify pass on `0x07`/`0x08`.
+Control flag `0x08` in `firestarter.h` is **reserved. Never reuse it.** It was the skip-blank-check
+flag. Shipped hosts still send it. `constants.py` in `firestarter_app` records the same reservation.
 
 `firestarter_app/firestarter/constants.py` duplicates these values. Change both sides together.
 
@@ -449,10 +427,6 @@ They need no AVR board.
 
 `[native_base]` in `platformio.ini` holds the shared settings. `[env:native]` and
 `[env:native_nodevtools]` both use `extends = native_base`. `[env:native]` adds `-D DEV_TOOLS=1`.
-
-`build_src_filter` compiles `src/proms/`, `src/boards/rurp_serial_utils.cpp`,
-`src/command_decoder.c` and `src/operation_utils.cpp`. It excludes the other AVR-only units, for
-example `src/firestarter.cpp`, `src/dev_tools.cpp` and `src/eprom_operations.cpp`.
 
 The handlers still call `rurp_*` hardware functions and use `LOG_*_MSG` PROGMEM strings. Each suite
 has a `host_stubs.cpp` with no-op versions of these symbols. Shared stub code and shared test data
