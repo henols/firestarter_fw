@@ -84,6 +84,15 @@ extern "C" {
 // They have the same positions on every revision.
 #define RURP_SOCKET_VPP_ROUTE_BITS    (CTRL_VPP_A9_ENABLE | CTRL_VPE_ENABLE | CTRL_VPP_P1_ENABLE)
 
+// Time for VPE to fall to about 5 V after the regulator switches off. C9
+// (10 uF) discharges only through the feedback chain (up to 86.1k) and the
+// ADC divider (314k): tau is about 0.68 s, so 22.7 V (pot at maximum) takes
+// about 0.96 s to reach 5.5 V. With the regulator off, +5 V holds VPE at
+// about 4.8 V through L1 and D1. A read that switches VPE onto pin 1 waits
+// this long after the regulator was last on. Measured on a Rev 2.0 board from
+// 14.0 V: 12.9 V just after switch-off, 6.1 V at 50 ms, 4.84 V from 100 ms.
+#define RURP_VPE_DISCHARGE_MS         1000
+
 // ---- Section 2b: EPROM high-voltage composite masks (EPROM_HV_*) -------
 // Defined beside the CTRL_* bits they are built from so they cannot drift.
 //

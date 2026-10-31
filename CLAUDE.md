@@ -249,6 +249,19 @@ that switch to the socket:
   Phase 182 (2026-09-10). The Rev 2.0/2.1 "Closed" position is inferred to reach socket pin 3. It
   is not measured.
 
+**Pin 1 during a read (32-pin VPP-on-pin-1 parts, issue #142).** A read drives the VPP bus line
+high, because these parts need VPP at VCC level in read mode. On Rev 2.x, line 21 is the pin-1
+switch itself, so the read puts VPE on pin 1. With the regulator off, +5 V holds VPE at about
+4.8 V through L1 and D1. Two rules apply:
+
+- The read drives line 21 high only while `CTRL_VPP_REGULATOR_ENABLE` is off
+  (`read_high_needs_reg_off`). The chip-ID read and every read in the write path keep pin 1 low.
+- A `CMD_READ` waits until `RURP_VPE_DISCHARGE_MS` (1000 ms) has passed since the regulator was
+  last switched off (`rurp_get_regulator_off_ms()`), so that C9 can discharge.
+
+On Rev 0/1, line 21 is the A18 latch bit, which reaches pin 1 through D33 as a logic level, so no
+wait is necessary.
+
 The host table `firestarter_app/firestarter/jumper_table.py` gives the setting for each pin map.
 Only the control-register stream shows the `0x08` route. No test on a real part shows it. This is not a claim that `0x08` VPP is
 correct on silicon.

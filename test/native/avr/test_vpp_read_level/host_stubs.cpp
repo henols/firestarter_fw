@@ -60,3 +60,5 @@ extern "C" uint8_t rurp_read_data_buffer() {
     }
     return 0xFF;
 }
+
+extern "C" void set_regulator_off_ms(uint32_t ms) { regulator_off_ms = ms; }

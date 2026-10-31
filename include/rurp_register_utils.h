@@ -12,6 +12,9 @@
 uint8_t lsb_address = 0xff;
 uint8_t msb_address = 0xff;
 rurp_register_t control_register = 0xff;
+// millis() when the VPP regulator was last switched off. The cache starts with
+// the regulator bit set, so the first write at boot counts as a switch-off.
+uint32_t regulator_off_ms = 0;
 
 // Function to write data to a specific register on the RURP shield
 // This function also caches the register values and adds a small delay
@@ -43,6 +46,9 @@ void rurp_write_to_register(uint8_t reg, rurp_register_t data) {
         if ((control_register & CTRL_VPP_P1_ENABLE) > (data & CTRL_VPP_P1_ENABLE)) {
             settle = true;
         }
+        if ((control_register & CTRL_VPP_REGULATOR_ENABLE) > (data & CTRL_VPP_REGULATOR_ENABLE)) {
+            regulator_off_ms = millis();
+        }
         control_register = data;
 #ifdef HARDWARE_REVISION
         data = rurp_map_ctrl_reg_for_hardware_revision(data);
@@ -59,6 +65,9 @@ void rurp_write_to_register(uint8_t reg, rurp_register_t data) {
     }
 }
 
+uint32_t rurp_get_regulator_off_ms() {
+    return regulator_off_ms;
+}
 
 void rurp_internal_write_to_register(uint8_t reg, rurp_register_t data) {
 #if defined(ARDUINO_AVR_UNO) || defined(ARDUINO_AVR_ATmega328PB)

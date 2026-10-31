@@ -116,6 +116,7 @@ void tearDown(void) {
 void test_board_setup_clears_a_stale_control_latch(void) {
     When(Method(ArduinoFake(), delay)).AlwaysReturn();
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
+    When(Method(ArduinoFake(), millis)).AlwaysReturn(0);
     When(OverloadedMethod(ArduinoFake(Serial), begin, void(unsigned long))).AlwaysReturn();
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
 

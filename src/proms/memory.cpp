@@ -105,6 +105,9 @@ void configure_memory(firestarter_handle_t* handle) {
     }
 
     mem_util_set_read_high_mask(handle);
+    if (handle->cmd == CMD_READ && handle->bus_config.read_high_needs_reg_off) {
+        mem_util_wait_vpe_discharged();
+    }
     mem_util_set_address(handle, 0);
     configure(handle);
 }
@@ -445,23 +448,39 @@ uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t
     }
     // Read the register cache directly: dt_set_address() gets here without
     // configure_memory(), so the handle's control-register getter is NULL.
-    if (read_write == READ_FLAG && config->read_high_mask &&
-        !(rurp_read_from_register(CONTROL_REGISTER) & CTRL_VPP_P1_ENABLE)) {
-        reorg_address |= config->read_high_mask;
+    if (read_write == READ_FLAG && config->read_high_mask) {
+        rurp_register_t ctrl = rurp_read_from_register(CONTROL_REGISTER);
+        rurp_register_t blocking = config->read_high_needs_reg_off
+                                       ? CTRL_VPP_P1_ENABLE | CTRL_VPP_REGULATOR_ENABLE
+                                       : CTRL_VPP_P1_ENABLE;
+        if (!(ctrl & blocking)) {
+            reorg_address |= config->read_high_mask;
+        }
     }
 
     reorg_address |= config->static_high_mask;
     return reorg_address;
 }
 
-/* P1-VPP parts need that pin at VCC level during reads. The read drives the
- * line high unless doing so would also switch VPP onto the socket (line 21 on
- * Rev 2.x). Set once per command, so the per-byte remap only checks whether
- * the P1 route is on. */
+/* P1-VPP parts need that pin at VCC level during reads, so a read drives the
+ * VPP line high. On Rev 2.x line 21 is also the pin-1 VPP switch, so the high
+ * level is VPE: about 4.8 V while the regulator is off. read_high_needs_reg_off
+ * makes the per-byte remap hold the line low while the regulator is on (the
+ * chip-ID read and every read in the write path). Set once per command. */
 void mem_util_set_read_high_mask(firestarter_handle_t* handle) {
     uint8_t line = handle->bus_config.vpp_line;
-    handle->bus_config.read_high_mask =
-        (line != 0xFF && using_p1_as_vpp(handle) && !vpp_line_switches_vpp(handle)) ? (uint32_t)1 << line : 0;
+    bool p1_vpp = line != 0xFF && using_p1_as_vpp(handle);
+    handle->bus_config.read_high_mask = p1_vpp ? (uint32_t)1 << line : 0;
+    handle->bus_config.read_high_needs_reg_off = p1_vpp && vpp_line_switches_vpp(handle);
+}
+
+/* Wait until VPE has fallen from the last regulator-on level to the idle level,
+ * so a read that switches VPE onto pin 1 never puts a programming voltage there. */
+void mem_util_wait_vpe_discharged(void) {
+    uint32_t elapsed = (uint32_t)millis() - rurp_get_regulator_off_ms();
+    if (elapsed < RURP_VPE_DISCHARGE_MS) {
+        delay(RURP_VPE_DISCHARGE_MS - elapsed);
+    }
 }
 
 /* Resolve the operation end in one place and clamp invalid region ends to
