@@ -14,7 +14,12 @@ extern "C" {
 #define WRITE_FLAG 0
 #define READ_FLAG 1
 
+/* Requires mem_util_set_read_high_mask() after the bus config is decoded: the
+ * remap applies the rw, VPP and read-high masks that it derives. */
 uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t address, uint8_t read_write);
+/* Derives every per-command bus mask (read_high_mask, rw_high_mask,
+ * vpp_high_mask), not only the read-high one. configure_memory() and
+ * dt_set_address() call it. */
 void mem_util_set_read_high_mask(firestarter_handle_t* handle);
 void mem_util_wait_vpe_discharged(void);
 /* Shared final read-and-compare pass after pulse verification converges.

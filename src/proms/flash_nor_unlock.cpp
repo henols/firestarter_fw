@@ -108,7 +108,9 @@ void flash_nor_unlock_erase_execute(firestarter_handle_t* handle) {
 void flash_nor_unlock_sector_erase(firestarter_handle_t* handle, uint32_t sector_address) {
     // The chip-erase sequence with the last cycle aimed at the sector.
     byte_flip_t sector_erase_seq[6];
-    flash_util_copy_P(sector_erase_seq, FLASH_ERASE, 6);
+    if (!flash_util_copy_P(sector_erase_seq, FLASH_ERASE, 6)) {
+        return;
+    }
     sector_erase_seq[5].address = sector_address;
     sector_erase_seq[5].byte = 0x30;
     flash_util_byte_flipping(handle, sector_erase_seq, 6);
