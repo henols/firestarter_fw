@@ -109,25 +109,9 @@ static bool sdp_tables_identical(const byte_flip_t* a, const byte_flip_t* b, siz
     return true;
 }
 
-#ifdef SDP_TRACE_DUMP
-static void dump_strobes(const char* tag) {
-    printf("##### %s total=%d overflow=%d\n", tag, strobe_count(), strobe_overflowed());
-    for (int i = 0; i < strobe_count(); i++) {
-        if (strobe_kind(i) == STROBE_KIND_DATA) {
-            printf("[%3d] DATA 0x%02X\n", i, strobe_value(i));
-        } else {
-            printf("[%3d] PIN  0x%02X -> %d\n", i, strobe_pin(i), strobe_value(i));
-        }
-    }
-}
-#endif
-
 void test_case1_ordered_capture_dip28_28c256(void) {
     firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[0]); /* AT28C256 / DIP28_28C256 */
     drive(&h, FLASH_DISABLE_WRITE_PROTECTION, 6, 0x00);
-#ifdef SDP_TRACE_DUMP
-    dump_strobes("case1_dip28_28c256_shipped");
-#endif
     sdp_assert_stream_equals(SDP_SHIPPED_DIP28_28C256, SDP_SHIPPED_DIP28_28C256_LEN,
         "Case 1: ordered capture, DIP28_28C256, FLASH_DISABLE_WRITE_PROTECTION (== EEPROM_SDP_DISABLE, 116-03 parity)");
 }

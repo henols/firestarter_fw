@@ -26,6 +26,7 @@ extern "C" {
 #include "flash_utils.h"
 #include "operation_utils.h"
 #include "../_shared/sdp_bus_config.h"
+#include "../_shared/frame_capture.h"
 #include "../_shared/sdp_expected.h"
 
 using namespace fakeit;
@@ -84,48 +85,15 @@ static void sdp_script_micros(const std::vector<uint32_t>& ticks, uint32_t tail 
     s_micros_tail = tail;
 }
 
-static std::vector<uint8_t> captured_frames;
-
-/* Walks captured_frames using rurp_log_id()'s fixed, documented wire layout
- * (test_rurp_log_id.cpp's own comment: 4-byte magic, 2-byte big-endian
- * length, 1 id byte, params, 1 crc byte, 1 anchor byte) and appends each
- * frame's id byte, IN ORDER, to *out_ids. Never reads param count from a
- * message-id lookup table -- the length field alone is sufficient to find
- * the next frame's start, so this stays correct regardless of how many
- * params any given id carries. */
-static void sdp_captured_frame_ids(std::vector<uint8_t>* out_ids) {
-    size_t offset = 0;
-    while (offset + 7 <= captured_frames.size()) {
-        uint16_t len_value = (uint16_t)(((uint16_t)captured_frames[offset + 4] << 8) | captured_frames[offset + 5]);
-        size_t frame_size = 4 + 2 + (size_t)len_value + 1;
-        if (offset + frame_size > captured_frames.size()) {
-            break; /* incomplete trailing frame -- not expected in these cases */
-        }
-        out_ids->push_back(captured_frames[offset + 6]);
-        offset += frame_size;
-    }
-}
-
-/* Content-order membership check over an already-enumerated id list --
- * never a count. */
-static bool sdp_ids_contains(const std::vector<uint8_t>& ids, uint8_t id) {
-    for (size_t i = 0; i < ids.size(); i++) {
-        if (ids[i] == id) {
-            return true;
-        }
-    }
-    return false;
-}
-
 /* decodes the u32 parameter of the FIRST captured frame
  * whose id byte matches `target_id`, walking captured_frames with the SAME
- * documented wire layout sdp_captured_frame_ids uses above (4-byte magic,
+ * documented wire layout captured_frame_ids uses above (4-byte magic,
  * 2-byte big-endian length, 1 id byte, params, 1 crc byte, 1 anchor byte).
  * len_value = 1 (id) + param_count + 1 (crc) (test_rurp_log_id.cpp's own
  * comment), so a *_U32 id -- exactly 4 param bytes, big-endian
  * (rurp_log_id_u32, rurp_serial_utils.cpp) -- always carries len_value == 6.
  * Returns true and writes *out_value on a match; false if the id never
- * appears. Membership alone (sdp_ids_contains) is NOT enough to prove a
+ * appears. Membership alone (ids_contains) is NOT enough to prove a
  * tracker reports the right number -- a tracker that always reported zero,
  * or the LAST interval instead of the worst, would still pass a
  * membership-only check. */
@@ -155,11 +123,7 @@ static bool sdp_decode_u32_param_for_id(uint8_t target_id, uint32_t* out_value) 
 
 void setUp(void) {
     ArduinoFakeReset();
-    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t)))
-        .AlwaysDo([](uint8_t b) -> size_t {
-            captured_frames.push_back(b);
-            return (size_t)1;
-        });
+    capture_serial_writes();
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
@@ -353,42 +317,6 @@ static void drive_erase_op(firestarter_handle_t* h, rurp_register_t ctrl_seed) {
     h->firestarter_operation_main(h);
 }
 
-#ifdef SDP_TRACE_DUMP
-static void dump_strobes_ready_to_paste(const char* tag) {
-    printf("##### %s total=%d overflow=%d\n", tag, strobe_count(), strobe_overflowed());
-    for (int i = 0; i < strobe_count(); i++) {
-        if (strobe_kind(i) == STROBE_KIND_DATA) {
-            printf("    {1, 0, 0x%02X},\n", strobe_value(i));
-        } else {
-            printf("    {2, 0x%02X, %d},\n", strobe_pin(i), strobe_value(i));
-        }
-    }
-}
-
-void test_dump_lock_goldens(void) {
-    firestarter_handle_t h0 = make_lock_handle(SDP_BUS_CONFIGS[0]); /* AT28C256 / DIP28_28C256 */
-    drive_lock_op(&h0, 0x00);
-    dump_strobes_ready_to_paste("LOCK_DIP28_28C256");
-
-    firestarter_handle_t h1 = make_lock_handle(SDP_BUS_CONFIGS[1]); /* AT28C64 / DIP28_28C64 */
-    drive_lock_op(&h1, 0x00);
-    dump_strobes_ready_to_paste("LOCK_DIP28_28C64");
-
-    firestarter_handle_t h2 = make_lock_handle(SDP_BUS_CONFIGS[2]); /* AT28C16 / DIP24_2816 */
-    drive_lock_op(&h2, 0x00);
-    dump_strobes_ready_to_paste("LOCK_DIP24_2816");
-
-    /* DIP32_28C512_EEPROM (row 3, AT28C010): deliberately stale upper-address
-     * CONTROL seed (CTRL_ADDRESS_LINE_17|18), mirroring case 4's mechanism --
-     * this pinout's remap is the identity function under a zero seed, so a
-     * zero-seeded dump would prove almost nothing (only the OE-edge
-     * reordering, which is already covered by the FIXED golden itself). */
-    firestarter_handle_t h3 = make_lock_handle(SDP_BUS_CONFIGS[3]); /* AT28C010 */
-    drive_lock_op(&h3, CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18);
-    dump_strobes_ready_to_paste("LOCK_DIP32_28C512_EEPROM");
-}
-#endif
-
 void test_case1_at28c256_stream_matches_fixed(void) {
     firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[0]); /* AT28C256 */
     drive_write_init(&h, 0x00);
@@ -547,13 +475,13 @@ void test_case7_mismatching_chip_id_with_force_warns(void) {
      * swap trips -- the response_code assertion above it structurally cannot
      * see that transposition. */
     std::vector<uint8_t> ids;
-    sdp_captured_frame_ids(&ids);
-    TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_WARN_CHIP_ID_MISMATCH),
+    captured_frame_ids(&ids);
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_WARN_CHIP_ID_MISMATCH),
         "Case 7 (chip-ID severity fork, WARN direction): MSG_WARN_CHIP_ID_MISMATCH must appear in "
         "the captured frame ids under FLAG_FORCE -- severity rides entirely in the id "
         "(LOG_WARN_ID_BYTES / LOG_ERROR_ID_BYTES are the same alias of LOG_ID_BYTES), so this leg is "
         "what a transposed id would trip");
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_ERR_CHIP_ID_MISMATCH),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_CHIP_ID_MISMATCH),
         "Case 7 (chip-ID severity fork, WARN direction): MSG_ERR_CHIP_ID_MISMATCH must NOT also "
         "appear under FLAG_FORCE -- this pins the fork in both directions, not just the presence half");
 
@@ -579,12 +507,12 @@ void test_case7_mismatching_chip_id_with_force_warns(void) {
         "Case 7 (chip-ID severity fork, ERROR direction): mismatching identity WITHOUT FLAG_FORCE "
         "must refuse with RESPONSE_CODE_ERROR");
     std::vector<uint8_t> ids2;
-    sdp_captured_frame_ids(&ids2);
-    TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(ids2, (uint8_t)MSG_ERR_CHIP_ID_MISMATCH),
+    captured_frame_ids(&ids2);
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids2, (uint8_t)MSG_ERR_CHIP_ID_MISMATCH),
         "Case 7 (chip-ID severity fork, ERROR direction): MSG_ERR_CHIP_ID_MISMATCH must appear in "
         "the captured frame ids without FLAG_FORCE -- this re-drive is what proves the id is "
         "conditional on the flag rather than always emitted");
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids2, (uint8_t)MSG_WARN_CHIP_ID_MISMATCH),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids2, (uint8_t)MSG_WARN_CHIP_ID_MISMATCH),
         "Case 7 (chip-ID severity fork, ERROR direction): MSG_WARN_CHIP_ID_MISMATCH must NOT appear "
         "without FLAG_FORCE -- pins the fork in both directions inside this one case");
 }
@@ -664,7 +592,7 @@ void test_case11_tblc_budget_exceeded_warns(void) {
     drive_write_init(&h, 0x00);
 
     std::vector<uint8_t> ids;
-    sdp_captured_frame_ids(&ids);
+    captured_frame_ids(&ids);
 
     int done_idx = -1, warn_idx = -1;
     for (size_t i = 0; i < ids.size(); i++) {
@@ -691,8 +619,8 @@ void test_case11_tblc_budget_exceeded_warns(void) {
     firestarter_handle_t h2 = make_sdp_handle(SDP_BUS_CONFIGS[0]);
     drive_write_init(&h2, 0x00);
     std::vector<uint8_t> ids_default;
-    sdp_captured_frame_ids(&ids_default);
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids_default, (uint8_t)MSG_WARN_SDP_TBLC_EXCEEDED),
+    captured_frame_ids(&ids_default);
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids_default, (uint8_t)MSG_WARN_SDP_TBLC_EXCEEDED),
         "Case 11 (anti-hollow control): with the default elapsed value (0), MSG_WARN_SDP_TBLC_EXCEEDED "
         "must NOT appear -- proves the check is conditional on the measured duration, not a branch "
         "that always fires");
@@ -703,30 +631,30 @@ void test_case12_flag_absent_emits_exactly_two_report_frames(void) {
     drive_write_init(&h, 0x00);
 
     std::vector<uint8_t> ids;
-    sdp_captured_frame_ids(&ids);
+    captured_frame_ids(&ids);
     TEST_ASSERT_EQUAL_MESSAGE(2, (int)ids.size(),
         "Case 12 (OBS-05): the flag-absent default path must emit EXACTLY two report frames");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE((uint8_t)MSG_INFO_SDP_UNLOCK, ids.size() > 0 ? ids[0] : (uint8_t)0xFF,
         "Case 12: frame 0 must be MSG_INFO_SDP_UNLOCK");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE((uint8_t)MSG_INFO_SDP_UNLOCK_DONE_US, ids.size() > 1 ? ids[1] : (uint8_t)0xFF,
         "Case 12: frame 1 must be MSG_INFO_SDP_UNLOCK_DONE_US");
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_WARN_SDP_UNLOCK_SKIPPED),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_WARN_SDP_UNLOCK_SKIPPED),
         "Case 12: the flag-absent path must never emit MSG_WARN_SDP_UNLOCK_SKIPPED");
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_WARN_SDP_TBLC_EXCEEDED),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_WARN_SDP_TBLC_EXCEEDED),
         "Case 12: the flag-absent default (elapsed 0) path must never emit MSG_WARN_SDP_TBLC_EXCEEDED");
 
     captured_frames.clear();
     firestarter_handle_t h_skip = make_sdp_handle(SDP_BUS_CONFIGS[0], FLAG_SKIP_SDP_UNLOCK);
     drive_write_init(&h_skip, 0x00);
     std::vector<uint8_t> ids_skip;
-    sdp_captured_frame_ids(&ids_skip);
+    captured_frame_ids(&ids_skip);
     TEST_ASSERT_EQUAL_MESSAGE(1, (int)ids_skip.size(),
         "Case 12 (skip mirror, D-02): the skip path must emit EXACTLY one frame");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE((uint8_t)MSG_WARN_SDP_UNLOCK_SKIPPED, ids_skip.size() > 0 ? ids_skip[0] : (uint8_t)0xFF,
         "Case 12 (skip mirror): the one frame must be MSG_WARN_SDP_UNLOCK_SKIPPED");
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids_skip, (uint8_t)MSG_INFO_SDP_UNLOCK),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids_skip, (uint8_t)MSG_INFO_SDP_UNLOCK),
         "Case 12 (skip mirror): the skip path must never emit MSG_INFO_SDP_UNLOCK");
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids_skip, (uint8_t)MSG_INFO_SDP_UNLOCK_DONE_US),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids_skip, (uint8_t)MSG_INFO_SDP_UNLOCK_DONE_US),
         "Case 12 (skip mirror): the skip path must never emit MSG_INFO_SDP_UNLOCK_DONE_US");
 }
 
@@ -863,7 +791,7 @@ void test_case20_lock_report_shape_and_response_code(void) {
     drive_lock_op(&h, 0x00);
 
     std::vector<uint8_t> ids;
-    sdp_captured_frame_ids(&ids);
+    captured_frame_ids(&ids);
 
     int lock_idx = -1, done_idx = -1;
     for (size_t i = 0; i < ids.size(); i++) {
@@ -888,12 +816,12 @@ void test_case20_lock_report_shape_and_response_code(void) {
         "Case 20 (D-12): handle->response_code must still be RESPONSE_CODE_OK after the lock op -- "
         "see this case's header comment for the full reasoning and the two rejected alternatives");
 
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_INFO_SDP_UNLOCK),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_INFO_SDP_UNLOCK),
         "Case 20: the lock path must never emit MSG_INFO_SDP_UNLOCK -- the lock and unlock report "
         "surfaces must not be conflated");
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_INFO_SDP_UNLOCK_DONE_US),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_INFO_SDP_UNLOCK_DONE_US),
         "Case 20: the lock path must never emit MSG_INFO_SDP_UNLOCK_DONE_US");
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_WARN_SDP_UNLOCK_SKIPPED),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_WARN_SDP_UNLOCK_SKIPPED),
         "Case 20: the lock path must never emit MSG_WARN_SDP_UNLOCK_SKIPPED -- that id belongs "
         "only to the unlock's skip path");
 }
@@ -919,8 +847,8 @@ void test_case21_lock_tblc_budget_warn_fires(void) {
     drive_lock_op(&h, 0x00);
 
     std::vector<uint8_t> ids;
-    sdp_captured_frame_ids(&ids);
-    TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_WARN_SDP_TBLC_EXCEEDED),
+    captured_frame_ids(&ids);
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_WARN_SDP_TBLC_EXCEEDED),
         "Case 21 (D-14): an over-budget elapsed value must make MSG_WARN_SDP_TBLC_EXCEEDED appear "
         "in the captured frame ids -- F-118-01 measured 572 us against the unlock's 600 us budget "
         "(only 4.7% headroom) on real hardware, so the lock's 300 us budget is genuinely "
@@ -936,14 +864,14 @@ void test_case22_lock_tblc_budget_warn_does_not_fire_at_normal_elapsed(void) {
     drive_lock_op(&h, 0x00);
 
     std::vector<uint8_t> ids;
-    sdp_captured_frame_ids(&ids);
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_WARN_SDP_TBLC_EXCEEDED),
+    captured_frame_ids(&ids);
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_WARN_SDP_TBLC_EXCEEDED),
         "Case 22 (D-14 anti-hollow control): with a normal (in-budget) elapsed value, "
         "MSG_WARN_SDP_TBLC_EXCEEDED must NOT appear");
-    TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_INFO_SDP_LOCK),
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_INFO_SDP_LOCK),
         "Case 22: MSG_INFO_SDP_LOCK must still be present -- proves frames WERE captured, so the "
         "WARN's absence is meaningful rather than vacuous");
-    TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_INFO_SDP_LOCK_DONE_US),
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_INFO_SDP_LOCK_DONE_US),
         "Case 22: MSG_INFO_SDP_LOCK_DONE_US must also be present, for the same reason");
 }
 
@@ -976,14 +904,14 @@ void test_case23_standalone_unlock_matches_auto_unlock_stream(void) {
     int unlock_len = sdp_snapshot(unlock_snapshot, 64);
 
     std::vector<uint8_t> unlock_ids;
-    sdp_captured_frame_ids(&unlock_ids);
-    TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(unlock_ids, (uint8_t)MSG_INFO_SDP_UNLOCK),
+    captured_frame_ids(&unlock_ids);
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(unlock_ids, (uint8_t)MSG_INFO_SDP_UNLOCK),
         "Case 23: the standalone unlock's captured frame ids must contain MSG_INFO_SDP_UNLOCK");
-    TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(unlock_ids, (uint8_t)MSG_INFO_SDP_UNLOCK_DONE_US),
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(unlock_ids, (uint8_t)MSG_INFO_SDP_UNLOCK_DONE_US),
         "Case 23: the standalone unlock's captured frame ids must contain MSG_INFO_SDP_UNLOCK_DONE_US");
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(unlock_ids, (uint8_t)MSG_INFO_SDP_LOCK),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(unlock_ids, (uint8_t)MSG_INFO_SDP_LOCK),
         "Case 23: the standalone unlock must never emit MSG_INFO_SDP_LOCK");
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(unlock_ids, (uint8_t)MSG_INFO_SDP_LOCK_DONE_US),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(unlock_ids, (uint8_t)MSG_INFO_SDP_LOCK_DONE_US),
         "Case 23: the standalone unlock must never emit MSG_INFO_SDP_LOCK_DONE_US");
 
     /* Clear captured_frames before the second drive so nothing from the
@@ -1033,8 +961,8 @@ void test_case24_null_main_refusal_emits_not_supported_and_error_response(void) 
         "replacing the pre-119-07 silent RESPONSE_CODE_OK phantom success");
 
     std::vector<uint8_t> ids;
-    sdp_captured_frame_ids(&ids);
-    TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_ERR_NOT_SUPPORTED),
+    captured_frame_ids(&ids);
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_NOT_SUPPORTED),
         "Case 24 (D-06/D-07): MSG_ERR_NOT_SUPPORTED must appear in the captured frame ids -- the "
         "generic refusal reuses this existing id (already eprom_erase's FLAG_CAN_ERASE refusal); no "
         "new catalog id was added");
@@ -1122,8 +1050,8 @@ void test_case25_cmd_erase_on_0x0d_dispatches_and_succeeds_erase03(void) {
         "refusal");
 
     std::vector<uint8_t> ids;
-    sdp_captured_frame_ids(&ids);
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_ERR_NOT_SUPPORTED),
+    captured_frame_ids(&ids);
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_NOT_SUPPORTED),
         "Case 25 (ERASE-03): MSG_ERR_NOT_SUPPORTED must NOT appear in the captured frame ids for a "
         "CMD_ERASE attempt on protocol 0x0D -- an unexpected refusal here is exactly the regression "
         "this leg now guards against, kept as a negative-presence check rather than deleted");
@@ -1211,8 +1139,8 @@ void test_case26_write_execute_reports_worst_interval_on_completing_write(void) 
         "report ERROR");
 
     std::vector<uint8_t> ids;
-    sdp_captured_frame_ids(&ids);
-    TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_INFO_PAGE_LOAD_WORST_US),
+    captured_frame_ids(&ids);
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_INFO_PAGE_LOAD_WORST_US),
         "Case 26 (D-16): MSG_INFO_PAGE_LOAD_WORST_US must appear in the captured frame ids after a "
         "completing write");
 
@@ -1254,12 +1182,12 @@ void test_case27_write_execute_reports_worst_interval_on_aborting_write(void) {
         "the write");
 
     std::vector<uint8_t> ids;
-    sdp_captured_frame_ids(&ids);
-    TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_INFO_PAGE_LOAD_WORST_US),
+    captured_frame_ids(&ids);
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_INFO_PAGE_LOAD_WORST_US),
         "Case 27 (T-119-08-UNREACHABLE): MSG_INFO_PAGE_LOAD_WORST_US must still appear even though "
         "the write aborted on its first page -- the single-exit restructure is what makes this "
         "reachable");
-    TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_ERR_EEPROM_TIMEOUT),
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_EEPROM_TIMEOUT),
         "Case 27: the page-write failure's own error id (MSG_ERR_EEPROM_TIMEOUT) must also appear");
 
     uint32_t decoded = 0;
@@ -1283,12 +1211,12 @@ void test_case28_write_execute_no_tblc_budget_warn(void) {
     h.firestarter_operation_main(&h);
 
     std::vector<uint8_t> ids;
-    sdp_captured_frame_ids(&ids);
-    TEST_ASSERT_FALSE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_WARN_SDP_TBLC_EXCEEDED),
+    captured_frame_ids(&ids);
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_WARN_SDP_TBLC_EXCEEDED),
         "Case 28 (T-119-08-DECLINEDWARN): MSG_WARN_SDP_TBLC_EXCEEDED must NOT appear on the "
         "page-load path, even at a scripted interval (1000 us) far above AT28C_TBLC_MAX_US (100) "
         "-- D-16 declines a runtime budget compare in this hot path");
-    TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_INFO_PAGE_LOAD_WORST_US),
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_INFO_PAGE_LOAD_WORST_US),
         "Case 28: MSG_INFO_PAGE_LOAD_WORST_US must still be present -- proves frames WERE captured, "
         "so the WARN's absence is meaningful rather than vacuous");
 }
@@ -1311,8 +1239,8 @@ void test_case29_write_execute_report_preserves_response_code(void) {
         "even on a cleanly completing write");
 
     std::vector<uint8_t> ids;
-    sdp_captured_frame_ids(&ids);
-    TEST_ASSERT_TRUE_MESSAGE(sdp_ids_contains(ids, (uint8_t)MSG_INFO_PAGE_LOAD_WORST_US),
+    captured_frame_ids(&ids);
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_INFO_PAGE_LOAD_WORST_US),
         "Case 29: MSG_INFO_PAGE_LOAD_WORST_US must still be present -- proves the report ran, so "
         "the response_code check above is meaningful rather than vacuous");
 }
@@ -1488,10 +1416,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_case31_erase_stream_head_equals_sdp_disable_golden_erase04);
     RUN_TEST(test_case32_erase_stream_terminates_on_chip_erase_byte_erase04);
     RUN_TEST(test_case33_erase_stream_diverges_from_bare_chip_erase_at_exact_index_erase04);
-
-#ifdef SDP_TRACE_DUMP
-    RUN_TEST(test_dump_lock_goldens);
-#endif
 
     return UNITY_END();
 }

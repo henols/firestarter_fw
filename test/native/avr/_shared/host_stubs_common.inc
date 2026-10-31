@@ -21,8 +21,7 @@
  *                                      test_flash_intel_vpp mocks it).
  *   - HOST_STUBS_CUSTOM_READ_DATA_BUFFER — suite provides its own stateful
  *                                      rurp_read_data_buffer that models chip
- *                                      read-back (e.g., test_trace_eprom_v131
- *                                      converges the write-verify loop).
+ *                                      read-back.
  *
  * Scope: only compiled into [env:native] via PIO's automatic discovery of
  * files under test/. Production builds (env:uno, env:leonardo) never see
@@ -59,10 +58,6 @@
  *     native suite TU sees that macro whether or not it cares about
  *     hardware-revision behavior.
  * (e) No existing suite may define this flag — flag off is byte-exact. */
-
-#if defined(HOST_STUBS_RECORD_TIMING) && !defined(HOST_STUBS_REAL_REGISTER_UTILS)
-#error "HOST_STUBS_RECORD_TIMING requires HOST_STUBS_REAL_REGISTER_UTILS (its sequence key is s_strobe_count, which only exists in that block)"
-#endif
 
 #ifdef HOST_STUBS_REAL_REGISTER_UTILS
 /* rurp_write_to_register and rurp_read_from_register come from the REAL
@@ -102,60 +97,6 @@ static void strobe_push(uint8_t kind, uint8_t pin, uint8_t value) {
         s_strobe_overflow = 1;  /* tail dropped; prefix stays valid — Pitfall 2 */
     }
 }
-
-/*
- * (a) Opt-IN: the defining suite's host_stubs.cpp must `#define
- *     HOST_STUBS_RECORD_TIMING` BEFORE `#include`-ing this file, in addition
- *     to HOST_STUBS_REAL_REGISTER_UTILS (enforced above by the #error).
- * (b) Composition, stated correctly (unlike the strobe block's own comment
- *     above, which claims a composition the preprocessor does not actually
- *     provide): this guard lives INSIDE the HOST_STUBS_REAL_REGISTER_UTILS
- *     arm, with no #elif arm of its own, so it can only ever be compiled
- *     together with the strobe recorder — it can never silently replace it.
- * (c) The true pre-existing suite count, counted from this repo's own
- *     platformio.ini test_filter lists (both pinned native envs) at the time
- *     this block was added, is 17 — not the 14 the strobe block's own
- *     comment above states. That count is stale; it is recorded as F-138-06
- *     and deliberately left unfixed in this file (the correction lives in
- *     138-03-TRACE-CAPTURE.md instead), since this file's stability is
- *     load-bearing for other suites.
- * (d) Sequence key: each timing entry stores seq = s_strobe_count AT PUSH
- *     TIME, so the merged-stream comparator (eprom_v131_expected.h) can
- *     splice a timing entry immediately before the strobe at that index (or
- *     after the last strobe, if seq == strobe_count()).
- * (e) No existing suite may define this flag — flag off is byte-exact,
- *     because every new line below lives inside this #ifdef. */
-#ifdef HOST_STUBS_RECORD_TIMING
-#define HOST_STUBS_MAX_TIMINGS 512
-
-enum { TIMING_KIND_DELAY_US = 3, TIMING_KIND_DELAY_MS = 4 };
-struct timing_entry_t {
-    uint8_t kind;
-    uint32_t us;
-    int seq;
-};
-static timing_entry_t s_timings[HOST_STUBS_MAX_TIMINGS];
-static int s_timing_count = 0;
-static int s_timing_overflow = 0;
-
-extern "C" void clear_timings()     { s_timing_count = 0; s_timing_overflow = 0; }
-extern "C" int  timing_count()      { return s_timing_count; }
-extern "C" int  timing_overflowed() { return s_timing_overflow; }
-extern "C" uint8_t  timing_kind(int i)          { return s_timings[i].kind; }
-extern "C" uint32_t timing_us(int i)            { return s_timings[i].us; }
-extern "C" int       timing_after_strobe(int i) { return s_timings[i].seq; }
-
-extern "C" void timing_push(uint8_t kind, uint32_t us) {
-    if (s_timing_count < HOST_STUBS_MAX_TIMINGS) {
-        s_timings[s_timing_count].kind = kind;
-        s_timings[s_timing_count].us   = us;
-        s_timings[s_timing_count].seq  = s_strobe_count;
-        s_timing_count++;
-    } else {
-        s_timing_overflow = 1;  /* tail dropped; prefix stays valid — Pitfall 2 */
-    }
-}
-#endif /* HOST_STUBS_RECORD_TIMING */
 
 extern "C" void rurp_write_data_buffer(uint8_t data) {
     strobe_push(STROBE_KIND_DATA, 0, data);

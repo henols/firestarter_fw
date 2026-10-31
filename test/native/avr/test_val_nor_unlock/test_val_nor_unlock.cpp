@@ -55,11 +55,7 @@ static const bus_config_t DIP32_FLASH_BUS = {
     0x00000000UL
 };
 
-/* Recording API — symbols compiled because host_stubs.cpp defines HOST_STUBS_RECORD_BUS. */
-extern "C" void clear_bus_recording();
-extern "C" int  bus_recording_count();
-extern "C" uint8_t recorded_reg(int i);
-extern "C" rurp_register_t recorded_data(int i);
+#include "../_shared/bus_recording.h"
 
 static std::vector<uint8_t> s_wire_bytes;
 
@@ -119,23 +115,6 @@ static firestarter_handle_t make_handle(uint8_t cmd) {
     h.chip_id    = 0; /* skip chip-id branch */
     h.mem_size   = 524288; /* 512 KB (AM29F040) */
     return h;
-}
-
-/* ─── Helper: assert no VPP-enable bits in any CONTROL_REGISTER write ──────── */
-/* Note: CTRL_VPP_VPE_DROP_ENABLE is 0x100 when HARDWARE_REVISION is defined —
- * it does not fit in the uint8_t recording buffer. Check only the 8-bit-fit
- * VPP-enable bits: CTRL_VPP_REGULATOR_ENABLE (0x80) and CTRL_VPP_P1_ENABLE (0x08). */
-static void assert_no_vpp_in_recording(const char* ctx) {
-    for (int i = 0; i < bus_recording_count(); i++) {
-        if (recorded_reg(i) == CONTROL_REGISTER) {
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_REGULATOR_ENABLE,
-                recorded_data(i), ctx);
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_P1_ENABLE,
-                recorded_data(i), ctx);
-        }
-    }
 }
 
 /* configure-only: CMD_READ must record zero VPP-enable bits */

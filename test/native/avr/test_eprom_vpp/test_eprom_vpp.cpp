@@ -36,10 +36,7 @@ using namespace fakeit;
 extern "C" void set_mock_vpp_mv(uint16_t mv);
 extern "C" void set_mock_hw_rev(uint8_t rev);
 
-extern "C" void clear_bus_recording();
-extern "C" int bus_recording_count();
-extern "C" uint8_t recorded_reg(int i);
-extern "C" rurp_register_t recorded_data(int i);
+#include "../_shared/bus_recording.h"
 
 /* Every high-voltage control bit at the full register width. */
 static const rurp_register_t kHvBits = (rurp_register_t)(CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE |

@@ -5,20 +5,13 @@ transport/hardware functions; assertions operate on register writes and command
 outcomes, never source-code spellings. Frames are built from the generated
 include/command_frame.h offsets.
 """
-import os
 from pathlib import Path
-import shutil
-import subprocess
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-
-ARDUINO = """#pragma once
-#include <stdint.h>
-#include <stddef.h>
-unsigned long millis();
-"""
+from ._host_build import (
+    FAKE_ARDUINO_H, INCLUDE, REPO_ROOT, compile_ok, host_cc, host_cxx, run_binary,
+)
 
 DRIVER = r"""
 #include <assert.h>
@@ -236,34 +229,24 @@ int main() {
 }
 """
 
-def _compile(argv: list[str]) -> None:
-    proc = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True)
-    assert proc.returncode == 0, (
-        f"compiler failed: {' '.join(argv)}\n{proc.stdout}\n{proc.stderr}"
-    )
-
 # AVR builds define HARDWARE_REVISION; the py32 build does not.
 @pytest.mark.parametrize("defines", [[], ["-DHARDWARE_REVISION"]],
                          ids=["no-hw-revision", "hw-revision"])
 def test_command_lifecycle_and_safe_cleanup(tmp_path: Path, defines: list[str]) -> None:
-    cc = shutil.which(os.environ.get("CC", "gcc"))
-    cxx = shutil.which(os.environ.get("CXX", "g++"))
-    assert cc and cxx, "host C and C++ compilers are required (no silent skip)"
-
-    (tmp_path / "Arduino.h").write_text(ARDUINO)
+    (tmp_path / "Arduino.h").write_text(FAKE_ARDUINO_H)
     main = tmp_path / "driver.cpp"
     main.write_text(DRIVER)
     includes = [
-        "-I", str(tmp_path), "-I", str(ROOT),
-        "-I", str(ROOT / "include"),
+        "-I", str(tmp_path), "-I", str(REPO_ROOT),
+        "-I", str(INCLUDE),
     ]
     decoder_obj = tmp_path / "command_decoder.o"
     exe = tmp_path / "driver"
-    _compile([cc, "-std=c11", "-c", *defines, *includes,
-              str(ROOT / "src/command_decoder.c"), "-o", str(decoder_obj)])
-    _compile([cxx, "-std=c++17", *defines, *includes, str(main),
-              str(decoder_obj), "-o", str(exe)])
-    result = subprocess.run([str(exe)], cwd=ROOT, capture_output=True, text=True)
+    compile_ok([host_cc(), "-std=c11", "-c", *defines, *includes,
+                str(REPO_ROOT / "src/command_decoder.c"), "-o", str(decoder_obj)], cwd=REPO_ROOT)
+    compile_ok([host_cxx(), "-std=c++17", *defines, *includes, str(main),
+                str(decoder_obj), "-o", str(exe)], cwd=REPO_ROOT)
+    result = run_binary(exe, cwd=REPO_ROOT)
     assert result.returncode == 0, (
         f"dispatcher integration test failed:\n{result.stdout}\n{result.stderr}"
     )

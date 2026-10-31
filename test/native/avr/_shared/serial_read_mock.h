@@ -4,12 +4,12 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * ArduinoFake Serial.read / available / peek
- * queued-byte mock helper (RED scaffold).
+ * ArduinoFake Serial.read / available / peek / readBytes queued-byte mock
+ * helper, shared by the COBS frame suites.
  *
- * Provides a single helper function that wires ArduinoFake's Serial mock to a
- * shared std::vector<uint8_t> front-cursor so a full COBS frame stream can be
- * driven into rurp_communication_read_data() without a real UART.
+ * It wires ArduinoFake's Serial mock to a std::vector<uint8_t> front-cursor,
+ * so a full or partial COBS frame stream can be driven into
+ * rurp_communication_read_data() without a real UART.
  *
  * Usage:
  *
@@ -24,15 +24,11 @@
  *       setup_serial_read_mock(rx_queue, rx_pos);
  *   }
  *
- * Mirrors the write-mock cadence in test_rurp_log_id.cpp (setUp lines 52-67).
- * Uses OverloadedMethod to resolve the single-byte read/peek overloads.
- *
  * read()       — pops the front byte (advances rx_pos); returns -1 when empty.
- * available()  — returns (int)(rx_queue.size() - rx_pos).
+ * available()  — returns remaining byte count; 0 when empty.
  * peek()       — returns front byte without consuming; -1 when empty.
  * readBytes()  — copies up to `length` bytes from the queue into `buffer`,
- *                returns the number of bytes copied (for the legacy
- *                len_u16+XOR decoder used by rurp_communication_read_bytes).
+ *                returns the number of bytes copied.
  */
 
 #pragma once
@@ -68,7 +64,7 @@ static void setup_serial_read_mock(const std::vector<uint8_t>& queue, size_t& po
             return (int)(uint8_t)queue[pos++];
         });
 
-    /* Serial.available() — returns remaining byte count. */
+    /* Serial.available() — returns remaining byte count; 0 when exhausted. */
     When(Method(ArduinoFake(Serial), available))
         .AlwaysDo([&queue, &pos]() -> int {
             int remaining = (int)(queue.size() - pos);
@@ -85,6 +81,8 @@ static void setup_serial_read_mock(const std::vector<uint8_t>& queue, size_t& po
             return (int)(uint8_t)queue[pos];
         });
 
+    /* Serial.readBytes(char* buf, size_t len) — copies up to `len` bytes
+     * from the queue into `buf`, advances pos, returns count copied. */
     When(Method(ArduinoFake(Serial), readBytes))
         .AlwaysDo([&queue, &pos](char* buf, size_t length) -> size_t {
             size_t count = 0;

@@ -16,8 +16,8 @@
  * into `Serial.read` / `Serial.available` / `Serial.peek` —
  * mirroring the write-mock cadence in test_rurp_log_id.cpp.
  *
- * Reference CRC: table-free ref_crc8 (copied from test_rurp_log_id.cpp) to
- * build expected CRC8 bytes independently of the production PROGMEM table.
+ * Reference CRC: table-free ref_crc8 (_shared/frame_ref.h) builds expected
+ * CRC8 bytes independently of the production PROGMEM table.
  *
  * Scope guard: this file does NOT call the frozen log/telemetry functions.
  * The magic-preamble frame path is UNCHANGED in v1.10 (ADR §4.2).
@@ -33,7 +33,9 @@
 #include <vector>
 
 /* Shared mock helper — wires Serial.read/available/peek to a queued vector. */
-#include "serial_read_mock.h"
+#include "../_shared/serial_read_mock.h"
+/* Reference CRC8 and COBS encoder, independent of the production code. */
+#include "../_shared/frame_ref.h"
 
 extern "C" {
 #include "rurp_shield.h"
@@ -49,78 +51,6 @@ static char data_buffer[DATA_BUFFER_SIZE];
 static firestarter_handle_t op_handle;
 static std::vector<uint8_t> rx_queue;
 static size_t rx_pos;
-
-/* Reference CRC8 (poly 0x07, seed 0x00, no refl, no XOR) — table-free.    */
-/* Copied from test_rurp_log_id.cpp:76-85 so this suite is fully independent */
-/* of the production CRC8_TABLE in rurp_serial_utils.cpp.                   */
-static uint8_t ref_crc8(const uint8_t* data, size_t n) {
-    uint8_t crc = 0;
-    for (size_t i = 0; i < n; i++) {
-        crc ^= data[i];
-        for (int k = 0; k < 8; k++) {
-            crc = (crc & 0x80)
-                      ? (uint8_t)((crc << 1) ^ 0x07)
-                      : (uint8_t)(crc << 1);
-        }
-    }
-    return crc;
-}
-
-/* COBS encode helper — test-side only, used to build expected byte streams. */
-/*                                                                           */
-/* Encodes `src[0..len-1]` into `dst`, returns encoded byte count (without  */
-/* the trailing 0x00 delimiter — caller appends it).                        */
-/*                                                                           */
-/* Standard COBS: scan for 0x00 or end of run (≤254 non-zero bytes), emit  */
-/* run-code byte (run_len+1), then the non-zero bytes.  A 0x00 payload byte */
-/* emits a run-code of 1 with no data bytes.  A 254-run code byte is 0xFF   */
-/* (no implicit zero follows it per RFC COBS).                               */
-static size_t test_cobs_encode(const uint8_t* src, size_t len, uint8_t* dst) {
-    size_t out = 0;
-    size_t code_pos = out++;        /* placeholder for first run-code */
-    uint8_t code = 1;               /* run_len + 1 */
-
-    for (size_t i = 0; i < len; i++) {
-        if (src[i] == 0x00) {
-            dst[code_pos] = code;
-            code_pos = out++;
-            code = 1;
-        } else {
-            dst[out++] = src[i];
-            code++;
-            if (code == 0xFF) {
-                /* 254-run boundary: emit now, start new run without zero */
-                dst[code_pos] = code;
-                code_pos = out++;
-                code = 1;
-            }
-        }
-    }
-    dst[code_pos] = code;
-    return out;
-}
-
-/* Build the COBS frame byte sequence (without leading '#') into `out_vec`:
- *   COBS(payload + CRC8(payload)) + 0x00
- * This is what rurp_communication_read_data() receives after '#' is consumed. */
-static void build_cobs_frame_bytes(
-    const uint8_t* payload, size_t payload_len,
-    std::vector<uint8_t>& out_vec
-) {
-    uint8_t crc = ref_crc8(payload, payload_len);
-
-    /* Logical stream = payload + crc byte */
-    std::vector<uint8_t> src(payload, payload + payload_len);
-    src.push_back(crc);
-
-    /* COBS-encode: max encoded size = len + len/254 + 1 */
-    size_t max_enc = src.size() + src.size() / 254 + 2;
-    std::vector<uint8_t> encoded(max_enc);
-    size_t enc_len = test_cobs_encode(src.data(), src.size(), encoded.data());
-
-    out_vec.insert(out_vec.end(), encoded.data(), encoded.data() + enc_len);
-    out_vec.push_back(0x00);  /* frame delimiter */
-}
 
 /* setUp / tearDown                                                          */
 

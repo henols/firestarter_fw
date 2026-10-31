@@ -9,19 +9,9 @@ The host side of each scenario follows what firestarter_app 3.2.4 sends:
 "OK" acks, '#' data frames and a "DONE" only in answer to a data request
 after its file is exhausted.
 """
-import os
 from pathlib import Path
-import shutil
-import subprocess
 
-ROOT = Path(__file__).resolve().parents[1]
-
-ARDUINO = """#pragma once
-#include <stdint.h>
-#include <stddef.h>
-unsigned long millis();
-void delay(unsigned long ms);
-"""
+from ._host_build import FAKE_ARDUINO_H, INCLUDE, REPO_ROOT, compile_ok, host_cxx, run_binary
 
 DRIVER = r"""
 #include <assert.h>
@@ -256,26 +246,16 @@ int main() {
 """
 
 
-def _compile(argv: list[str]) -> None:
-    proc = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True)
-    assert proc.returncode == 0, (
-        f"compiler failed: {' '.join(argv)}\n{proc.stdout}\n{proc.stderr}"
-    )
-
-
 def test_write_and_read_transfer_loops(tmp_path: Path) -> None:
-    cxx = shutil.which(os.environ.get("CXX", "g++"))
-    assert cxx, "a host C++ compiler is required (no silent skip)"
-
-    (tmp_path / "Arduino.h").write_text(ARDUINO)
+    (tmp_path / "Arduino.h").write_text(FAKE_ARDUINO_H)
     driver = tmp_path / "driver.cpp"
     driver.write_text(DRIVER)
-    includes = ["-I", str(tmp_path), "-I", str(ROOT / "include")]
+    includes = ["-I", str(tmp_path), "-I", str(INCLUDE)]
     exe = tmp_path / "driver"
-    _compile([cxx, "-std=c++17", *includes, str(driver),
-              str(ROOT / "src/eprom_operations.cpp"),
-              str(ROOT / "src/operation_utils.cpp"), "-o", str(exe)])
-    result = subprocess.run([str(exe)], cwd=ROOT, capture_output=True, text=True)
+    compile_ok([host_cxx(), "-std=c++17", *includes, str(driver),
+                str(REPO_ROOT / "src/eprom_operations.cpp"),
+                str(REPO_ROOT / "src/operation_utils.cpp"), "-o", str(exe)], cwd=REPO_ROOT)
+    result = run_binary(exe, cwd=REPO_ROOT)
     assert result.returncode == 0, (
         f"transfer loop test failed:\n{result.stdout}\n{result.stderr}"
     )

@@ -38,11 +38,7 @@ extern "C" {
 
 using namespace fakeit;
 
-/* Recording API — symbols compiled because host_stubs.cpp defines HOST_STUBS_RECORD_BUS. */
-extern "C" void clear_bus_recording();
-extern "C" int  bus_recording_count();
-extern "C" uint8_t recorded_reg(int i);
-extern "C" rurp_register_t recorded_data(int i);
+#include "../_shared/bus_recording.h"
 
 static std::vector<uint8_t> s_wire_bytes;
 static uint32_t s_millis = 0;

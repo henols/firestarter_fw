@@ -30,8 +30,7 @@ using namespace fakeit;
 
 extern "C" void set_mock_vpp_mv(uint16_t mv);
 extern "C" void set_mock_hw_rev(uint8_t rev);
-extern "C" void clear_bus_recording();
-extern "C" int bus_recording_count();
+#include "../_shared/bus_recording.h"
 
 /* Control-register recorder. */
 #define MAX_CTRL_WRITES 64
