@@ -148,6 +148,7 @@ extern "C" {
     /* Operation init: the chip-ID check, when the host sent a chip ID. */
     void flash_util_check_chip_id_init(firestarter_handle_t* handle);
     uint8_t flash_util_read_in_id_mode(firestarter_handle_t* handle, uint32_t address);
+    void flash_util_report_protection(firestarter_handle_t* handle, uint32_t address, uint8_t clear_val, uint8_t set_val);
 
 #ifdef __cplusplus
 }

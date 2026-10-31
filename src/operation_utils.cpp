@@ -108,7 +108,8 @@ bool op_wait_for_ack(firestarter_handle_t* handle) {
             LOG_ERROR_ID(MSG_ERR_CMD);
             return false;
         }
-        delay(10);
+        // No sleep: the host answers within a few milliseconds, and a fixed
+        // delay here would be paid on every chunk.
     }
     LOG_ERROR_ID(MSG_ERR_TIMEOUT);
     return false;

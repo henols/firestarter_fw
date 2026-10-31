@@ -170,6 +170,8 @@ typedef struct bus_config {
     uint8_t read_high_needs_reg_off;            // read_high_mask also switches VPE onto the socket (Rev 2.x line 21)
     uint32_t static_high_mask;                  // Bus lines unconditionally driven HIGH (e.g. CE2, tied-high NC pins)
     uint32_t read_high_mask;                    // P1-VPP line driven HIGH for a read; set by mem_util_set_read_high_mask()
+    uint32_t rw_high_mask;                      // rw_line driven HIGH for a read; set by mem_util_set_read_high_mask()
+    uint32_t vpp_high_mask;                     // non-P1 VPP line, always HIGH; set by mem_util_set_read_high_mask()
 } bus_config_t;
 
 typedef struct firestarter_handle {

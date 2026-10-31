@@ -162,8 +162,7 @@ void fu_flash_flip_data(firestarter_handle_t* handle, uint32_t address, uint8_t 
  * flash-budget mitigation). */
 uint16_t flash_util_get_chip_id(firestarter_handle_t* handle) {
     flash_execute_command(FLASH_ENABLE_ID);
-    uint16_t chip_id = handle->firestarter_get_data(handle, 0x0000) << 8;
-    chip_id |= handle->firestarter_get_data(handle, 0x0001);
+    uint16_t chip_id = mem_util_read_u16_be(handle, 0x0000);
     flash_execute_command(FLASH_DISABLE_ID);
     return chip_id;
 }
@@ -175,6 +174,27 @@ uint8_t flash_util_read_in_id_mode(firestarter_handle_t* handle, uint32_t addres
     uint8_t data = handle->firestarter_get_data(handle, address);
     flash_execute_command(FLASH_DISABLE_ID);
     return data;
+}
+
+/* CMD_LOCK_STATUS: read one ID-mode byte and report the raw byte plus a decode,
+ * 0x00 for `clear_val`, 0x01 for `set_val`. An unrecognised raw value is an
+ * observation for the host to classify, not an error the firmware can judge:
+ * the decode is 0xFF with a WARNING, and the DATA frame still carries the raw
+ * byte. Never coerce it into 0x00 or 0x01. */
+void flash_util_report_protection(firestarter_handle_t* handle, uint32_t address, uint8_t clear_val, uint8_t set_val) {
+    uint8_t raw = flash_util_read_in_id_mode(handle, address);
+    uint8_t _b[2];
+    _b[0] = raw;
+    handle->response_code = RESPONSE_CODE_OK;
+    if (raw == clear_val) {
+        _b[1] = 0x00;
+    } else if (raw == set_val) {
+        _b[1] = 0x01;
+    } else {
+        _b[1] = 0xFF;
+        handle->response_code = RESPONSE_CODE_WARNING;
+    }
+    LOG_DATA_ID_BYTES(MSG_DATA_PROTECTION_STATUS, _b, 2);
 }
 
 void flash_util_check_chip_id_execute(firestarter_handle_t* handle) {
