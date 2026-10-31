@@ -19,10 +19,4 @@ extern "C" {
 
 #include "../_shared/host_stubs_common.inc"
 
-#include "rurp_register_utils.h"
-
-extern "C" void reset_register_cache(uint8_t lsb, uint8_t msb, rurp_register_t ctrl) {
-    lsb_address = lsb;
-    msb_address = msb;
-    control_register = ctrl;
-}
+#include "../_shared/real_register_utils.inc"

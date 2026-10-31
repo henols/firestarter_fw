@@ -22,6 +22,11 @@ extern "C" {
 #include "rurp_pinout.h"
 #include "rurp_shield.h"
 #include "rurp_voltage_math.h"
+#include "messages.h"
+
+#include <vector>
+
+#include "../_shared/frame_capture.h"
 
 using namespace fakeit;
 
@@ -177,10 +182,18 @@ void test_flash_intel_high_vpp_with_force_warns(void) {
 void test_flash_intel_rev0_skips_vpp_check(void) {
     set_mock_hw_rev(0);
     set_mock_vpp_mv(65535);  /* max uint16_t — would trigger high-band error if ADC were read */
+    captured_frames.clear();
+    capture_serial_writes();
     firestarter_handle_t h = make_intel_handle(12000, 0);
     configure_memory(&h);
     h.firestarter_operation_init(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_WARNING, h.response_code,
+        "Rev 0 cannot measure the rail, so the write goes ahead with a warning");
+    TEST_ASSERT_FALSE_MESSAGE(s_measured, "Rev 0 must not read the ADC");
+    std::vector<uint8_t> ids;
+    captured_frame_ids(&ids);
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, MSG_WARN_REV0_VPP_UNSUPPORTED),
+        "the warning frame must say that Rev 0 cannot measure VPP");
 }
 
 /*

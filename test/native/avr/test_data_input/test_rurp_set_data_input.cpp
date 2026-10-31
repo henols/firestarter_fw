@@ -160,17 +160,21 @@ void test_rurp_read_data_buffer_reassembles_data_bus(void) {
     PIND = 0; PINC = 0; PINE = 0;
     TEST_ASSERT_EQUAL_HEX8(0x00, rurp_read_data_buffer());
 
-    /* Single-bit walks: D0 only set -> PD2 = 0x04 (bit 2 of PIND) */
-    PIND = _BV(2); PINC = 0; PINE = 0;
-    TEST_ASSERT_EQUAL_HEX8(0x01, rurp_read_data_buffer());
-
-    /* D5 only -> PC6 = 0x40 (bit 6 of PINC) */
-    PIND = 0; PINC = _BV(6); PINE = 0;
-    TEST_ASSERT_EQUAL_HEX8(0x20, rurp_read_data_buffer());
-
-    /* D7 only -> PE6 = 0x40 (bit 6 of PINE) */
-    PIND = 0; PINC = 0; PINE = _BV(6);
-    TEST_ASSERT_EQUAL_HEX8(0x80, rurp_read_data_buffer());
+    /* Single-bit walk over every data line D0-D7, from the pin map above. */
+    const struct { uint8_t pind; uint8_t pinc; uint8_t pine; uint8_t data; } walk[] = {
+        {_BV(2), 0, 0, 0x01},      /* D0 <- PD2 */
+        {_BV(3), 0, 0, 0x02},      /* D1 <- PD3 */
+        {_BV(1), 0, 0, 0x04},      /* D2 <- PD1 */
+        {_BV(0), 0, 0, 0x08},      /* D3 <- PD0 */
+        {_BV(4), 0, 0, 0x10},      /* D4 <- PD4 */
+        {0, _BV(6), 0, 0x20},      /* D5 <- PC6 */
+        {_BV(7), 0, 0, 0x40},      /* D6 <- PD7 */
+        {0, 0, _BV(6), 0x80},      /* D7 <- PE6 */
+    };
+    for (const auto& w : walk) {
+        PIND = w.pind; PINC = w.pinc; PINE = w.pine;
+        TEST_ASSERT_EQUAL_HEX8(w.data, rurp_read_data_buffer());
+    }
 }
 
 int main(int argc, char** argv) {

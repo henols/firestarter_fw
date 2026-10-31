@@ -346,4 +346,105 @@ static const sdp_strobe_t SDP_FIXED_LOCK_DIP32_28C512_EEPROM[] = {
 };
 #define SDP_FIXED_LOCK_DIP32_28C512_EEPROM_LEN (int)(sizeof(SDP_FIXED_LOCK_DIP32_28C512_EEPROM) / sizeof(SDP_FIXED_LOCK_DIP32_28C512_EEPROM[0]))
 
+/* The 0x0D chip erase on DIP28_28C256 (eeprom28c_erase_execute): the
+ * SDP-disable sequence, then the JEDEC / Atmel "Software Chip Erase"
+ * six-write sequence 5555<-AA, 2AAA<-55, 5555<-80, 5555<-AA, 2AAA<-55,
+ * 5555<-10. Recorded with a zero CONTROL seed and a get_data mock, so the
+ * completion poll between the two sequences adds no strobe. */
+static const sdp_strobe_t SDP_FIXED_ERASE_DIP28_28C256[] = {
+    /* unlock write #1  remap(0x5555)=0x9555  payload 0xAA */
+    {2, 4, 1},
+    {1, 0, 0x55}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x95}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0xAA}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* unlock write #2  0x2AAA  payload 0x55 */
+    {2, 4, 1},
+    {1, 0, 0xAA}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x2A}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0x55}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* unlock write #3  remap(0x5555)=0x9555  payload 0x80 */
+    {2, 4, 1},
+    {1, 0, 0x55}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x95}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0x80}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* unlock write #4  0x5555 -- ELIDED: same address as write #3  payload 0xAA */
+    {2, 4, 1},
+    {1, 0, 0xAA}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* unlock write #5  0x2AAA  payload 0x55 */
+    {2, 4, 1},
+    {1, 0, 0xAA}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x2A}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0x55}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* unlock write #6  remap(0x5555)=0x9555  payload 0x20 */
+    {2, 4, 1},
+    {1, 0, 0x55}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x95}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0x20}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* erase write #1  0x5555 -- ELIDED: same address as unlock write #6  payload 0xAA */
+    {2, 4, 1},
+    {1, 0, 0xAA}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* erase write #2  0x2AAA  payload 0x55 */
+    {2, 4, 1},
+    {1, 0, 0xAA}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x2A}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0x55}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* erase write #3  remap(0x5555)=0x9555  payload 0x80 */
+    {2, 4, 1},
+    {1, 0, 0x55}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x95}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0x80}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* erase write #4  0x5555 -- ELIDED: same address as erase write #3  payload 0xAA */
+    {2, 4, 1},
+    {1, 0, 0xAA}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* erase write #5  0x2AAA  payload 0x55 */
+    {2, 4, 1},
+    {1, 0, 0xAA}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x2A}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0x55}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* erase write #6  remap(0x5555)=0x9555  payload 0x10 (chip-erase terminal byte) */
+    {2, 4, 1},
+    {1, 0, 0x55}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x95}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0x10}, {2, 0x20, 0}, {2, 0x20, 1},
+};
+#define SDP_FIXED_ERASE_DIP28_28C256_LEN (int)(sizeof(SDP_FIXED_ERASE_DIP28_28C256) / sizeof(SDP_FIXED_ERASE_DIP28_28C256[0]))
+
+/* The SDP-disable sequence on a 32-pin row whose cached CONTROL value holds
+ * a stale bit (CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18 seeded directly, or
+ * CTRL_READ_WRITE left by a real read). Write #1 adds one CONTROL_REGISTER
+ * write (DATA 0x00, pin 0x08) that clears the stale bits; the rest is
+ * SDP_FIXED_DIP32_28C512_EEPROM. */
+static const sdp_strobe_t SDP_FIXED_DIP32_STALE_CONTROL[] = {
+    /* write #1  0x5555 (identity)  payload 0xAA, PLUS the CONTROL write (DATA 0x00) that clears the stale bits */
+    {2, 4, 1},
+    {1, 0, 0x55}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x55}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0x00}, {2, 8, 1}, {2, 8, 0},
+    {1, 0, 0xAA}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* write #2  0x2AAA  payload 0x55 */
+    {2, 4, 1},
+    {1, 0, 0xAA}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x2A}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0x55}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* write #3  0x5555  payload 0x80 */
+    {2, 4, 1},
+    {1, 0, 0x55}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x55}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0x80}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* write #4  0x5555 -- ELIDED  payload 0xAA */
+    {2, 4, 1},
+    {1, 0, 0xAA}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* write #5  0x2AAA  payload 0x55 */
+    {2, 4, 1},
+    {1, 0, 0xAA}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x2A}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0x55}, {2, 0x20, 0}, {2, 0x20, 1},
+    /* write #6  0x5555  payload 0x20 */
+    {2, 4, 1},
+    {1, 0, 0x55}, {2, 1, 1}, {2, 1, 0},
+    {1, 0, 0x55}, {2, 2, 1}, {2, 2, 0},
+    {1, 0, 0x20}, {2, 0x20, 0}, {2, 0x20, 1},
+};
+#define SDP_FIXED_DIP32_STALE_CONTROL_LEN (int)(sizeof(SDP_FIXED_DIP32_STALE_CONTROL) / sizeof(SDP_FIXED_DIP32_STALE_CONTROL[0]))
+
 #endif /* __SDP_EXPECTED_H__ */

@@ -30,8 +30,7 @@ using namespace fakeit;
 
 extern "C" void set_mock_vpp_mv(uint16_t mv);
 extern "C" void set_mock_hw_rev(uint8_t rev);
-extern "C" void clear_bus_recording();
-extern "C" int bus_recording_count();
+#include "../_shared/bus_recording.h"
 
 /* Control-register recorder. */
 #define MAX_CTRL_WRITES 64
@@ -175,16 +174,24 @@ void test_28c_chip_id_bad_calibration_refused_before_hv(void) {
     TEST_ASSERT_EQUAL_INT(-1, first_assert_of(CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_A9_ENABLE));
 }
 
+/* The regulator must come on, and before A9: A9 takes its 12 V from the
+ * regulator. */
+static void assert_regulator_before_a9(void) {
+    TEST_ASSERT_TRUE_MESSAGE(first_assert_of(CTRL_VPP_REGULATOR_ENABLE) >= 0, "the regulator must come on");
+    TEST_ASSERT_TRUE_MESSAGE(first_assert_of(CTRL_VPP_A9_ENABLE) > first_assert_of(CTRL_VPP_REGULATOR_ENABLE),
+                             "A9 must come on after the regulator");
+}
+
 void test_28c_chip_id_nominal_reads_id(void) {
     firestarter_handle_t h = run_28c_chip_id(12000, 12000);
     TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
-    TEST_ASSERT_TRUE(first_assert_of(CTRL_VPP_A9_ENABLE) > first_assert_of(CTRL_VPP_REGULATOR_ENABLE));
+    assert_regulator_before_a9();
 }
 
 void test_28c_chip_id_without_target_skips_measurement(void) {
     firestarter_handle_t h = run_28c_chip_id(0, 20000);
     TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
-    TEST_ASSERT_TRUE(first_assert_of(CTRL_VPP_A9_ENABLE) >= 0);
+    assert_regulator_before_a9();
 }
 
 #ifdef HARDWARE_REVISION
@@ -193,7 +200,7 @@ void test_28c_chip_id_rev0_skips_measurement(void) {
     set_mock_hw_rev(0);
     firestarter_handle_t h = run_28c_chip_id(12000, 20000);
     TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
-    TEST_ASSERT_TRUE(first_assert_of(CTRL_VPP_A9_ENABLE) >= 0);
+    assert_regulator_before_a9();
 }
 #endif
 

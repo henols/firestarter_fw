@@ -38,11 +38,9 @@ extern "C" {
 
 using namespace fakeit;
 
-/* Recording API — symbols compiled because host_stubs.cpp defines HOST_STUBS_RECORD_BUS. */
-extern "C" void clear_bus_recording();
-extern "C" int  bus_recording_count();
-extern "C" uint8_t recorded_reg(int i);
-extern "C" rurp_register_t recorded_data(int i);
+#include "../_shared/bus_recording.h"
+#include "../_shared/dispatch_expect.h"
+#include "flash_intel.h"
 
 static std::vector<uint8_t> s_wire_bytes;
 static uint32_t s_millis = 0;
@@ -125,25 +123,14 @@ void test_flash_intel_write_enables_vpp_regulator(void) {
         "configure_flash_intel write must record CTRL_VPP_REGULATOR_ENABLE in CTL register");
 }
 
-/* ─── NEGATIVE CONTROL: CMD_READ, configure-only — VPP must NOT fire ─────── */
+/* ─── configure_memory sends 0x10 to configure_flash_intel ─────────────── */
 
-void test_flash_intel_read_configure_only_does_not_enable_vpp(void) {
-    firestarter_handle_t h = make_handle(CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on 0x10 CMD_READ");
-    /* No init call — configure-phase only */
-    for (int i = 0; i < bus_recording_count(); i++) {
-        if (recorded_reg(i) == CONTROL_REGISTER) {
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_P1_ENABLE,
-                recorded_data(i),
-                "configure_flash_intel CMD_READ configure-phase must NOT set CTRL_VPP_P1_ENABLE");
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_REGULATOR_ENABLE,
-                recorded_data(i),
-                "configure_flash_intel CMD_READ configure-phase must NOT set CTRL_VPP_REGULATOR_ENABLE");
-        }
+void test_flash_intel_dispatches_to_flash_intel(void) {
+    static const uint8_t cmds[] = {CMD_READ, CMD_WRITE, CMD_ERASE, CMD_CHECK_CHIP_ID};
+    for (size_t c = 0; c < sizeof(cmds); c++) {
+        char ctx[64];
+        snprintf(ctx, sizeof(ctx), "0x10 cmd %u -> configure_flash_intel", (unsigned)cmds[c]);
+        assert_dispatches_to(make_handle(cmds[c]), configure_flash_intel, ctx);
     }
 }
 
@@ -231,7 +218,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_flash_intel_write_enables_vpp_regulator);
 
     /* NEGATIVE CONTROL: configure-only (CMD_READ, no init) — no VPP bits set */
-    RUN_TEST(test_flash_intel_read_configure_only_does_not_enable_vpp);
+    RUN_TEST(test_flash_intel_dispatches_to_flash_intel);
 
     RUN_TEST(test_intel_sr_ready_without_error_succeeds);
     RUN_TEST(test_intel_sr3_is_vpp_low);

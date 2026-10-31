@@ -4,22 +4,10 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Proves configure_flash_nor_unlock is a 5V-only handler (no VPP regulator use).
- * BY SIDE-EFFECT via the recording bus stub:
- *
- *   For CMD_READ and CMD_WRITE (configure-only phase): configure_memory() writes
- *   only address bits to LSB/MSB/CONTROL registers via mem_util_set_address.
- *   configure_flash_nor_unlock sets function pointers but writes no VPP-enable CTL bits.
- *   CTRL_VPP_REGULATOR_ENABLE, CTRL_VPP_P1_ENABLE, and CTRL_VPP_VPE_DROP_ENABLE
- *   must NEVER appear set in any recorded CONTROL_REGISTER write.
- *
- *   This test can go RED if configure_flash_nor_unlock is accidentally wired to a
- *   VPP-enabling configure path (T-71-WIRED-WRONG).
- *
- * Protocol covered: 0x06 (FLASH_AMD_ALT / AMD unlock, sector erase).
- *
- * VPP: NONE — configure_flash_nor_unlock is a 5V AMD-style handler. The nor_unlock
- * erase path uses flash_execute_command which writes data bytes only, not VPP CTL bits.
+ * Tests the 0x06 family through the recording bus stub: configure_memory
+ * sends 0x06 to configure_flash_nor_unlock, and the program, chip erase,
+ * sector erase and lock-status paths drive the expected {address, data}
+ * command cycles and set no high-voltage control bit.
  */
 
 #include <Arduino.h>
@@ -55,11 +43,8 @@ static const bus_config_t DIP32_FLASH_BUS = {
     0x00000000UL
 };
 
-/* Recording API — symbols compiled because host_stubs.cpp defines HOST_STUBS_RECORD_BUS. */
-extern "C" void clear_bus_recording();
-extern "C" int  bus_recording_count();
-extern "C" uint8_t recorded_reg(int i);
-extern "C" rurp_register_t recorded_data(int i);
+#include "../_shared/bus_recording.h"
+#include "../_shared/dispatch_expect.h"
 
 static std::vector<uint8_t> s_wire_bytes;
 
@@ -121,61 +106,19 @@ static firestarter_handle_t make_handle(uint8_t cmd) {
     return h;
 }
 
-/* ─── Helper: assert no VPP-enable bits in any CONTROL_REGISTER write ──────── */
-/* Note: CTRL_VPP_VPE_DROP_ENABLE is 0x100 when HARDWARE_REVISION is defined —
- * it does not fit in the uint8_t recording buffer. Check only the 8-bit-fit
- * VPP-enable bits: CTRL_VPP_REGULATOR_ENABLE (0x80) and CTRL_VPP_P1_ENABLE (0x08). */
-static void assert_no_vpp_in_recording(const char* ctx) {
-    for (int i = 0; i < bus_recording_count(); i++) {
-        if (recorded_reg(i) == CONTROL_REGISTER) {
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_REGULATOR_ENABLE,
-                recorded_data(i), ctx);
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_P1_ENABLE,
-                recorded_data(i), ctx);
-        }
-    }
+/* configure_memory must send 0x06 to configure_flash_nor_unlock: the
+ * operation pointers must be that function's own. */
+void test_nor_unlock_read_dispatches_to_nor_unlock(void) {
+    assert_dispatches_to(make_handle(CMD_READ), configure_flash_nor_unlock, "0x06 CMD_READ");
 }
 
-/* configure-only: CMD_READ must record zero VPP-enable bits */
-void test_nor_unlock_read_configure_no_vpp(void) {
-    firestarter_handle_t h = make_handle(CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on 0x06 CMD_READ");
-    assert_no_vpp_in_recording(
-        "configure_flash_nor_unlock CMD_READ must NOT set any VPP-enable CTL bit");
+void test_nor_unlock_write_dispatches_to_nor_unlock(void) {
+    assert_dispatches_to(make_handle(CMD_WRITE), configure_flash_nor_unlock, "0x06 CMD_WRITE");
 }
 
-/* configure-only: CMD_WRITE must record zero VPP-enable bits */
-void test_nor_unlock_write_configure_no_vpp(void) {
-    firestarter_handle_t h = make_handle(CMD_WRITE);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on 0x06 CMD_WRITE");
-    assert_no_vpp_in_recording(
-        "configure_flash_nor_unlock CMD_WRITE must NOT set any VPP-enable CTL bit");
+void test_nor_unlock_erase_dispatches_to_nor_unlock(void) {
+    assert_dispatches_to(make_handle(CMD_ERASE), configure_flash_nor_unlock, "0x06 CMD_ERASE");
 }
-
-/* configure-only: CMD_ERASE must record zero VPP-enable bits */
-void test_nor_unlock_erase_configure_no_vpp(void) {
-    firestarter_handle_t h = make_handle(CMD_ERASE);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on 0x06 CMD_ERASE");
-    assert_no_vpp_in_recording(
-        "configure_flash_nor_unlock CMD_ERASE must NOT set any VPP-enable CTL bit");
-}
-
-/* Phase 204 (FWCMD-01, Fork D): the CMD_BLANK_CHECK no-VPP case that used
- * to live here is deleted, not re-keyed. It asserted that configuring the
- * standalone blank-check command engaged no VPP; after this release that
- * ordinal reaches no configure handler at all (the arm is gone from
- * configure_flash_nor_unlock's switch), so the same claim would be true
- * for a reason unrelated to what this case was written to check. The
- * other three cases above already cover configure-only no-VPP for this
- * handler's surviving ordinals. */
 
 /* Leg 1 (Dispatch): CMD_LOCK_STATUS must wire firestarter_operation_main to
  * flash_nor_unlock_read_protection_execute and null firestarter_operation_init
@@ -287,24 +230,12 @@ void test_nor_unlock_lock_status_mode_bracketing(void) {
 
     flash_nor_unlock_read_protection_execute(&h);
 
-    uint8_t msb[16];
-    int msb_count = 0;
-    for (int i = 0; i < bus_recording_count() && msb_count < 16; i++) {
-        if (recorded_reg(i) == MOST_SIGNIFICANT_BYTE) {
-            msb[msb_count++] = recorded_data(i);
-        }
-    }
-
-    TEST_ASSERT_EQUAL_MESSAGE(7, msb_count,
-        "expected 3 (FLASH_ENABLE_ID) + 1 (the read's own address-set) + 3 (FLASH_DISABLE_ID) = 7 MSB writes");
-    TEST_ASSERT_EQUAL_HEX8(0x55, msb[0]);
-    TEST_ASSERT_EQUAL_HEX8(0x2A, msb[1]);
-    TEST_ASSERT_EQUAL_HEX8(0x55, msb[2]);
-    /* msb[3] is the read's own address-set MSB write -- its value is not
-     * asserted here; only its POSITION between entry and exit matters. */
-    TEST_ASSERT_EQUAL_HEX8(0x55, msb[4]);
-    TEST_ASSERT_EQUAL_HEX8(0x2A, msb[5]);
-    TEST_ASSERT_EQUAL_HEX8(0x55, msb[6]);
+    static const expected_cycle_t want[] = {
+        {BUS_CYCLE_WRITE, 0x5555, 0xAA}, {BUS_CYCLE_WRITE, 0x2AAA, 0x55}, {BUS_CYCLE_WRITE, 0x5555, 0x90},
+        {BUS_CYCLE_READ, 0x0002, 0},
+        {BUS_CYCLE_WRITE, 0x5555, 0xAA}, {BUS_CYCLE_WRITE, 0x2AAA, 0x55}, {BUS_CYCLE_WRITE, 0x5555, 0xF0},
+    };
+    assert_bus_cycles(want, 7, "ID entry (AA/55/90), the status read at 0x0002, then ID exit (AA/55/F0)");
 }
 
 /* Issue #117: the sector-select cycle of a sector erase must drive A16+.
@@ -337,6 +268,16 @@ static void assert_sector_select_latches(uint32_t sector, uint8_t lsb, uint8_t m
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(top,
         recorded_data(last_msb + 1) & (CTRL_ADDRESS_LINE_16 | CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18),
         "A16-A18 of the sector-select cycle must come from the sector address");
+
+    const expected_cycle_t want[] = {
+        {BUS_CYCLE_WRITE, 0x5555, 0xAA}, {BUS_CYCLE_WRITE, 0x2AAA, 0x55}, {BUS_CYCLE_WRITE, 0x5555, 0x80},
+        {BUS_CYCLE_WRITE, 0x5555, 0xAA}, {BUS_CYCLE_WRITE, 0x2AAA, 0x55},
+        {BUS_CYCLE_WRITE, (uint16_t)(((uint16_t)msb << 8) | lsb), 0x30},
+    };
+    assert_bus_cycles(want, 6, "the sector erase AA/55/80/AA/55, then 0x30 at the sector");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(top,
+        bus_cycle_control(5) & (CTRL_ADDRESS_LINE_16 | CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18),
+        "the 0x30 cycle must strobe with A16-A18 of the sector address latched");
 }
 
 void test_nor_unlock_sector_erase_drives_a16(void) {
@@ -425,17 +366,12 @@ void test_nor_unlock_failed_erase_resets_the_part(void) {
 
     h.firestarter_operation_main(&h);
 
-    uint8_t msb[32];
-    int n = 0;
-    for (int i = 0; i < bus_recording_count() && n < 32; i++) {
-        if (recorded_reg(i) == MOST_SIGNIFICANT_BYTE) {
-            msb[n++] = recorded_data(i);
-        }
-    }
-    TEST_ASSERT_EQUAL_MESSAGE(9, n, "six erase cycles, then three reset cycles");
-    TEST_ASSERT_EQUAL_HEX8(0x55, msb[6]);
-    TEST_ASSERT_EQUAL_HEX8(0x2A, msb[7]);
-    TEST_ASSERT_EQUAL_HEX8(0x55, msb[8]);
+    static const expected_cycle_t want[] = {
+        {BUS_CYCLE_WRITE, 0x5555, 0xAA}, {BUS_CYCLE_WRITE, 0x2AAA, 0x55}, {BUS_CYCLE_WRITE, 0x5555, 0x80},
+        {BUS_CYCLE_WRITE, 0x5555, 0xAA}, {BUS_CYCLE_WRITE, 0x2AAA, 0x55}, {BUS_CYCLE_WRITE, 0x5555, 0x10},
+        {BUS_CYCLE_WRITE, 0x5555, 0xAA}, {BUS_CYCLE_WRITE, 0x2AAA, 0x55}, {BUS_CYCLE_WRITE, 0x5555, 0xF0},
+    };
+    assert_bus_cycles(want, 9, "the chip erase, then the AA/55/F0 reset");
 }
 
 void test_nor_unlock_write_init_erases_and_waits(void) {
@@ -511,14 +447,47 @@ void test_nor_unlock_program_that_never_ends_times_out(void) {
     TEST_ASSERT_EQUAL_HEX8(MSG_ERR_OP_TIMEOUT, first_frame_id());
 }
 
+/* The unlock-flash program path is a 5 V operation. */
+void test_nor_unlock_write_execute_no_vpp(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    h.address = 0x100;
+    h.data_size = 4; /* zero bytes; stub_program_status answers with the expected byte */
+    configure_memory(&h);
+    h.firestarter_get_data = stub_program_status;
+    s_program_busy_reads = 0;
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, h.response_code);
+    assert_no_vpp_in_recording("the 0x06 program path must set no HV control bit");
+}
+
+/* The unlock-flash chip erase and sector erase are 5 V operations. */
+void test_nor_unlock_erase_execute_no_vpp(void) {
+    const uint32_t addresses[] = {0, 0x30000UL};
+    for (uint32_t address : addresses) {
+        firestarter_handle_t h = make_handle(CMD_ERASE);
+        h.address = address;
+        configure_memory(&h);
+        h.firestarter_get_data = stub_status;
+        clear_bus_recording();
+
+        h.firestarter_operation_main(&h);
+
+        TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, h.response_code);
+        assert_no_vpp_in_recording("the 0x06 chip and sector erase must set no HV control bit");
+    }
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
 
-    /* 5V-only proof: no VPP-enable CTL bit for any command in the configure phase */
-    RUN_TEST(test_nor_unlock_read_configure_no_vpp);
-    RUN_TEST(test_nor_unlock_write_configure_no_vpp);
-    RUN_TEST(test_nor_unlock_erase_configure_no_vpp);
+    /* configure_memory sends 0x06 to configure_flash_nor_unlock */
+    RUN_TEST(test_nor_unlock_read_dispatches_to_nor_unlock);
+    RUN_TEST(test_nor_unlock_write_dispatches_to_nor_unlock);
+    RUN_TEST(test_nor_unlock_erase_dispatches_to_nor_unlock);
 
     RUN_TEST(test_nor_unlock_lock_status_dispatch);
     RUN_TEST(test_nor_unlock_lock_status_pinned_sequence);
@@ -540,6 +509,8 @@ int main(int argc, char** argv) {
     RUN_TEST(test_nor_unlock_offset_write_init_does_not_erase);
     RUN_TEST(test_nor_unlock_program_waits_at_the_written_address);
     RUN_TEST(test_nor_unlock_program_that_never_ends_times_out);
+    RUN_TEST(test_nor_unlock_write_execute_no_vpp);
+    RUN_TEST(test_nor_unlock_erase_execute_no_vpp);
 
     return UNITY_END();
 }

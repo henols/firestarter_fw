@@ -26,8 +26,7 @@ extern "C" {
 #define HOST_STUBS_CUSTOM_READ_DATA_BUFFER
 
 #include "../_shared/host_stubs_common.inc"
-
-#include "rurp_register_utils.h"
+#include "../_shared/real_register_utils.inc"
 
 #define READ_SNAPSHOT_MAX 64
 
@@ -38,12 +37,6 @@ struct read_snapshot_t {
 };
 static read_snapshot_t s_reads[READ_SNAPSHOT_MAX];
 static int s_read_count = 0;
-
-extern "C" void reset_register_cache(uint8_t lsb, uint8_t msb, rurp_register_t ctrl) {
-    lsb_address = lsb;
-    msb_address = msb;
-    control_register = ctrl;
-}
 
 extern "C" void clear_read_snapshots() { s_read_count = 0; }
 extern "C" int read_snapshot_count() { return s_read_count; }

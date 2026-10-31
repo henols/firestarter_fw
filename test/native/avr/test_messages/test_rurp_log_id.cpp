@@ -41,6 +41,10 @@ extern "C" {
 #include "messages.h"
 }
 #include "deferred_log.h"
+// Table-free reference CRC8, independent of CRC8_TABLE in
+// rurp_serial_utils.cpp. If the production table drifts off-spec, the
+// reference disagrees with the frame's CRC byte and the test fails.
+#include "../_shared/frame_ref.h"
 
 using namespace fakeit;
 
@@ -65,21 +69,6 @@ void setUp(void) {
 }
 
 void tearDown(void) {
-}
-
-// --- Reference CRC8 (poly 0x07, seed 0x00, no refl, no XOR). Table-free
-// recomputation so the test is fully independent of CRC8_TABLE in
-// rurp_serial_utils.cpp. If the production table ever drifts off-spec, this
-// reference disagrees with the frame's CRC byte and the test fails. ---
-static uint8_t ref_crc8(const uint8_t* data, size_t n) {
-    uint8_t crc = 0;
-    for (size_t i = 0; i < n; i++) {
-        crc ^= data[i];
-        for (int k = 0; k < 8; k++) {
-            crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
-        }
-    }
-    return crc;
 }
 
 void test_zero_param_frame(void) {

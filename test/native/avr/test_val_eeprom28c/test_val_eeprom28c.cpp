@@ -4,25 +4,15 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Proves configure_eeprom28c is a 5V-only handler (no VPP regulator use).
- * BY SIDE-EFFECT via the recording bus stub:
- *
- *   For CMD_READ and CMD_WRITE (configure-only phase): configure_memory() is
- *   called. configure_eeprom28c sets function pointers and the pulse_delay but
- *   writes NO VPP-enable CTL bits. mem_util_set_address(handle, 0) writes LSB/
- *   MSB/CONTROL registers with address bits only — CTRL_VPP_REGULATOR_ENABLE,
- *   CTRL_VPP_P1_ENABLE, and CTRL_VPP_VPE_DROP_ENABLE must NEVER appear set in
- *   any recorded CONTROL_REGISTER write.
- *
- *   This test can go RED if configure_eeprom28c is accidentally wired to an
- *   EPROM-style configure path that enables the VPP regulator (T-71-WIRED-WRONG).
+ * Tests the 0x0D family through the recording bus stub: configure_memory
+ * sends 0x0D to configure_eeprom28c (the operation pointers must be that
+ * function's own), and the page write verifies every byte it wrote.
  *
  * Protocol covered: 0x0D (EEPROM_POLL / AT28C-series).
  *
  * VPP: NONE — configure_eeprom28c is a 5V page-write handler. The A9-12V chip-ID
  * path in eeprom28c_check_chip_id is gated by handle->chip_id > 0; we set chip_id=0
- * so that branch is never reached. Even if reached, it fires in the operation_init
- * phase (not the configure phase tested here).
+ * so that branch is never reached.
  */
 
 #include <Arduino.h>
@@ -38,11 +28,9 @@ extern "C" {
 
 using namespace fakeit;
 
-/* Recording API — symbols compiled because host_stubs.cpp defines HOST_STUBS_RECORD_BUS. */
-extern "C" void clear_bus_recording();
-extern "C" int  bus_recording_count();
-extern "C" uint8_t recorded_reg(int i);
-extern "C" rurp_register_t recorded_data(int i);
+#include "../_shared/bus_recording.h"
+#include "../_shared/dispatch_expect.h"
+#include "eeprom_28c.h"
 
 #define EEPROM28C_PLANTED_SENTINEL 0xFFFFFFFFUL
 static uint32_t s_planted_base_address;
@@ -107,17 +95,6 @@ static firestarter_handle_t make_write_handle(uint32_t address, uint32_t data_si
     return h;
 }
 
-static bool legacy_last_byte_equality_poll(firestarter_handle_t* h, uint32_t address, uint8_t expected) {
-    for (uint16_t j = 0; j < 2000; j++) {
-        delayMicroseconds(10);
-        uint8_t observed = h->firestarter_get_data(h, address);
-        if (observed == expected) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static firestarter_handle_t make_handle(uint8_t cmd) {
     firestarter_handle_t h = {};
     h.protocol   = 0x0D;
@@ -128,69 +105,26 @@ static firestarter_handle_t make_handle(uint8_t cmd) {
     return h;
 }
 
-/* ─── Helper: assert no VPP-enable bits in any CONTROL_REGISTER write ──────── */
-/* Note: CTRL_VPP_VPE_DROP_ENABLE is 0x100 when HARDWARE_REVISION is defined —
- * it does not fit in the uint8_t recording buffer. Check only the 8-bit-fit
- * VPP-enable bits: CTRL_VPP_REGULATOR_ENABLE (0x80) and CTRL_VPP_P1_ENABLE (0x08). */
-static void assert_no_vpp_in_recording(const char* ctx) {
-    for (int i = 0; i < bus_recording_count(); i++) {
-        if (recorded_reg(i) == CONTROL_REGISTER) {
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_REGULATOR_ENABLE,
-                recorded_data(i), ctx);
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_P1_ENABLE,
-                recorded_data(i), ctx);
-        }
-    }
+/* configure_memory must send 0x0D to configure_eeprom28c: the operation
+ * pointers must be that function's own. */
+void test_eeprom28c_read_dispatches_to_eeprom28c(void) {
+    assert_dispatches_to(make_handle(CMD_READ), configure_eeprom28c, "0x0D CMD_READ");
 }
 
-/* configure-only: CMD_READ must record zero VPP-enable bits */
-void test_eeprom28c_read_configure_no_vpp(void) {
-    firestarter_handle_t h = make_handle(CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on 0x0D CMD_READ");
-    assert_no_vpp_in_recording(
-        "configure_eeprom28c CMD_READ must NOT set any VPP-enable CTL bit");
+void test_eeprom28c_write_dispatches_to_eeprom28c(void) {
+    assert_dispatches_to(make_handle(CMD_WRITE), configure_eeprom28c, "0x0D CMD_WRITE");
 }
 
-/* configure-only: CMD_WRITE must record zero VPP-enable bits */
-void test_eeprom28c_write_configure_no_vpp(void) {
-    firestarter_handle_t h = make_handle(CMD_WRITE);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on 0x0D CMD_WRITE");
-    assert_no_vpp_in_recording(
-        "configure_eeprom28c CMD_WRITE must NOT set any VPP-enable CTL bit");
+void test_eeprom28c_erase_dispatches_to_eeprom28c(void) {
+    assert_dispatches_to(make_handle(CMD_ERASE), configure_eeprom28c, "0x0D CMD_ERASE");
 }
 
-/* Phase 204 (FWCMD-01, Fork D): the CMD_BLANK_CHECK no-VPP case that used
- * to live here is deleted, not re-keyed. It asserted that configuring the
- * standalone blank-check command engaged no VPP; after this release that
- * ordinal reaches no configure handler at all (the arm is gone from
- * configure_eeprom28c's switch), so the same claim would be true for a
- * reason unrelated to what this case was written to check. The other
- * cases above already cover configure-only no-VPP for this handler's
- * surviving ordinals. */
-
-void test_eeprom28c_erase_configure_no_vpp(void) {
-    firestarter_handle_t h = make_handle(CMD_ERASE);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on 0x0D CMD_ERASE");
-    assert_no_vpp_in_recording(
-        "configure_eeprom28c CMD_ERASE must NOT set any VPP-enable CTL bit");
-}
-
-/* The side-by-side contrast, both halves in one test function. Geometry:
- * base address 0, data_size 8 (AT28C_PAGE_SIZE_FALLBACK 64, so this is one flush on
- * last_byte). Plant a stale 0xFF at address 0x0002 -- an EARLIER byte, not
- * the last -- so the page's last byte always reads back correctly, the
- * DQ7-complement completion arm reports done, and only the read-back can
- * catch the earlier stale byte. HOST_STUBS_RECORD_BUS caps recording at 256
- * entries; an 8-byte write stays far below it. */
-void test_fix06_planted_partial_write_fails_fixed_path_and_passes_legacy_poll(void) {
+/* Geometry: base address 0, data_size 8 (AT28C_PAGE_SIZE_FALLBACK 64, so this
+ * is one flush on last_byte). Plant a stale 0xFF at address 0x0002 -- an
+ * EARLIER byte, not the last -- so the page's last byte always reads back
+ * correctly, the DQ7-complement completion arm reports done, and only the
+ * read-back can catch the earlier stale byte. */
+void test_fix06_planted_partial_write_fails(void) {
     s_planted_base_address = 0;
     s_planted_stale_address = 0x0002;
     s_planted_stale_value = 0xFF;
@@ -202,17 +136,6 @@ void test_fix06_planted_partial_write_fails_fixed_path_and_passes_legacy_poll(vo
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
         "FIX-06 fixed path must report ERROR: the planted stale byte at "
         "address 0x0002 never landed, even though the page's last byte did");
-
-    /* Same planted mock, same page's last byte (address 7). The deleted
-     * whole-byte equality poll only ever looked at THIS address, so it
-     * reports success for the very same partial write the fixed path
-     * above correctly rejects. */
-    bool legacy_would_have_reported_success =
-        legacy_last_byte_equality_poll(&h, 7, (uint8_t)(0x10 + 7));
-    TEST_ASSERT_TRUE_MESSAGE(legacy_would_have_reported_success,
-        "the deleted last-byte-equality poll would have reported SUCCESS "
-        "for the exact same partial write the fixed path above rejects "
-        "(FIX-06's conflation, gh#11's shape)");
 }
 
 void test_fix06_clean_page_write_succeeds_isolation_control(void) {
@@ -359,11 +282,11 @@ int main(int argc, char** argv) {
     UNITY_BEGIN();
 
     /* 5V-only proof: no VPP-enable CTL bit for any command in the configure phase */
-    RUN_TEST(test_eeprom28c_read_configure_no_vpp);
-    RUN_TEST(test_eeprom28c_write_configure_no_vpp);
-    RUN_TEST(test_eeprom28c_erase_configure_no_vpp);
+    RUN_TEST(test_eeprom28c_read_dispatches_to_eeprom28c);
+    RUN_TEST(test_eeprom28c_write_dispatches_to_eeprom28c);
+    RUN_TEST(test_eeprom28c_erase_dispatches_to_eeprom28c);
 
-    RUN_TEST(test_fix06_planted_partial_write_fails_fixed_path_and_passes_legacy_poll);
+    RUN_TEST(test_fix06_planted_partial_write_fails);
     RUN_TEST(test_fix06_clean_page_write_succeeds_isolation_control);
     RUN_TEST(test_fix06_page_boundary_window_readback);
 
