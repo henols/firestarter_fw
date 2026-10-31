@@ -419,21 +419,22 @@ uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t
     const bus_config_t* config = &handle->bus_config;
     uint32_t reorg_address = config->address_mask & address;
     if (config->address_lines[0] != 0xFF) {
-        for (int i = config->matching_lines; i < ADDRESS_LINES_SIZE && config->address_lines[i] != 0xFF; i++) {
+        // AVR has no barrel shifter, so the source bit moves one place per line
+        // instead of being shifted into place from bit 0 each time.
+        uint32_t source_bit = 1UL << config->matching_lines;
+        for (int i = config->matching_lines; i < ADDRESS_LINES_SIZE && config->address_lines[i] != 0xFF;
+             i++, source_bit <<= 1) {
             uint32_t line_bit = (uint32_t)1 << config->address_lines[i];
             reorg_address &= ~line_bit;
-            if (address & 1UL << i) {
+            if (address & source_bit) {
                 reorg_address |= line_bit;
             }
         }
     }
-    if (config->rw_line != 0xFF) {
-        reorg_address |= (uint32_t)read_write << config->rw_line;
+    if (read_write) {
+        reorg_address |= config->rw_high_mask;
     }
-
-    if (config->vpp_line != 0xFF && !using_p1_as_vpp(handle)) {
-        reorg_address |= 1UL << config->vpp_line;
-    }
+    reorg_address |= config->vpp_high_mask;
     // Read the register cache directly: dt_set_address() gets here without
     // configure_memory(), so the handle's control-register getter is NULL.
     if (read_write == READ_FLAG && config->read_high_mask) {
@@ -450,16 +451,23 @@ uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t
     return reorg_address;
 }
 
-/* P1-VPP parts need that pin at VCC level during reads, so a read drives the
+/* Derive the per-command bus masks the per-byte remap applies. Set once per
+ * command, so the remap does no variable shifts.
+ *
+ * P1-VPP parts need that pin at VCC level during reads, so a read drives the
  * VPP line high. On Rev 2.x line 21 is also the pin-1 VPP switch, so the high
  * level is VPE: about 4.8 V while the regulator is off. read_high_needs_reg_off
  * makes the per-byte remap hold the line low while the regulator is on (the
- * chip-ID read and every read in the write path). Set once per command. */
+ * chip-ID read and every read in the write path). Any other VPP line is
+ * always driven high. */
 void mem_util_set_read_high_mask(firestarter_handle_t* handle) {
-    uint8_t line = handle->bus_config.vpp_line;
+    bus_config_t* config = &handle->bus_config;
+    uint8_t line = config->vpp_line;
     bool p1_vpp = line != 0xFF && using_p1_as_vpp(handle);
-    handle->bus_config.read_high_mask = p1_vpp ? (uint32_t)1 << line : 0;
-    handle->bus_config.read_high_needs_reg_off = p1_vpp && vpp_line_switches_vpp(handle);
+    config->read_high_mask = p1_vpp ? (uint32_t)1 << line : 0;
+    config->read_high_needs_reg_off = p1_vpp && vpp_line_switches_vpp(handle);
+    config->vpp_high_mask = line != 0xFF && !p1_vpp ? (uint32_t)1 << line : 0;
+    config->rw_high_mask = config->rw_line != 0xFF ? (uint32_t)1 << config->rw_line : 0;
 }
 
 /* Wait until VPE has fallen from the last regulator-on level to the idle level,
