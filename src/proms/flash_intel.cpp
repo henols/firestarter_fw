@@ -158,6 +158,7 @@ static bool flash_intel_poll_sr(firestarter_handle_t* handle, uint16_t timeout_m
     const uint32_t started_ms = (uint32_t)millis();
     uint8_t msg_id = MSG_ERR_INTEL_SR_TIMEOUT;
     while (!fs_timeout_expired(started_ms, (uint32_t)timeout_ms, (uint32_t)millis())) {
+        rurp_watchdog_reset();  // An erase can poll for longer than the period.
         uint8_t sr = handle->firestarter_get_data(handle, 0);
         if (sr & INTEL_SR_READY) {
             // VPP low first: it is the cause when it is set with the others.
