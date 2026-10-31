@@ -7,6 +7,11 @@
  * Two Unity RUN_TEST cases under the include-as-source pattern (RESEARCH.md
  * Q2 Option D + PATTERNS.md Excerpt 2):
  *
+ *   1. test_board_setup_clears_a_stale_control_latch
+ *      A reset can leave an HV route on in the shield's control latch.
+ *      rurp_board_setup() must strobe 0 into that latch before setup() loads
+ *      the config.
+ *
  *   2. test_rurp_read_data_buffer_reassembles_data_bus
  *      Regression guard around rurp_read_data_buffer()'s shift-and-mask
  *      reassembly logic. PASSES on pre-fix code (the bit-mapping logic is
@@ -28,6 +33,8 @@
 #include <unity.h>
 #include <stdint.h>
 
+using namespace fakeit;
+
 /* --- _BV() shim. avr-libc defines `_BV(n) ((1) << (n))` in <avr/io.h>.
  * ArduinoFake does NOT provide _BV (RESEARCH.md Q6 verified — only
  * `bit()` is provided). The included leonardo_rurp_shield.cpp uses _BV
@@ -43,9 +50,18 @@
 static uint8_t PORTD = 0, PORTC = 0, PORTE = 0;
 static uint8_t DDRD  = 0, DDRC  = 0, DDRE  = 0;
 static uint8_t PIND  = 0, PINC  = 0, PINE  = 0;
-/* PORTB/DDRB are referenced by rurp_board_setup + rurp_set_control_pin
- * (never called by these tests, but the linker still resolves them). */
-static uint8_t PORTB = 0, DDRB = 0;
+/* PORTB carries the register strobes (rurp_set_control_pin). It models the
+ * 74HC573 control latch: the latch holds the data bus on the falling edge of
+ * the CONTROL_REGISTER strobe (logical bit 3 -> PB7). */
+struct ControlLatchPort {
+    uint8_t value;
+    ControlLatchPort& operator=(uint8_t v);
+    operator uint8_t() const { return value; }
+};
+static ControlLatchPort PORTB = {0};
+static uint8_t DDRB = 0;
+static uint8_t control_latch = 0;
+static unsigned control_strobes = 0;
 
 /* --- Enable the Leonardo board guard, then pull the source into THIS TU
  * so rurp_set_data_input / rurp_read_data_buffer are exposed to the tests.
@@ -61,6 +77,20 @@ static uint8_t PORTB = 0, DDRB = 0;
 #define ARDUINO_AVR_LEONARDO
 #include "../../../../src/boards/leonardo_rurp_shield.cpp"
 
+ControlLatchPort& ControlLatchPort::operator=(uint8_t v) {
+    const uint8_t strobe = (uint8_t)(CONTROL_REGISTER << 4);
+    if ((value & strobe) && !(v & strobe)) {
+        /* Read the driven data bus back through the board's own bit map. */
+        const uint8_t pind = PIND, pinc = PINC, pine = PINE;
+        PIND = PORTD; PINC = PORTC; PINE = PORTE;
+        control_latch = rurp_read_data_buffer();
+        PIND = pind; PINC = pinc; PINE = pine;
+        control_strobes++;
+    }
+    value = v;
+    return *this;
+}
+
 void setUp(void) {
     ArduinoFakeReset();
     /* Reset all host-shim register globals to a known state before each test.
@@ -68,9 +98,35 @@ void setUp(void) {
     PORTD = 0; PORTC = 0; PORTE = 0;
     DDRD  = 0; DDRC  = 0; DDRE  = 0;
     PIND  = 0; PINC  = 0; PINE  = 0;
+    PORTB = 0; DDRB  = 0;
+    control_pins = 0;
 }
 
 void tearDown(void) {
+}
+
+/* ---------------------------------------------------------------------------
+ * Test 1 — rurp_board_setup clears a stale control latch.
+ *
+ * The latch starts with every HV route on, as a reset in the middle of a
+ * write leaves it. The register cache starts at its boot value (0xff). Board
+ * setup must strobe 0 into the latch. If it skipped the write (for example,
+ * because the cache already held 0), the latch would keep 0xFF.
+ * --------------------------------------------------------------------------- */
+void test_board_setup_clears_a_stale_control_latch(void) {
+    When(Method(ArduinoFake(), delay)).AlwaysReturn();
+    When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
+    When(OverloadedMethod(ArduinoFake(Serial), begin, void(unsigned long))).AlwaysReturn();
+    When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
+
+    control_latch = 0xFF;
+    control_strobes = 0;
+    control_register = 0xff;
+
+    rurp_board_setup();
+
+    TEST_ASSERT_GREATER_THAN_UINT(0, control_strobes);
+    TEST_ASSERT_EQUAL_HEX8(0x00, control_latch);
 }
 
 /* ---------------------------------------------------------------------------
@@ -121,6 +177,7 @@ int main(int argc, char** argv) {
     (void)argv;
     UNITY_BEGIN();
 
+    RUN_TEST(test_board_setup_clears_a_stale_control_latch);
     RUN_TEST(test_rurp_read_data_buffer_reassembles_data_bus);
 
     return UNITY_END();

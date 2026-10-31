@@ -10,6 +10,8 @@ from pathlib import Path
 import shutil
 import subprocess
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 ARDUINO = """#pragma once
@@ -37,11 +39,16 @@ static unsigned logged = 0;
 static int ce_level = 0;
 static int cleared[3] = {};
 static rurp_register_t latch[256] = {};
+static std::string boot_order;
 
 unsigned long millis() { return fake_ms; }
-extern "C" void rurp_load_config() {}
-extern "C" void rurp_board_setup() {}
+extern "C" void rurp_load_config() { boot_order += "config;"; }
+extern "C" void rurp_board_setup() { boot_order += "board;"; }
 extern "C" uint8_t rurp_get_physical_hardware_revision() { return 0; }
+#ifdef HARDWARE_REVISION
+extern "C" void rurp_detect_hardware_revision() { boot_order += "detect;"; }
+extern "C" uint8_t rurp_get_hardware_revision() { return 0; }
+#endif
 extern "C" rurp_configuration_t* rurp_get_config() {
     static rurp_configuration_t config = {};
     return &config;
@@ -160,6 +167,20 @@ static const std::string read_cmd = memory_frame(CMD_READ, 65536, 0, 28, 12500);
 
 int main() {
     reset();
+    boot_order.clear();
+    handle.cmd = CMD_READ;
+    setup();
+    // The shield latches are cleared before the config load can write EEPROM.
+    // Detection runs after the load, so the EEPROM revision override is set.
+#ifdef HARDWARE_REVISION
+    assert(boot_order == "board;config;detect;");
+#else
+    assert(boot_order == "board;config;");
+#endif
+    assert(handle.cmd == CMD_IDLE);
+    puts("PASS boot order");
+
+    reset();
     arm();
     handle.cmd = CMD_WRITE;
     command_done(&handle);
@@ -221,7 +242,10 @@ def _compile(argv: list[str]) -> None:
         f"compiler failed: {' '.join(argv)}\n{proc.stdout}\n{proc.stderr}"
     )
 
-def test_command_lifecycle_and_safe_cleanup(tmp_path: Path) -> None:
+# AVR builds define HARDWARE_REVISION; the py32 build does not.
+@pytest.mark.parametrize("defines", [[], ["-DHARDWARE_REVISION"]],
+                         ids=["no-hw-revision", "hw-revision"])
+def test_command_lifecycle_and_safe_cleanup(tmp_path: Path, defines: list[str]) -> None:
     cc = shutil.which(os.environ.get("CC", "gcc"))
     cxx = shutil.which(os.environ.get("CXX", "g++"))
     assert cc and cxx, "host C and C++ compilers are required (no silent skip)"
@@ -235,15 +259,16 @@ def test_command_lifecycle_and_safe_cleanup(tmp_path: Path) -> None:
     ]
     decoder_obj = tmp_path / "command_decoder.o"
     exe = tmp_path / "driver"
-    _compile([cc, "-std=c11", "-c", *includes,
+    _compile([cc, "-std=c11", "-c", *defines, *includes,
               str(ROOT / "src/command_decoder.c"), "-o", str(decoder_obj)])
-    _compile([cxx, "-std=c++17", *includes, str(main),
+    _compile([cxx, "-std=c++17", *defines, *includes, str(main),
               str(decoder_obj), "-o", str(exe)])
     result = subprocess.run([str(exe)], cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == 0, (
         f"dispatcher integration test failed:\n{result.stdout}\n{result.stderr}"
     )
     assert set(result.stdout.splitlines()) == {
+        "PASS boot order",
         "PASS cleanup",
         "PASS timeout",
         "PASS completion",

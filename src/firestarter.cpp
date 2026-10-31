@@ -36,11 +36,16 @@ firestarter_handle_t handle;
 uint32_t timeout_started_ms = 0;
 
 void setup() {
-    rurp_load_config();
+    // Board setup first: until it runs, the pins are high-Z and the shield
+    // latches keep their last value, which can have an HV route on. It writes
+    // 0 to the control register, which needs no configuration. The config
+    // load can write EEPROM, so it runs after.
     rurp_board_setup();
+    rurp_load_config();
 #ifdef HARDWARE_REVISION
-    // Detect after rurp_board_setup: serial is then up, so the detection's
-    // REVISION_UNKNOWN warning reaches the host, and every rail is off.
+    // Detect after rurp_board_setup and rurp_load_config: serial is then up,
+    // so the detection's REVISION_UNKNOWN warning reaches the host, every
+    // rail is off, and the EEPROM revision override is loaded.
     // rurp_board_setup does not touch the two analog detect pins.
     rurp_detect_hardware_revision();
 #endif

@@ -11,7 +11,10 @@
 
 // Define the global configuration variable here.
 // This is the single definition that the linker will use.
-rurp_configuration_t rurp_config;
+// hardware_revision starts at 0xFF ("no override"): board setup writes the
+// control register before rurp_load_config() runs, and 0 would read as a
+// REVISION_0 override.
+rurp_configuration_t rurp_config = {"", 0, 0, 0xFF, 0};
 
 // Define the functions here. Their declarations are in rurp_shield.h
 rurp_configuration_t* rurp_get_config() {
@@ -21,10 +24,9 @@ rurp_configuration_t* rurp_get_config() {
 void rurp_load_config() {
     rurp_configuration_t* config = rurp_get_config();
     // A false load copied nothing: the buffer still holds what it held
-    // before, which at boot is the zero-initialised global. Clear the
-    // version so rurp_validate_config() treats the buffer as foreign and
-    // resets every field, rather than keeping hardware_revision 0 as a
-    // REVISION_0 override.
+    // before. Clear the version so rurp_validate_config() treats the buffer
+    // as foreign and resets every field, rather than keeping a stale
+    // hardware_revision as an override.
     if (!rurp_config_storage_load(config, sizeof(*config))) {
         config->version[0] = '\0';
     }
