@@ -256,7 +256,7 @@ switch itself, so the read puts VPE on pin 1. With the regulator off, +5 V holds
 
 - The read drives line 21 high only while `CTRL_VPP_REGULATOR_ENABLE` is off
   (`read_high_needs_reg_off`). The chip-ID read and every read in the write path keep pin 1 low.
-- A `CMD_READ` waits until `RURP_VPE_DISCHARGE_MS` (1000 ms) has passed since the regulator was
+- A `CMD_READ` waits until `RURP_VPE_DISCHARGE_MS` (200 ms) has passed since the regulator was
   last switched off (`rurp_get_regulator_off_ms()`), so that C9 can discharge.
 
 On Rev 0/1, line 21 is the A18 latch bit, which reaches pin 1 through D33 as a logic level, so no

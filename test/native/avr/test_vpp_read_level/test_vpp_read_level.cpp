@@ -154,9 +154,9 @@ void test_regulator_switch_off_records_the_time(void) {
 
 void test_rev2_32pin_read_soon_after_regulator_off_waits_for_discharge(void) {
     set_regulator_off_ms(1000);
-    When(Method(ArduinoFake(), millis)).AlwaysReturn(1300);
+    When(Method(ArduinoFake(), millis)).AlwaysReturn(1050);
     make_handle(0x08, 32, VPP_P1_32_DIP, 0x20000, CMD_READ);
-    Verify(Method(ArduinoFake(), delay).Using(RURP_VPE_DISCHARGE_MS - 300)).Once();
+    Verify(Method(ArduinoFake(), delay).Using(RURP_VPE_DISCHARGE_MS - 50)).Once();
 }
 
 void test_rev2_32pin_read_after_discharge_does_not_wait(void) {
