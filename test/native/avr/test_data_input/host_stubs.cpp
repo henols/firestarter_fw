@@ -71,3 +71,9 @@ extern "C" rurp_configuration_t* rurp_get_config() {
 
 extern "C" void op_reset_timeout() {
 }
+
+extern "C" void rurp_watchdog_start() {
+}
+
+extern "C" void rurp_watchdog_reset() {
+}
