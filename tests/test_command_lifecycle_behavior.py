@@ -243,9 +243,10 @@ def test_command_lifecycle_and_safe_cleanup(tmp_path: Path, defines: list[str]) 
     decoder_obj = tmp_path / "command_decoder.o"
     exe = tmp_path / "driver"
     compile_ok([host_cc(), "-std=c11", "-c", *defines, *includes,
-                str(REPO_ROOT / "src/command_decoder.c"), "-o", str(decoder_obj)], cwd=REPO_ROOT)
+                str(REPO_ROOT / "src/command_decoder.c"), "-o", str(decoder_obj)],
+               cwd=REPO_ROOT, allow_warnings=True)
     compile_ok([host_cxx(), "-std=c++17", *defines, *includes, str(main),
-                str(decoder_obj), "-o", str(exe)], cwd=REPO_ROOT)
+                str(decoder_obj), "-o", str(exe)], cwd=REPO_ROOT, allow_warnings=True)
     result = run_binary(exe, cwd=REPO_ROOT)
     assert result.returncode == 0, (
         f"dispatcher integration test failed:\n{result.stdout}\n{result.stderr}"

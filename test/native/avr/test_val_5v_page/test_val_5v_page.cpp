@@ -317,17 +317,20 @@ static firestarter_handle_t drive_page_write(uint32_t mem_size, uint16_t page_si
 
 /* Asserts that the recorded write opened exactly two pages, and that the
  * second page start came only after at least page_size bytes. */
-static void assert_two_page_starts(const firestarter_handle_t& h, uint16_t page_size) {
+static void assert_page_starts(const firestarter_handle_t& h, int expected,
+                               uint16_t page_size) {
     int indices[8];
     int sig_count = count_sdp_signatures(indices, 8);
     TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
         "recorder saturated -- the boundary assertion below would be vacuous");
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
         "non-vacuity control: the write must have actually run");
-    TEST_ASSERT_EQUAL_MESSAGE(2, sig_count,
-        "exactly two SDP signatures across a two-page span -- a capacity-derived page would produce a different count");
-    TEST_ASSERT_TRUE_MESSAGE(indices[1] >= (int)(3 * page_size),
-        "the second page start must not be observable before at least page_size bytes were processed -- an under-sized derived page fires it earlier");
+    TEST_ASSERT_EQUAL_MESSAGE(expected, sig_count,
+        "one SDP signature per page the span covers -- a capacity-derived page would produce a different count");
+    if (expected > 1) {
+        TEST_ASSERT_TRUE_MESSAGE(indices[1] >= (int)(3 * page_size),
+            "the second page start must not be observable before at least page_size bytes were processed -- an under-sized derived page fires it earlier");
+    }
 }
 
 /* Drives a write that a bad page size must refuse with zero register writes.
@@ -347,16 +350,7 @@ static void run_page_size_refusal_case(uint16_t page_size) {
  * page start at address 64 -- a second SDP signature. Exactly one signature
  * over 128 bytes proves the firmware used the real 128-byte page. */
 void test_5v_page_write_execute_page_starts_at_real_page_not_derived(void) {
-    firestarter_handle_t h = drive_page_write(65536, 128, 0, 128);
-
-    int indices[8];
-    int sig_count = count_sdp_signatures(indices, 8);
-    TEST_ASSERT_FALSE_MESSAGE(bus_recording_saturated(),
-        "recorder saturated -- the boundary assertion below would be vacuous");
-    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
-        "non-vacuity control: the write must have actually run");
-    TEST_ASSERT_EQUAL_MESSAGE(1, sig_count,
-        "exactly one SDP signature over 128 bytes -- the old 64-byte derivation would have produced a second page start at address 64");
+    assert_page_starts(drive_page_write(65536, 128, 0, 128), 1, 128);
 }
 
 /* Refusal counterpart: the same geometry with page_size 0 (absent). */
@@ -423,27 +417,27 @@ void test_5v_page_write_execute_accepts_zero_length_chunk(void) {
 }
 
 void test_5v_page_write_execute_boundary_32768_64(void) {
-    assert_two_page_starts(drive_page_write(32768, 64, 0, 128), 64);
+    assert_page_starts(drive_page_write(32768, 64, 0, 128), 2, 64);
 }
 
 void test_5v_page_write_execute_boundary_65536_128(void) {
-    assert_two_page_starts(drive_page_write(65536, 128, 0, 256), 128);
+    assert_page_starts(drive_page_write(65536, 128, 0, 256), 2, 128);
 }
 
 void test_5v_page_write_execute_boundary_131072_128(void) {
-    assert_two_page_starts(drive_page_write(131072, 128, 0, 256), 128);
+    assert_page_starts(drive_page_write(131072, 128, 0, 256), 2, 128);
 }
 
 void test_5v_page_write_execute_boundary_262144_128(void) {
-    assert_two_page_starts(drive_page_write(262144, 128, 0, 256), 128);
+    assert_page_starts(drive_page_write(262144, 128, 0, 256), 2, 128);
 }
 
 void test_5v_page_write_execute_boundary_262144_256(void) {
-    assert_two_page_starts(drive_page_write(262144, 256, 0, 512), 256);
+    assert_page_starts(drive_page_write(262144, 256, 0, 512), 2, 256);
 }
 
 void test_5v_page_write_execute_boundary_524288_256(void) {
-    assert_two_page_starts(drive_page_write(524288, 256, 0, 512), 256);
+    assert_page_starts(drive_page_write(524288, 256, 0, 512), 2, 256);
 }
 
 /* Two page-sized calls, so the two page starts span the call boundary. */
@@ -454,7 +448,7 @@ void test_5v_page_write_execute_boundary_524288_512(void) {
     h.data_size = 512;
     h.firestarter_operation_main(&h);
 
-    assert_two_page_starts(h, 512);
+    assert_page_starts(h, 2, 512);
 }
 
 void test_5v_page_write_execute_refuses_unaligned_second_chunk(void) {
@@ -522,7 +516,7 @@ void test_5v_page_write_execute_accepts_aligned_two_chunk_p512(void) {
 /* Boundaries land on multiples of page_size 128, not the
  * mem_size-524288-derived 256. */
 void test_5v_page_write_execute_ignores_mem_size_entirely(void) {
-    assert_two_page_starts(drive_page_write(524288, 128, 0, 256), 128);
+    assert_page_starts(drive_page_write(524288, 128, 0, 256), 2, 128);
 }
 
 void test_5v_page_write_execute_refuses_page_size_not_power_of_two(void) {

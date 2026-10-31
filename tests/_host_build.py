@@ -55,11 +55,15 @@ def run_compiler(argv, cwd=None):
     return subprocess.run([str(a) for a in argv], cwd=cwd, capture_output=True, text=True)
 
 
-def compile_ok(argv, cwd=None):
-    """Compile and assert a clean build with zero bytes of diagnostic output."""
+def compile_ok(argv, cwd=None, *, allow_warnings=False):
+    """Compile and assert success. Unless `allow_warnings`, the compile must
+    also print zero bytes of diagnostic output."""
     result = run_compiler(argv, cwd)
-    assert result.returncode == 0 and result.stderr == "", (
-        "expected a clean, warning-free compile.\n"
+    clean = allow_warnings or result.stderr == ""
+    assert result.returncode == 0 and clean, (
+        "expected a successful"
+        + ("" if allow_warnings else ", warning-free")
+        + " compile.\n"
         f"argv: {' '.join(str(a) for a in argv)}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )

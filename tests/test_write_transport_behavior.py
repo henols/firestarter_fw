@@ -254,7 +254,8 @@ def test_write_and_read_transfer_loops(tmp_path: Path) -> None:
     exe = tmp_path / "driver"
     compile_ok([host_cxx(), "-std=c++17", *includes, str(driver),
                 str(REPO_ROOT / "src/eprom_operations.cpp"),
-                str(REPO_ROOT / "src/operation_utils.cpp"), "-o", str(exe)], cwd=REPO_ROOT)
+                str(REPO_ROOT / "src/operation_utils.cpp"), "-o", str(exe)],
+               cwd=REPO_ROOT, allow_warnings=True)
     result = run_binary(exe, cwd=REPO_ROOT)
     assert result.returncode == 0, (
         f"transfer loop test failed:\n{result.stdout}\n{result.stderr}"

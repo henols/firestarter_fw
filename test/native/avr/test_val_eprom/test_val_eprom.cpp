@@ -181,14 +181,7 @@ static void check_read_configure_no_vpp(uint32_t protocol) {
     snprintf(msg, sizeof(msg),
              "configure_eprom 0x%02X CMD_READ configure-phase must NOT set a VPP-enable bit",
              (unsigned)protocol);
-    for (int i = 0; i < bus_recording_count(); i++) {
-        if (recorded_reg(i) == CONTROL_REGISTER) {
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_REGULATOR_ENABLE, recorded_data(i), msg);
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_P1_ENABLE, recorded_data(i), msg);
-        }
-    }
+    assert_no_vpp_in_recording(msg);
 }
 
 void test_eprom_0x07_read_configure_only_does_not_enable_vpp(void) {
