@@ -203,6 +203,7 @@ extern "C" void rurp_board_setup(void)
     rurp_set_data_input();
 
     rurp_serial_begin(MONITOR_SPEED);
+    delay(50);
 }
 
 extern "C" void rurp_set_control_pin(uint8_t control_pin, uint8_t state)
