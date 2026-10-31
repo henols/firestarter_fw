@@ -4,17 +4,10 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Proves the configure_flash_5v_page dispatch/configure phase is VPP-safe.
- * BY SIDE-EFFECT via the recording bus stub:
- *
- *   For CMD_READ and CMD_WRITE (configure-only phase): configure_memory() writes
- *   only address bits to LSB/MSB/CONTROL registers via mem_util_set_address.
- *   configure_flash_5v_page sets function pointers but writes no VPP-enable CTL bits.
- *   CTRL_VPP_REGULATOR_ENABLE, CTRL_VPP_P1_ENABLE, and CTRL_VPP_VPE_DROP_ENABLE
- *   must NEVER appear set in any recorded CONTROL_REGISTER write during the
- *   configure/dispatch phase. A subset of cases below also drive
- *   flash_5v_page_write_init through the dispatched pointer and assert the
- *   same property over that call.
+ * Tests the 0x05 family (0x05, 0x35, 0x39) through the recording bus stub:
+ * configure_memory sends these protocols to configure_flash_5v_page, and the
+ * page write, the chip erase and the lock-status read drive the expected
+ * {address, data} command cycles and set no high-voltage control bit.
  */
 
 #include <Arduino.h>
@@ -53,6 +46,7 @@ static const bus_config_t DIP32_FLASH_BUS = {
 };
 
 #include "../_shared/bus_recording.h"
+#include "../_shared/dispatch_expect.h"
 
 static std::vector<uint8_t> s_wire_bytes;
 static uint32_t s_millis = 0;
@@ -93,49 +87,28 @@ static firestarter_handle_t make_handle(uint32_t protocol, uint8_t cmd) {
     return h;
 }
 
-/* Drives the configure phase for `protocol` and asserts that it does not
- * error and sets no VPP-enable CTL bit. */
-static void check_configure_no_vpp(uint32_t protocol, uint8_t cmd, const char* cmd_name) {
-    char msg[96];
-    firestarter_handle_t h = make_handle(protocol, cmd);
-    configure_memory(&h);
-    snprintf(msg, sizeof(msg), "configure_memory must not error on 0x%02X %s",
-             (unsigned)protocol, cmd_name);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code, msg);
-    snprintf(msg, sizeof(msg),
-             "configure_flash_5v_page 0x%02X %s configure-phase must NOT set any VPP-enable CTL bit",
-             (unsigned)protocol, cmd_name);
-    assert_no_vpp_in_recording(msg);
+/* Asserts that configure_memory sends `protocol` to configure_flash_5v_page,
+ * for every command that family handles. */
+static void check_dispatches_to_5v_page(uint32_t protocol) {
+    static const uint8_t cmds[] = {CMD_READ, CMD_WRITE, CMD_ERASE, CMD_CHECK_CHIP_ID, CMD_LOCK_STATUS};
+    for (size_t c = 0; c < sizeof(cmds); c++) {
+        char ctx[80];
+        snprintf(ctx, sizeof(ctx), "protocol 0x%02X cmd %u -> configure_flash_5v_page", (unsigned)protocol,
+                 (unsigned)cmds[c]);
+        assert_dispatches_to(make_handle(protocol, cmds[c]), configure_flash_5v_page, ctx);
+    }
 }
 
-/* ─── Protocol 0x05 (FLASH_AMD_STD) ─────────────────────────────────────── */
-
-void test_5v_page_0x05_read_configure_no_vpp(void) {
-    check_configure_no_vpp(0x05, CMD_READ, "CMD_READ");
+void test_5v_page_0x05_dispatches_to_5v_page(void) {
+    check_dispatches_to_5v_page(0x05);
 }
 
-void test_5v_page_0x05_write_configure_no_vpp(void) {
-    check_configure_no_vpp(0x05, CMD_WRITE, "CMD_WRITE");
+void test_5v_page_0x35_dispatches_to_5v_page(void) {
+    check_dispatches_to_5v_page(0x35);
 }
 
-/* ─── Protocol 0x35 (FLASH_EEPROM) ─────────────────────────────────────── */
-
-void test_5v_page_0x35_read_configure_no_vpp(void) {
-    check_configure_no_vpp(0x35, CMD_READ, "CMD_READ");
-}
-
-void test_5v_page_0x35_write_configure_no_vpp(void) {
-    check_configure_no_vpp(0x35, CMD_WRITE, "CMD_WRITE");
-}
-
-/* ─── Protocol 0x39 (FLASH_EEPROM2) — future-proofed, dispatched by analogy ─ */
-
-void test_5v_page_0x39_read_configure_no_vpp(void) {
-    check_configure_no_vpp(0x39, CMD_READ, "CMD_READ");
-}
-
-void test_5v_page_0x39_write_configure_no_vpp(void) {
-    check_configure_no_vpp(0x39, CMD_WRITE, "CMD_WRITE");
+void test_5v_page_0x39_dispatches_to_5v_page(void) {
+    check_dispatches_to_5v_page(0x39);
 }
 
 /*
@@ -159,9 +132,8 @@ void test_5v_page_0x39_write_configure_no_vpp(void) {
  * 0x2A (for 0x2AAA) in sequence before the first data address write. FAILS
  * today because flash_5v_page_write_execute has no flash_execute_command(FLASH_ENABLE_WRITE).
  *
- * Test 2 (operation-phase VPP-safety): asserts that no CTRL_VPP_REGULATOR_ENABLE
- * (0x80) or CTRL_VPP_P1_ENABLE (0x08) bit appears in any CONTROL_REGISTER write
- * during the write-execute call. Passes today and MUST keep passing after the fix.
+ * Test 2 (operation-phase VPP-safety): asserts that no HV control bit appears
+ * in any CONTROL_REGISTER write during the write-execute call.
  */
 
 static firestarter_handle_t make_write_handle_with_data(void) {
@@ -272,11 +244,15 @@ void test_5v_page_write_execute_emits_sdp(void) {
         "flash_5v_page_write_execute must not error on a full-page zero write");
     TEST_ASSERT_TRUE_MESSAGE(recording_contains_sdp_signature(),
         "flash_5v_page_write_execute must emit FLASH_ENABLE_WRITE SDP (0x5555,0x2AAA,0x5555 MSB pattern) at page start");
+    static const expected_cycle_t want[] = {
+        {BUS_CYCLE_WRITE, 0x5555, 0xAA}, {BUS_CYCLE_WRITE, 0x2AAA, 0x55}, {BUS_CYCLE_WRITE, 0x5555, 0xA0},
+        {BUS_CYCLE_WRITE, 0x0000, 0x00},
+    };
+    assert_bus_cycles_from(0, want, 4, "the page unlock AA/55/A0, then the first data byte");
 }
 
 /* Test 2 (FIX-02B VPP-safety operation phase): flash_5v_page_write_execute must NEVER
- * set CTRL_VPP_REGULATOR_ENABLE (0x80) or CTRL_VPP_P1_ENABLE (0x08) in any
- * CONTROL_REGISTER write during the write-execute call.
+ * set an HV control bit in any CONTROL_REGISTER write during the write-execute call.
  * Passes for the bare loop today; MUST remain green after the SDP fix since
  * flash_util_byte_flipping only sets CTRL_READ_WRITE (not VPP bits). */
 void test_5v_page_write_execute_no_vpp(void) {
@@ -559,10 +535,9 @@ void test_5v_page_write_init_does_not_blank_check(void) {
     TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
         "ERASE-02: the removed blank check can no longer fail a write on a "
         "non-blank part");
-    assert_no_vpp_in_recording(
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
         "ERASE-02: with FLAG_CAN_ERASE clear and no blank check left in "
-        "write-init at all, flash_5v_page_write_init must energise no VPP "
-        "rail");
+        "write-init at all, flash_5v_page_write_init must write no register");
 }
 
 void test_5v_page_write_init_no_vpp_with_flag_can_erase_set(void) {
@@ -577,9 +552,9 @@ void test_5v_page_write_init_no_vpp_with_flag_can_erase_set(void) {
         "after exactly one call, even with FLAG_CAN_ERASE set");
     TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
         "flash_5v_page_write_init must not error with FLAG_CAN_ERASE set");
-    assert_no_vpp_in_recording(
-        "flash_5v_page_write_init must energise no VPP rail even when "
-        "FLAG_CAN_ERASE is set");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(),
+        "flash_5v_page_write_init must write no register even when "
+        "FLAG_CAN_ERASE is set: the 0x05 family has no erase in write-init");
 }
 
 /* Leg 1 (Dispatch): CMD_LOCK_STATUS must wire firestarter_operation_main to
@@ -696,24 +671,12 @@ void test_5v_page_lock_status_mode_bracketing(void) {
 
     flash_5v_page_read_protection_execute(&h);
 
-    uint8_t msb[16];
-    int msb_count = 0;
-    for (int i = 0; i < bus_recording_count() && msb_count < 16; i++) {
-        if (recorded_reg(i) == MOST_SIGNIFICANT_BYTE) {
-            msb[msb_count++] = recorded_data(i);
-        }
-    }
-
-    TEST_ASSERT_EQUAL_MESSAGE(7, msb_count,
-        "expected 3 (FLASH_ENABLE_ID) + 1 (the read's own address-set) + 3 (FLASH_DISABLE_ID) = 7 MSB writes");
-    TEST_ASSERT_EQUAL_HEX8(0x55, msb[0]);
-    TEST_ASSERT_EQUAL_HEX8(0x2A, msb[1]);
-    TEST_ASSERT_EQUAL_HEX8(0x55, msb[2]);
-    /* msb[3] is the read's own address-set MSB write -- its value is not
-     * asserted here; only its POSITION between entry and exit matters. */
-    TEST_ASSERT_EQUAL_HEX8(0x55, msb[4]);
-    TEST_ASSERT_EQUAL_HEX8(0x2A, msb[5]);
-    TEST_ASSERT_EQUAL_HEX8(0x55, msb[6]);
+    static const expected_cycle_t want[] = {
+        {BUS_CYCLE_WRITE, 0x5555, 0xAA}, {BUS_CYCLE_WRITE, 0x2AAA, 0x55}, {BUS_CYCLE_WRITE, 0x5555, 0x90},
+        {BUS_CYCLE_READ, 0x0002, 0},
+        {BUS_CYCLE_WRITE, 0x5555, 0xAA}, {BUS_CYCLE_WRITE, 0x2AAA, 0x55}, {BUS_CYCLE_WRITE, 0x5555, 0xF0},
+    };
+    assert_bus_cycles(want, 7, "ID entry (AA/55/90), the status read at 0x0002, then ID exit (AA/55/F0)");
 }
 
 /* The page wait polls DQ7 of the last byte loaded, not the whole byte. */
@@ -792,18 +755,11 @@ void test_5v_page_erase_sends_the_six_cycle_sequence_and_waits(void) {
     h.firestarter_operation_main(&h);
 
     TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, h.response_code);
-    const uint8_t want[6][2] = {
-        {0x55, 0x55}, {0xAA, 0x2A}, {0x55, 0x55}, {0x55, 0x55}, {0xAA, 0x2A}, {0x55, 0x55},
+    static const expected_cycle_t want[] = {
+        {BUS_CYCLE_WRITE, 0x5555, 0xAA}, {BUS_CYCLE_WRITE, 0x2AAA, 0x55}, {BUS_CYCLE_WRITE, 0x5555, 0x80},
+        {BUS_CYCLE_WRITE, 0x5555, 0xAA}, {BUS_CYCLE_WRITE, 0x2AAA, 0x55}, {BUS_CYCLE_WRITE, 0x5555, 0x10},
     };
-    int cycle = 0;
-    for (int i = 0; i + 1 < bus_recording_count() && cycle < 6; i++) {
-        if (recorded_reg(i) == LEAST_SIGNIFICANT_BYTE && recorded_reg(i + 1) == MOST_SIGNIFICANT_BYTE) {
-            TEST_ASSERT_EQUAL_HEX8(want[cycle][0], recorded_data(i));
-            TEST_ASSERT_EQUAL_HEX8(want[cycle][1], recorded_data(i + 1));
-            cycle++;
-        }
-    }
-    TEST_ASSERT_EQUAL_MESSAGE(6, cycle, "six command cycles at 5555/2AAA");
+    assert_bus_cycles(want, 6, "the JEDEC six-cycle chip erase");
     TEST_ASSERT_EQUAL_MESSAGE(3, s_part_reads, "two DQ7 reads, then the erased-byte check");
     assert_no_vpp_in_recording("the 0x05 chip erase is a 5 V operation");
 }
@@ -830,17 +786,10 @@ int main(int argc, char** argv) {
     RUN_TEST(test_5v_page_erase_sends_the_six_cycle_sequence_and_waits);
     RUN_TEST(test_5v_page_erase_that_leaves_address_zero_is_not_blank);
 
-    /* Protocol 0x05 configure-phase VPP-safety proof */
-    RUN_TEST(test_5v_page_0x05_read_configure_no_vpp);
-    RUN_TEST(test_5v_page_0x05_write_configure_no_vpp);
-
-    /* Protocol 0x35 configure-phase VPP-safety proof */
-    RUN_TEST(test_5v_page_0x35_read_configure_no_vpp);
-    RUN_TEST(test_5v_page_0x35_write_configure_no_vpp);
-
-    /* Protocol 0x39 configure-phase VPP-safety proof */
-    RUN_TEST(test_5v_page_0x39_read_configure_no_vpp);
-    RUN_TEST(test_5v_page_0x39_write_configure_no_vpp);
+    /* configure_memory sends 0x05, 0x35 and 0x39 to configure_flash_5v_page */
+    RUN_TEST(test_5v_page_0x05_dispatches_to_5v_page);
+    RUN_TEST(test_5v_page_0x35_dispatches_to_5v_page);
+    RUN_TEST(test_5v_page_0x39_dispatches_to_5v_page);
 
     /* FIX-02B: operation-phase SDP emission + VPP-safety proofs */
     RUN_TEST(test_5v_page_write_execute_emits_sdp);

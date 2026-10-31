@@ -58,3 +58,19 @@ inline bool ids_contains(const std::vector<uint8_t>& ids, uint8_t id) {
     }
     return false;
 }
+
+/* Appends the params of each captured frame, in order, to *out_params. The
+ * length field counts the id, the params and the crc byte. */
+inline void captured_frame_params(std::vector<std::vector<uint8_t>>* out_params) {
+    size_t offset = 0;
+    while (offset + 7 <= captured_frames.size()) {
+        uint16_t len_value = (uint16_t)(((uint16_t)captured_frames[offset + 4] << 8) | captured_frames[offset + 5]);
+        size_t frame_size = 4 + 2 + (size_t)len_value + 1;
+        if (offset + frame_size > captured_frames.size() || len_value < 2) {
+            break;
+        }
+        out_params->push_back(std::vector<uint8_t>(captured_frames.begin() + offset + 7,
+                                                   captured_frames.begin() + offset + 6 + len_value - 1));
+        offset += frame_size;
+    }
+}

@@ -445,8 +445,9 @@ The handlers still call `rurp_*` hardware functions and use `LOG_*_MSG` PROGMEM 
 has a `host_stubs.cpp` with no-op versions of these symbols. Shared stub code and shared test data
 are in `test/native/avr/_shared/`.
 
-The `test_dispatch` suite checks `handle->firestarter_operation_main` and `handle->response_code`
-only. It never checks register side effects, so no-op stubs are sufficient for it.
+The `test_dispatch` suite compares the three operation pointers that `configure_memory` sets with
+the pointers that the expected `configure_<family>()` sets (`_shared/dispatch_expect.h`), and checks
+`handle->response_code`. It never checks register side effects, so no-op stubs are sufficient for it.
 
 ### Add a native test suite
 

@@ -41,6 +41,7 @@ extern "C" {
 using namespace fakeit;
 
 #include "../_shared/bus_recording.h"
+#include "../_shared/dispatch_expect.h"
 
 /* Debug session w27c512-write-slow-3x -- read-back model + saturation
  * reporter, compiled because host_stubs.cpp defines
@@ -166,34 +167,31 @@ void test_eprom_0x0B_write_enables_vpp_regulator(void) {
     check_write_enables_vpp(0x0B);
 }
 
-/* ─── NEGATIVE CONTROL: CMD_READ, configure-only — VPP must NOT fire ─────── */
+/* ─── configure_memory sends 0x07, 0x08 and 0x0B to configure_eprom ─────── */
 
-/* Configures a CMD_READ for `protocol` and asserts that no CONTROL_REGISTER
- * write sets a VPP-enable bit. Note: CTRL_VPP_VPE_DROP_ENABLE is 0x100 when
- * HARDWARE_REVISION is defined, so check the 8-bit-fit VPP bits only. */
-static void check_read_configure_no_vpp(uint32_t protocol) {
-    char msg[96];
-    firestarter_handle_t h = make_handle(protocol, CMD_READ);
-    configure_memory(&h);
-    snprintf(msg, sizeof(msg), "configure_memory must not error on protocol 0x%02X CMD_READ",
-             (unsigned)protocol);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code, msg);
-    snprintf(msg, sizeof(msg),
-             "configure_eprom 0x%02X CMD_READ configure-phase must NOT set a VPP-enable bit",
-             (unsigned)protocol);
-    assert_no_vpp_in_recording(msg);
+/* Compares the operation pointers that configure_memory sets for `protocol`
+ * with the pointers of configure_eprom, for CMD_READ, CMD_WRITE, CMD_ERASE
+ * and CMD_CHECK_CHIP_ID. */
+static void check_dispatches_to_eprom(uint32_t protocol) {
+    static const uint8_t cmds[] = {CMD_READ, CMD_WRITE, CMD_ERASE, CMD_CHECK_CHIP_ID};
+    for (size_t c = 0; c < sizeof(cmds); c++) {
+        char ctx[80];
+        snprintf(ctx, sizeof(ctx), "protocol 0x%02X cmd %u -> configure_eprom", (unsigned)protocol,
+                 (unsigned)cmds[c]);
+        assert_dispatches_to(make_handle(protocol, cmds[c]), configure_eprom, ctx);
+    }
 }
 
-void test_eprom_0x07_read_configure_only_does_not_enable_vpp(void) {
-    check_read_configure_no_vpp(0x07);
+void test_eprom_0x07_dispatches_to_eprom(void) {
+    check_dispatches_to_eprom(0x07);
 }
 
-void test_eprom_0x08_read_configure_only_does_not_enable_vpp(void) {
-    check_read_configure_no_vpp(0x08);
+void test_eprom_0x08_dispatches_to_eprom(void) {
+    check_dispatches_to_eprom(0x08);
 }
 
-void test_eprom_0x0B_read_configure_only_does_not_enable_vpp(void) {
-    check_read_configure_no_vpp(0x0B);
+void test_eprom_0x0B_dispatches_to_eprom(void) {
+    check_dispatches_to_eprom(0x0B);
 }
 
 /* ═════════════════════════════════════════════════════════════════════════
@@ -712,9 +710,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_eprom_0x0B_write_enables_vpp_regulator);
 
     /* NEGATIVE CONTROL: configure-only (CMD_READ, no init) — no VPP bits set */
-    RUN_TEST(test_eprom_0x07_read_configure_only_does_not_enable_vpp);
-    RUN_TEST(test_eprom_0x08_read_configure_only_does_not_enable_vpp);
-    RUN_TEST(test_eprom_0x0B_read_configure_only_does_not_enable_vpp);
+    RUN_TEST(test_eprom_0x07_dispatches_to_eprom);
+    RUN_TEST(test_eprom_0x08_dispatches_to_eprom);
+    RUN_TEST(test_eprom_0x0B_dispatches_to_eprom);
 
     /* WRITE-CADENCE INVARIANT (debug session w27c512-write-slow-3x) -- the
      * per-pass route-assert law, enforced here because CI runs only the two

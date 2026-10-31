@@ -105,6 +105,7 @@ extern "C" void rurp_set_control_pin(uint8_t pin, uint8_t state) {
     strobe_push(STROBE_KIND_PIN, pin, state);
 }
 #elif defined(HOST_STUBS_RECORD_BUS)
+#include "bus_recording.h"
 #ifndef HOST_STUBS_MAX_RECORDING
 #define HOST_STUBS_MAX_RECORDING 4096
 #endif
@@ -116,11 +117,45 @@ struct bus_record_entry_t {
 static bus_record_entry_t s_bus_recording[HOST_STUBS_MAX_RECORDING];
 static int s_bus_recording_count = 0;
 
-extern "C" void clear_bus_recording() { s_bus_recording_count = 0; }
+/* Data-bus cycles, in a log of their own so the register recording above
+ * keeps its meaning. Each entry holds the address and control value that the
+ * register writes latched before the cycle. */
+struct bus_cycle_entry_t {
+    uint8_t kind;
+    uint16_t address;
+    rurp_register_t control;
+    uint8_t data;
+};
+static bus_cycle_entry_t s_bus_cycles[HOST_STUBS_MAX_RECORDING];
+static int s_bus_cycle_count = 0;
+static uint8_t s_latched_lsb = 0;
+static uint8_t s_latched_msb = 0;
+static rurp_register_t s_latched_control = 0;
+
+extern "C" void clear_bus_recording() {
+    s_bus_recording_count = 0;
+    s_bus_cycle_count = 0;
+}
 extern "C" int  bus_recording_count() { return s_bus_recording_count; }
 extern "C" uint8_t recorded_reg(int i)  { return s_bus_recording[i].reg; }
 extern "C" rurp_register_t recorded_data(int i) { return s_bus_recording[i].data; }
 extern "C" bool bus_recording_saturated() { return s_bus_recording_count >= HOST_STUBS_MAX_RECORDING; }
+
+extern "C" int bus_cycle_count() { return s_bus_cycle_count; }
+extern "C" uint8_t bus_cycle_kind(int i) { return s_bus_cycles[i].kind; }
+extern "C" uint16_t bus_cycle_address(int i) { return s_bus_cycles[i].address; }
+extern "C" rurp_register_t bus_cycle_control(int i) { return s_bus_cycles[i].control; }
+extern "C" uint8_t bus_cycle_data(int i) { return s_bus_cycles[i].data; }
+
+static void bus_cycle_push(uint8_t kind, uint8_t data) {
+    if (s_bus_cycle_count < HOST_STUBS_MAX_RECORDING) {
+        s_bus_cycles[s_bus_cycle_count].kind = kind;
+        s_bus_cycles[s_bus_cycle_count].address = (uint16_t)(((uint16_t)s_latched_msb << 8) | s_latched_lsb);
+        s_bus_cycles[s_bus_cycle_count].control = s_latched_control;
+        s_bus_cycles[s_bus_cycle_count].data = data;
+        s_bus_cycle_count++;
+    }
+}
 
 extern "C" void rurp_write_to_register(uint8_t reg, rurp_register_t data) {
     if (s_bus_recording_count < HOST_STUBS_MAX_RECORDING) {
@@ -128,6 +163,18 @@ extern "C" void rurp_write_to_register(uint8_t reg, rurp_register_t data) {
         s_bus_recording[s_bus_recording_count].data = data;
         s_bus_recording_count++;
     }
+    if (reg == LEAST_SIGNIFICANT_BYTE) {
+        s_latched_lsb = (uint8_t)data;
+    } else if (reg == MOST_SIGNIFICANT_BYTE) {
+        s_latched_msb = (uint8_t)data;
+    } else if (reg == CONTROL_REGISTER) {
+        s_latched_control = data;
+    }
+}
+
+#define HOST_STUBS_CUSTOM_DATA_BUFFER
+extern "C" void rurp_write_data_buffer(uint8_t data) {
+    bus_cycle_push(BUS_CYCLE_WRITE, data);
 }
 #else
 extern "C" void rurp_write_to_register(uint8_t reg, rurp_register_t data) {
@@ -166,6 +213,9 @@ extern "C" void rurp_write_data_buffer(uint8_t data) {
 
 #ifndef HOST_STUBS_CUSTOM_READ_DATA_BUFFER
 extern "C" uint8_t rurp_read_data_buffer() {
+#ifdef HOST_STUBS_RECORD_BUS
+    bus_cycle_push(BUS_CYCLE_READ, 0);
+#endif
     return 0;
 }
 #endif

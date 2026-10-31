@@ -1,7 +1,9 @@
 """Behavioral host harness for the write and read transfer loops.
 
 Compiles production eprom_operations.cpp and operation_utils.cpp against a
-scripted host byte stream and a capturing log stub. Assertions operate on the
+scripted host byte stream and a capturing log stub. mem_util_operation_end comes
+from production memory.cpp: the link drops every unused section of memory.o, so
+the driver needs no stub for the rest of that file. Assertions operate on the
 frames the firmware emits and the bytes it hands to the memory handler, never
 on source text.
 
@@ -9,9 +11,15 @@ The host side of each scenario follows what firestarter_app 3.2.4 sends:
 "OK" acks, '#' data frames and a "DONE" only in answer to a data request
 after its file is exhausted.
 """
+import sys
 from pathlib import Path
 
 from ._host_build import FAKE_ARDUINO_H, INCLUDE, REPO_ROOT, compile_ok, host_cxx, run_binary
+
+# memory.cpp also calls delayMicroseconds().
+ARDUINO_H = FAKE_ARDUINO_H + "void delayMicroseconds(unsigned int us);\n"
+# Drop unreferenced sections at link time, with their undefined references.
+GC_SECTIONS = "-Wl,-dead_strip" if sys.platform == "darwin" else "-Wl,--gc-sections"
 
 DRIVER = r"""
 #include <assert.h>
@@ -60,13 +68,6 @@ static void host_on_data_request() {
 unsigned long millis() { return fake_ms; }
 void delay(unsigned long ms) { fake_ms += ms; }
 void op_reset_timeout() {}
-
-uint32_t mem_util_operation_end(const firestarter_handle_t* handle) {
-    if (handle->region_end == 0 || handle->region_end > handle->mem_size) {
-        return handle->mem_size;
-    }
-    return handle->region_end;
-}
 
 extern "C" {
 int rurp_communication_available() { return (int)(rx.size() - rx_pos); }
@@ -247,14 +248,19 @@ int main() {
 
 
 def test_write_and_read_transfer_loops(tmp_path: Path) -> None:
-    (tmp_path / "Arduino.h").write_text(FAKE_ARDUINO_H)
+    (tmp_path / "Arduino.h").write_text(ARDUINO_H)
     driver = tmp_path / "driver.cpp"
     driver.write_text(DRIVER)
     includes = ["-I", str(tmp_path), "-I", str(INCLUDE)]
+    memory_obj = tmp_path / "memory.o"
     exe = tmp_path / "driver"
+    compile_ok([host_cxx(), "-std=c++17", "-c", "-ffunction-sections", "-fdata-sections",
+                *includes, str(REPO_ROOT / "src/proms/memory.cpp"), "-o", str(memory_obj)],
+               cwd=REPO_ROOT, allow_warnings=True)
     compile_ok([host_cxx(), "-std=c++17", *includes, str(driver),
                 str(REPO_ROOT / "src/eprom_operations.cpp"),
-                str(REPO_ROOT / "src/operation_utils.cpp"), "-o", str(exe)],
+                str(REPO_ROOT / "src/operation_utils.cpp"), str(memory_obj), GC_SECTIONS,
+                "-o", str(exe)],
                cwd=REPO_ROOT, allow_warnings=True)
     result = run_binary(exe, cwd=REPO_ROOT)
     assert result.returncode == 0, (

@@ -38,11 +38,6 @@ extern "C" void set_mock_hw_rev(uint8_t rev);
 
 #include "../_shared/bus_recording.h"
 
-/* Every high-voltage control bit at the full register width. */
-static const rurp_register_t kHvBits = (rurp_register_t)(CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE |
-                                                         CTRL_VPP_A9_ENABLE | CTRL_VPE_ENABLE |
-                                                         CTRL_VPP_VPE_DROP_ENABLE);
-
 static std::vector<uint8_t> captured;
 
 /* The params of the first frame with this id, or an empty vector. Frame
@@ -140,6 +135,53 @@ void test_high_reading_is_an_error_and_clears_every_hv_bit(void) {
     TEST_ASSERT_TRUE(last >= 0);
     TEST_ASSERT_BITS_LOW_MESSAGE((rurp_register_t)EPROM_HV_ALL_OFF_MASK, recorded_data(last),
                                  "the last control write must clear every HV bit");
+}
+
+/* The full-width value of the first control write that sets an HV bit, or
+ * 0 when no control write sets one. The register stub reads back 0, so each
+ * recorded write holds only the bits that its own call set. */
+static rurp_register_t first_hv_control_write(void) {
+    for (int i = 0; i < bus_recording_count(); i++) {
+        if (recorded_reg(i) == CONTROL_REGISTER && (recorded_data(i) & kHvBits)) {
+            return recorded_data(i);
+        }
+    }
+    return 0;
+}
+
+/* eprom_check_vpp and the write path apply the same route: the regulator and
+ * the drop resistor for 0x07 and 0x08, the regulator alone (direct VPE, drop
+ * bit low) for 0x0B. 13000 mV is below the drop path's ceiling. */
+void test_check_vpp_and_write_apply_the_row_route(void) {
+    struct row_route_t {
+        uint8_t protocol;
+        rurp_register_t route;
+    };
+    const row_route_t rows[] = {
+        {0x07, (rurp_register_t)(CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_VPE_DROP_ENABLE)},
+        {0x08, (rurp_register_t)(CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_VPE_DROP_ENABLE)},
+        {0x0B, (rurp_register_t)CTRL_VPP_REGULATOR_ENABLE},
+    };
+    for (const row_route_t& row : rows) {
+        char msg[80];
+
+        clear_bus_recording();
+        firestarter_handle_t check = make_handle(13000, 0);
+        check.protocol = row.protocol;
+        TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, run_init(&check, 13000));
+        snprintf(msg, sizeof(msg), "protocol 0x%02X: eprom_check_vpp route", (unsigned)row.protocol);
+        TEST_ASSERT_EQUAL_HEX16_MESSAGE(row.route, first_hv_control_write(), msg);
+
+        firestarter_handle_t write = make_handle(13000, 0);
+        write.protocol = row.protocol;
+        write.cmd = CMD_WRITE;
+        write.data_size = 0;
+        configure_memory(&write);
+        clear_bus_recording();
+        write.firestarter_operation_main(&write);
+        snprintf(msg, sizeof(msg), "protocol 0x%02X: write path route", (unsigned)row.protocol);
+        TEST_ASSERT_EQUAL_HEX16_MESSAGE(row.route, first_hv_control_write(), msg);
+    }
 }
 
 void test_in_band_reading_also_ends_with_every_hv_bit_clear(void) {
@@ -264,6 +306,7 @@ int main(int argc, char** argv) {
     UNITY_BEGIN();
     RUN_TEST(test_high_reading_is_an_error_and_clears_every_hv_bit);
     RUN_TEST(test_in_band_reading_also_ends_with_every_hv_bit_clear);
+    RUN_TEST(test_check_vpp_and_write_apply_the_row_route);
     RUN_TEST(test_force_downgrades_a_high_reading_to_a_warning);
     RUN_TEST(test_a_zero_r2_is_refused_before_any_hv_write);
     RUN_TEST(test_force_does_not_override_a_bad_calibration);

@@ -221,15 +221,6 @@ static uint8_t mock_get_data_keyed(firestarter_handle_t*, uint32_t addr) {
     return 0xFF;
 }
 
-static void drive_reference_emitter(firestarter_handle_t* h, const byte_flip_t* table, size_t len, rurp_register_t ctrl_seed) {
-    configure_memory(h);
-    reset_register_cache(0x00, 0x00, ctrl_seed);
-    clear_strobes();
-    for (size_t i = 0; i < len; i++) {
-        h->firestarter_set_data(h, table[i].address, table[i].byte);
-    }
-}
-
 static void drive_write_init(firestarter_handle_t* h, rurp_register_t ctrl_seed) {
     configure_memory(h);
     h->firestarter_get_data = mock_get_data_keyed;
@@ -356,70 +347,44 @@ void test_case3_at28c16_stream_matches_fixed(void) {
         "for a write-init that emitted the correct sequence");
 }
 
-/* Case 4 (STALE STATE MECHANISM: direct seed). AT28C010 (128 KB). */
+/* Case 4: AT28C010 (128 KB, DIP32_28C512_EEPROM). With a zero CONTROL seed
+ * the production unlock stream is SDP_FIXED_DIP32_28C512_EEPROM. With a stale
+ * CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18 seed, memory_set_data must
+ * clear the stale bits with one extra CONTROL write on write #1. */
 void test_case4_at28c010_stale_direct_seed(void) {
     firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[3]); /* AT28C010 */
-    drive_write_init(&h, CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18);
+    drive_write_init(&h, 0x00);
+    sdp_assert_stream_equals(SDP_FIXED_DIP32_28C512_EEPROM, SDP_FIXED_DIP32_28C512_EEPROM_LEN,
+        "Case 4: AT28C010/DIP32_28C512_EEPROM, zero CONTROL seed");
 
-    sdp_strobe_t shipped_snapshot[64];
-    int shipped_len = sdp_snapshot(shipped_snapshot, 64);
-    TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "Case 4: shipped-path snapshot must not overflow");
-
-    firestarter_handle_t h_ref = make_sdp_handle(SDP_BUS_CONFIGS[3]);
-    drive_reference_emitter(&h_ref, FLASH_DISABLE_WRITE_PROTECTION, 6, CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18);
-    TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "Case 4: fixed-reference drive must not overflow");
-    TEST_ASSERT_GREATER_THAN_MESSAGE(SDP_FIXED_DIP32_28C512_EEPROM_LEN, strobe_count(),
-        "Case 4: stale-seeded reference emitter must emit an extra CONTROL_REGISTER write "
-        "clearing CTRL_ADDRESS_LINE_17|18 versus the zero-seed target -- if this ever drops "
-        "to the zero-seed length, the stale seed stopped taking effect");
-
-    sdp_assert_stream_equals(shipped_snapshot, shipped_len,
-        "Case 4: AT28C010/DIP32_28C512_EEPROM, directly-seeded stale CTRL_ADDRESS_LINE_17|18 -- "
-        "shipped path (no CONTROL_REGISTER write, ever) must clear the stale write-inhibit bits "
-        "like the fixed reference emitter (memory_set_data) does");
-
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "Case 4: the completion poll is advisory only (D-05) and must never report ERROR "
-        "for a write-init that cleared the stale write-inhibit bits and emitted the correct "
-        "sequence");
+    firestarter_handle_t h_stale = make_sdp_handle(SDP_BUS_CONFIGS[3]);
+    drive_write_init(&h_stale, CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18);
+    sdp_assert_stream_equals(SDP_FIXED_DIP32_STALE_CONTROL, SDP_FIXED_DIP32_STALE_CONTROL_LEN,
+        "Case 4: AT28C010/DIP32_28C512_EEPROM, stale CTRL_ADDRESS_LINE_17|18 seed -- write #1 "
+        "must clear the stale bits");
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h_stale.response_code,
+        "Case 4: the completion poll is advisory only (D-05) and must never report ERROR");
 }
 
+/* Case 5: AT28C040 (DIP32_28C040). The stale CONTROL value comes from a REAL
+ * preceding read through memory_get_data, not a seeded cache. */
 void test_case5_at28c040_stale_via_real_read(void) {
-    /* Probe address 0x0000, deliberately NOT 0x5555/0x2AAA (the SDP
-     * sequence's own magic addresses): CTRL_READ_WRITE is set by
-     * rw_line's READ_FLAG bit alone, independent of which address is read, so
-     * any address demonstrates the mechanism. Reusing 0x5555 would also
-     * pre-warm the LSB/MSB latch cache to the SAME value write #1 of the SDP
-     * sequence needs, eliding that write's address latch too (a real,
-     * correct, but SEPARATE cache-elision effect) and conflating it with the
-     * CONTROL-bit finding this case exists to isolate. */
     firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[4]); /* AT28C040 */
-    rurp_register_t stale_ctrl = drive_write_init_after_real_read(&h, 0x0000);
+    drive_write_init(&h, 0x00);
+    sdp_assert_stream_equals(SDP_FIXED_DIP32_28C512_EEPROM, SDP_FIXED_DIP32_28C512_EEPROM_LEN,
+        "Case 5: AT28C040/DIP32_28C040, zero CONTROL seed");
+
+    /* Probe address 0x0000, deliberately NOT 0x5555/0x2AAA: a read at 0x5555
+     * would also pre-load the LSB/MSB cache and elide write #1's address. */
+    firestarter_handle_t h_stale = make_sdp_handle(SDP_BUS_CONFIGS[4]);
+    rurp_register_t stale_ctrl = drive_write_init_after_real_read(&h_stale, 0x0000);
     TEST_ASSERT_BITS_HIGH_MESSAGE((uint8_t)CTRL_READ_WRITE, stale_ctrl,
-        "Case 5: a real preceding read (at an arbitrary address, 0x0000) must leave "
-        "CTRL_READ_WRITE stuck HIGH on DIP32_28C040 -- rw_line 22 (WE, chip pin 31) folds "
-        "READ_FLAG into this CONTROL bit regardless of which address is read");
-
-    sdp_strobe_t shipped_snapshot[64];
-    int shipped_len = sdp_snapshot(shipped_snapshot, 64);
-    TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "Case 5: shipped-path snapshot must not overflow");
-
-    firestarter_handle_t h_ref = make_sdp_handle(SDP_BUS_CONFIGS[4]);
-    drive_reference_emitter(&h_ref, FLASH_DISABLE_WRITE_PROTECTION, 6, stale_ctrl);
-    TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "Case 5: fixed-reference drive must not overflow");
-    TEST_ASSERT_GREATER_THAN_MESSAGE(SDP_FIXED_DIP32_28C512_EEPROM_LEN, strobe_count(),
-        "Case 5: stale-seeded reference emitter must emit an extra CONTROL_REGISTER write "
-        "clearing CTRL_READ_WRITE versus the zero-seed target");
-
-    sdp_assert_stream_equals(shipped_snapshot, shipped_len,
-        "Case 5: AT28C040/DIP32_28C040, stale CTRL_READ_WRITE reached via a REAL "
-        "preceding read (memory_get_data, not a directly-seeded cache) -- shipped path must clear "
-        "the write-inhibit bit like the fixed reference emitter does");
-
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "Case 5: the completion poll is advisory only (D-05) and must never report ERROR "
-        "for a write-init that cleared the stale write-inhibit bit and emitted the correct "
-        "sequence");
+        "Case 5: a real preceding read must leave CTRL_READ_WRITE HIGH on DIP32_28C040 -- rw_line "
+        "22 (WE, chip pin 31) folds READ_FLAG into this CONTROL bit");
+    sdp_assert_stream_equals(SDP_FIXED_DIP32_STALE_CONTROL, SDP_FIXED_DIP32_STALE_CONTROL_LEN,
+        "Case 5: AT28C040/DIP32_28C040 after a real read -- write #1 must clear CTRL_READ_WRITE");
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h_stale.response_code,
+        "Case 5: the completion poll is advisory only (D-05) and must never report ERROR");
 }
 
 /*
@@ -571,17 +536,10 @@ void test_case10_flag_absent_emits_full_unlock_stream(void) {
 }
 
 void test_case11_tblc_budget_exceeded_warns(void) {
-    /* AT28C_TBLC_MAX_US (100) is #define'd inside eeprom_28c.cpp's own
-     * translation unit (eeprom_28c.cpp:58) and is NOT exported via
-     * eeprom_28c.h, so it cannot be included directly here. Mirrored as a
-     * named local constant with an explicit citation, rather than left as
-     * an unexplained magic number -- the sequence-length half of the
-     * production budget formula (sdp_seq_len * AT28C_TBLC_MAX_US) IS derived
-     * from the real EEPROM_SDP_DISABLE array below, so only the per-byte
-     * microsecond ceiling itself needs mirroring. */
-    const uint32_t TEST_MIRROR_AT28C_TBLC_MAX_US = 100; /* mirrors eeprom_28c.cpp:58 */
-    uint32_t sdp_seq_len = (uint32_t)(sizeof(EEPROM_SDP_DISABLE) / sizeof(EEPROM_SDP_DISABLE[0]));
-    uint32_t over_budget_elapsed = sdp_seq_len * TEST_MIRROR_AT28C_TBLC_MAX_US + 1;
+    /* The budget is 6 writes x AT28C_TBLC_MAX_US (100 us) = 600 us. Both
+     * values are private to eeprom_28c.cpp, so the test states the budget as
+     * a literal: one microsecond over it. */
+    const uint32_t over_budget_elapsed = 601;
 
     /* eeprom28c_write_init's unlock branch (via eeprom28c_emit_sdp_sequence_timed)
      * calls micros() exactly twice per drive: once immediately before
@@ -745,10 +703,8 @@ void test_case17_lock_terminates_after_three_writes_no_trailing_data(void) {
 /* The lock stream must diverge from the SIX-WRITE UNLOCK stream at an EXACT
  * index -- never `!= -1` (Pitfall 4: a golden pinned to the wrong
  * expectation stays green under a bare not-equal check). Drives the
- * production lock op, snapshots it (mandatory: drive_reference_emitter below
- * calls clear_strobes(), which would erase the lock stream first), then
- * drives the six-write unlock table through the SAME FIXED (remap-aware)
- * emitter the lock op itself uses, for an apples-to-apples index. */
+ * production lock op and snapshots it (the next drive calls clear_strobes()),
+ * then drives the production unlock (eeprom28c_write_init). */
 void test_case18_lock_diverges_from_unlock_at_exact_index(void) {
     firestarter_handle_t h = make_lock_handle(SDP_BUS_CONFIGS[0]); /* AT28C256 */
     drive_lock_op(&h, 0x00);
@@ -757,9 +713,8 @@ void test_case18_lock_diverges_from_unlock_at_exact_index(void) {
     int lock_len = sdp_snapshot(lock_snapshot, 64);
 
     firestarter_handle_t h_unlock = make_sdp_handle(SDP_BUS_CONFIGS[0]);
-    drive_reference_emitter(&h_unlock, FLASH_DISABLE_WRITE_PROTECTION,
-        sizeof(FLASH_DISABLE_WRITE_PROTECTION) / sizeof(FLASH_DISABLE_WRITE_PROTECTION[0]), 0x00);
-    TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "Case 18: unlock-reference drive must not overflow");
+    drive_write_init(&h_unlock, 0x00);
+    TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "Case 18: production unlock drive must not overflow");
 
     int div = sdp_first_divergence(lock_snapshot, lock_len);
     TEST_ASSERT_EQUAL_MESSAGE(27, div,
@@ -774,16 +729,15 @@ void test_case19_lock_diverges_from_chip_erase_at_exact_index(void) {
     sdp_strobe_t lock_snapshot[64];
     int lock_len = sdp_snapshot(lock_snapshot, 64);
 
-    firestarter_handle_t h_erase = make_sdp_handle(SDP_BUS_CONFIGS[0]);
-    drive_reference_emitter(&h_erase, FLASH_ERASE, sizeof(FLASH_ERASE) / sizeof(FLASH_ERASE[0]), 0x00);
-    TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "Case 19: erase-reference drive must not overflow");
+    firestarter_handle_t h_erase = make_erase_handle(SDP_BUS_CONFIGS[0]);
+    drive_erase_op(&h_erase, 0x00);
+    TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "Case 19: production erase drive must not overflow");
 
     int div = sdp_first_divergence(lock_snapshot, lock_len);
     TEST_ASSERT_EQUAL_MESSAGE(27, div,
-        "Case 19 (LOCK-05 stream half, FIX-05's one-nibble hazard class applied to the lock table): "
-        "the lock stream diverges from the chip-erase stream at EXACTLY index 27 -- the SAME index as "
-        "Case 18's unlock divergence, because chip-erase's third payload (0x80) equals the unlock's, "
-        "so the lock's 0xA0 payload diverges from both at the identical position");
+        "Case 19 (LOCK-05 stream half): the lock stream diverges from the production chip-erase "
+        "stream at EXACTLY index 27 -- the erase begins with the SDP-disable sequence, whose third "
+        "payload (0x80) is where the lock's 0xA0 differs");
 }
 
 void test_case20_lock_report_shape_and_response_code(void) {
@@ -1101,6 +1055,9 @@ static uint8_t mock_get_data_page_load_always_wrong(firestarter_handle_t*, uint3
     return 0xFF;
 }
 
+/* Cases 26-29 test MSG_INFO_PAGE_LOAD_WORST_US, which only a DEV_TOOLS build
+ * sends. [env:native_nodevtools] runs the stable counterpart below. */
+#if DEV_TOOLS
 /* Case 26 -- the report line fires on a completing write, with the correct
  * worst value. Two pages (data_size 72, AT28C_PAGE_SIZE_FALLBACK 64: one flush at the
  * page-64 boundary, one at the last byte), so the flush path runs more than
@@ -1245,6 +1202,26 @@ void test_case29_write_execute_report_preserves_response_code(void) {
         "the response_code check above is meaningful rather than vacuous");
 }
 
+#else
+/* Stable build: eeprom28c_write_execute writes and verifies the same pages,
+ * and sends no page-load report. */
+void test_case26_stable_write_execute_sends_no_page_load_report(void) {
+    firestarter_handle_t h = make_page_load_handle(0, 72); /* two flush windows */
+    configure_memory(&h);
+    h.firestarter_get_data = mock_get_data_page_load_ok;
+    reset_register_cache(0x00, 0x00, 0x00);
+    clear_strobes();
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, h.response_code);
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, strobe_count(), "Case 26 (stable): the write must drive the bus");
+    std::vector<uint8_t> ids;
+    captured_frame_ids(&ids);
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_INFO_PAGE_LOAD_WORST_US),
+        "Case 26 (stable): a stable build must not send MSG_INFO_PAGE_LOAD_WORST_US");
+}
+#endif
+
 void test_case30_write_init_no_blank_check_with_flag_clear_erase01(void) {
     firestarter_handle_t h = make_sdp_handle_blank_check_enabled(SDP_BUS_CONFIGS[0]); /* AT28C256 */
     drive_write_init(&h, 0x00);
@@ -1274,105 +1251,15 @@ void test_case30_write_init_no_blank_check_with_flag_clear_erase01(void) {
         "zero strobes regardless");
 }
 
-/* Case 31 -- the erase stream's HEAD is the SDP-disable prefix, positionally,
- * over the golden's full length -- D-153-02's prefix is emitted verbatim
- * before any erase-specific write happens. Then asserts the stream
- * continues PAST the prefix: an equality at exactly this length would mean
- * the erase emitted only the prefix and nothing else -- D-153-02's prefix
- * WITHOUT D-153-02's erase, the exact silent-half-feature this case guards
- * against. */
-void test_case31_erase_stream_head_equals_sdp_disable_golden_erase04(void) {
+/* Case 31 -- the whole 0x0D chip-erase stream: the SDP-disable sequence, then
+ * the six-write software chip erase 5555<-AA, 2AAA<-55, 5555<-80, 5555<-AA,
+ * 2AAA<-55, 5555<-10, and nothing after it. */
+void test_case31_erase_stream_matches_fixed_erase04(void) {
     firestarter_handle_t h = make_erase_handle(SDP_BUS_CONFIGS[0]); /* AT28C256 / DIP28_28C256 */
     drive_erase_op(&h, 0x00);
-    TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "Case 31: erase stream must not overflow");
-
-    for (int i = 0; i < SDP_FIXED_DIP28_28C256_LEN; i++) {
-        char msg[192];
-        snprintf(msg, sizeof(msg),
-            "Case 31 (ERASE-04): erase stream index %d must equal SDP_FIXED_DIP28_28C256's entry "
-            "at the same index -- eeprom28c_erase_execute's first bus-visible action is the "
-            "D-153-02 SDP-disable prefix, emitted verbatim", i);
-        TEST_ASSERT_EQUAL_MESSAGE(SDP_FIXED_DIP28_28C256[i].kind, strobe_kind(i), msg);
-        TEST_ASSERT_EQUAL_MESSAGE(SDP_FIXED_DIP28_28C256[i].pin, strobe_pin(i), msg);
-        TEST_ASSERT_EQUAL_MESSAGE(SDP_FIXED_DIP28_28C256[i].value, strobe_value(i), msg);
-    }
-
-    TEST_ASSERT_TRUE_MESSAGE(strobe_count() > SDP_FIXED_DIP28_28C256_LEN,
-        "Case 31 (ERASE-04): the erase stream must continue PAST the SDP-disable prefix's length "
-        "-- the six AN-0544B chip-erase writes follow it; equality at exactly this length would "
-        "mean the erase emitted only the prefix and nothing else, D-153-02's prefix WITHOUT "
-        "D-153-02's erase");
-}
-
-void test_case32_erase_stream_terminates_on_chip_erase_byte_erase04(void) {
-    firestarter_handle_t h = make_erase_handle(SDP_BUS_CONFIGS[0]); /* AT28C256 / DIP28_28C256 */
-    drive_erase_op(&h, 0x00);
-    TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "Case 32: erase stream must not overflow");
-
-    int payload_index = strobe_count() - 3;
-    TEST_ASSERT_EQUAL_MESSAGE(STROBE_KIND_DATA, strobe_kind(payload_index),
-        "Case 32 (ERASE-04): the entry three-before-the-end must be a DATA payload write -- the "
-        "erase's terminal command write, per Case 17's un-elided-write derivation");
-
-    size_t erase_len = sizeof(FLASH_ERASE) / sizeof(FLASH_ERASE[0]);
-    uint8_t erase_terminal_byte = FLASH_ERASE[erase_len - 1].byte;
-    size_t sdp_disable_len = sizeof(EEPROM_SDP_DISABLE) / sizeof(EEPROM_SDP_DISABLE[0]);
-    uint8_t sdp_disable_terminal_byte = EEPROM_SDP_DISABLE[sdp_disable_len - 1].byte;
-
-    TEST_ASSERT_EQUAL_MESSAGE(erase_terminal_byte, strobe_value(payload_index),
-        "Case 32 (ERASE-04): the terminal command payload must equal FLASH_ERASE's own last "
-        "entry's byte, read from flash_utils.h (FIX-04 frozen) -- never a retyped literal");
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(sdp_disable_terminal_byte, strobe_value(payload_index),
-        "Case 32 (ERASE-04, FIX-05's one-nibble hazard class): the terminal command payload must "
-        "NOT equal EEPROM_SDP_DISABLE's own last entry's byte -- the chip-erase code (0x10) and "
-        "the SDP-disable code (0x20) differ by exactly one nibble in this position, and a stream "
-        "that accidentally emitted the SDP-disable byte again here would still look plausible "
-        "without this check");
-
-    for (int i = payload_index + 1; i < strobe_count(); i++) {
-        char msg[192];
-        snprintf(msg, sizeof(msg),
-            "Case 32 (ERASE-04): index %d must not be a DATA entry -- no data write may follow the "
-            "erase's terminal command payload (index %d)", i, payload_index);
-        TEST_ASSERT_NOT_EQUAL_MESSAGE(STROBE_KIND_DATA, strobe_kind(i), msg);
-    }
-}
-
-/* Case 33 -- the erase op's full stream (SDP-disable prefix immediately
- * followed by the six chip-erase writes) diverges from a BARE chip-erase-
- * only reference stream at an EXACT index, never `!= -1` (the same rule
- * Cases 18/19 exist for -- a not-equal check stays green against a golden
- * pinned to the wrong expectation). The SDP-disable and chip-erase AN
- * sequences share IDENTICAL addresses and payload bytes for their first
- * five writes (0x5555/0xAA, 0x2AAA/0x55, 0x5555/0x80, [elided]/0xAA,
- * 0x2AAA/0x55) and differ ONLY in the sixth write's terminal payload byte
- * (0x20 vs 0x10) -- so the erase op's own prefix, walked from index 0
- * against the bare reference, must diverge at exactly that sixth write's
- * payload position: SDP_FIXED_DIP28_28C256_LEN - 3, the same "payload is
- * three-before-the-end of the golden" derivation Case 17/32 use, expressed
- * against the golden's own length rather than a magic number. Mandatory
- * sequencing note from Case 18's own comment: drive_reference_emitter calls
- * clear_strobes(), so the production op's stream is snapshotted FIRST. */
-void test_case33_erase_stream_diverges_from_bare_chip_erase_at_exact_index_erase04(void) {
-    firestarter_handle_t h = make_erase_handle(SDP_BUS_CONFIGS[0]); /* AT28C256 / DIP28_28C256 */
-    drive_erase_op(&h, 0x00);
-    TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "Case 33: erase-stream snapshot must not overflow");
-    sdp_strobe_t erase_snapshot[128]; /* the erase stream is roughly twice a six-write stream; 64 (Case 18/19's size) is not enough */
-    int erase_len = sdp_snapshot(erase_snapshot, 128);
-
-    firestarter_handle_t h_bare = make_sdp_handle(SDP_BUS_CONFIGS[0]);
-    drive_reference_emitter(&h_bare, FLASH_ERASE, sizeof(FLASH_ERASE) / sizeof(FLASH_ERASE[0]), 0x00);
-    TEST_ASSERT_EQUAL_MESSAGE(0, strobe_overflowed(), "Case 33: bare chip-erase reference drive must not overflow");
-
-    int div = sdp_first_divergence(erase_snapshot, erase_len);
-    int expected_div = SDP_FIXED_DIP28_28C256_LEN - 3;
-    TEST_ASSERT_EQUAL_MESSAGE(expected_div, div,
-        "Case 33 (ERASE-04): the erase op's full stream must diverge from a BARE chip-erase-only "
-        "reference stream at EXACTLY SDP_FIXED_DIP28_28C256_LEN - 3 -- the SDP-disable prefix and "
-        "the bare chip-erase reference share the first five writes' addresses and payloads "
-        "byte-for-byte, diverging only at the sixth write's terminal payload (0x20 in the erase's "
-        "prefix vs 0x10 in the bare reference) -- never `!= -1`, the same reason Cases 18 and 19 "
-        "assert exact indices");
+    sdp_assert_stream_equals(SDP_FIXED_ERASE_DIP28_28C256, SDP_FIXED_ERASE_DIP28_28C256_LEN,
+        "Case 31 (ERASE-04): AT28C256/DIP28_28C256 -- the production chip-erase stream");
+    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -1408,14 +1295,16 @@ int main(int argc, char** argv) {
     RUN_TEST(test_case23_standalone_unlock_matches_auto_unlock_stream);
     RUN_TEST(test_case24_null_main_refusal_emits_not_supported_and_error_response);
     RUN_TEST(test_case25_cmd_erase_on_0x0d_dispatches_and_succeeds_erase03);
+#if DEV_TOOLS
     RUN_TEST(test_case26_write_execute_reports_worst_interval_on_completing_write);
     RUN_TEST(test_case27_write_execute_reports_worst_interval_on_aborting_write);
     RUN_TEST(test_case28_write_execute_no_tblc_budget_warn);
     RUN_TEST(test_case29_write_execute_report_preserves_response_code);
+#else
+    RUN_TEST(test_case26_stable_write_execute_sends_no_page_load_report);
+#endif
     RUN_TEST(test_case30_write_init_no_blank_check_with_flag_clear_erase01);
-    RUN_TEST(test_case31_erase_stream_head_equals_sdp_disable_golden_erase04);
-    RUN_TEST(test_case32_erase_stream_terminates_on_chip_erase_byte_erase04);
-    RUN_TEST(test_case33_erase_stream_diverges_from_bare_chip_erase_at_exact_index_erase04);
+    RUN_TEST(test_case31_erase_stream_matches_fixed_erase04);
 
     return UNITY_END();
 }

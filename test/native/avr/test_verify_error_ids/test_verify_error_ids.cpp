@@ -44,6 +44,8 @@ extern "C" {
 using namespace fakeit;
 
 extern "C" void verify_ids_set_readback(uint8_t value);
+extern "C" unsigned verify_ids_read_count();
+extern "C" void verify_ids_reset_read_count();
 
 /* Every id test asserts a non-zero frame count BEFORE its membership
  * assertions -- a run that captures zero frames must fail every id
@@ -282,19 +284,18 @@ void test_eeprom28c_page_readback_match_raises_no_verify_id(void) {
     h.data_buffer[0] = (char)0x01;
     verify_ids_set_readback(0x01); /* matches exactly -- both the DQ7 poll and the full-byte compare succeed */
     h.response_code = RESPONSE_CODE_OK;
+    verify_ids_reset_read_count();
 
     h.firestarter_operation_main(&h); /* eeprom28c_write_execute */
 
     std::vector<uint8_t> ids;
     captured_frame_ids(&ids);
-    /* Unlike memory_verify_execute and flash_util_wait_program (which
-     * emit nothing at all on success), eeprom28c_write_execute
-     * emits MSG_INFO_PAGE_LOAD_WORST_US even on a fully successful write in
-     * a DEV_TOOLS build, which [env:native] is -- so a truly empty capture
-     * here would mean the drive never actually ran, not that it succeeded
-     * quietly. */
-    TEST_ASSERT_TRUE_MESSAGE(verify_ids_frame_count(ids) >= 1,
-        "non-vacuity: a successful page write still emits its cadence-report frame");
+    /* Non-vacuity in every build: the write must have run its page wait (two
+     * DQ7 reads that agree) and its one-byte read-back. A DEV_TOOLS build
+     * also sends MSG_INFO_PAGE_LOAD_WORST_US, a stable build sends no frame,
+     * so the frame count cannot be the floor. */
+    TEST_ASSERT_EQUAL_MESSAGE(3, verify_ids_read_count(),
+        "non-vacuity: two DQ7 poll reads and one read-back read");
     TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_VERIFY),
         "a matching page read-back must never raise MSG_ERR_VERIFY");
     TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_EEPROM_TIMEOUT),

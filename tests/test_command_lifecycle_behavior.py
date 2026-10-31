@@ -42,15 +42,12 @@ extern "C" uint8_t rurp_get_physical_hardware_revision() { return 0; }
 extern "C" void rurp_detect_hardware_revision() { boot_order += "detect;"; }
 extern "C" uint8_t rurp_get_hardware_revision() { return 0; }
 #endif
-extern "C" rurp_configuration_t* rurp_get_config() {
-    static rurp_configuration_t config = {};
-    return &config;
-}
-extern "C" void rurp_save_config(rurp_configuration_t*) {}
-extern "C" bool rurp_config_migrate(rurp_configuration_t*) { return false; }
-extern "C" bool rurp_config_commit(rurp_configuration_t*, const rurp_configuration_t*) {
-    return true;
-}
+// The live configuration. rurp_config_commit is the real one, linked from
+// src/rurp_config_migrate.cpp.
+static rurp_configuration_t live_config = {};
+static unsigned saves = 0;
+extern "C" rurp_configuration_t* rurp_get_config() { return &live_config; }
+extern "C" void rurp_save_config(rurp_configuration_t*) { saves++; }
 extern "C" void rurp_set_control_pin(uint8_t pin, uint8_t value) {
     if (pin == CHIP_ENABLE) ce_level = value;
 }
@@ -152,6 +149,31 @@ static std::string memory_frame(uint8_t cmd, uint32_t mem_size, uint32_t address
     f[p + CF_MEMORY_OFF_VPP_LINE] = (char)CF_LINE_ABSENT;
     return f;
 }
+// A stored configuration that every field band accepts.
+static rurp_configuration_t good_config() {
+    rurp_configuration_t c = {};
+    strcpy(c.version, CONFIG_VERSION);
+    c.r1 = VALUE_R1;
+    c.r2 = VALUE_R2;
+    c.hardware_revision = 0xFF;
+    c.bandgap_mv = 1100;
+    return c;
+}
+// A CMD_CONFIG frame that sets r1 and the bandgap.
+static std::string config_frame(uint32_t r1, uint16_t bandgap_mv) {
+    std::string f(CF_HEADER_SIZE + CF_CONFIG_SIZE, '\0');
+    f[CF_OFF_MAGIC] = (char)CF_MAGIC;
+    f[CF_OFF_VERSION] = (char)CF_VERSION;
+    f[CF_OFF_CMD] = (char)CMD_CONFIG;
+    f[CF_OFF_LENGTH] = (char)(CF_CONFIG_SIZE >> 8);
+    f[CF_OFF_LENGTH + 1] = (char)(CF_CONFIG_SIZE & 0xFF);
+    const size_t p = CF_HEADER_SIZE;
+    f[p + CF_CONFIG_OFF_PRESENT] = (char)(CF_CONFIG_PRESENT_R1 | CF_CONFIG_PRESENT_BG);
+    put32(f, p + CF_CONFIG_OFF_R1, r1);
+    f[p + CF_CONFIG_OFF_BG] = (char)(bandgap_mv >> 8);
+    f[p + CF_CONFIG_OFF_BG + 1] = (char)(bandgap_mv & 0xFF);
+    return f;
+}
 static void frame(const std::string& bytes) {
     incoming = bytes;
     loop();
@@ -225,6 +247,27 @@ int main() {
     assert_idle();
     assert(configured == 0 && writes == 0);
     puts("PASS malformed bus rejection");
+
+    // r1 390000 decodes, but the field band refuses it: the live configuration
+    // must not change and nothing is saved.
+    reset();
+    live_config = good_config();
+    const rurp_configuration_t before = live_config;
+    saves = 0;
+    frame(config_frame(390000, 1050));
+    assert(memcmp(&live_config, &before, sizeof(before)) == 0);
+    assert(saves == 0);
+    puts("PASS out-of-band config refused");
+
+    reset();
+    live_config = good_config();
+    saves = 0;
+    frame(config_frame(300000, 1050));
+    assert(live_config.r1 == 300000);
+    assert(live_config.bandgap_mv == 1050);
+    assert(live_config.r2 == VALUE_R2);
+    assert(saves == 1);
+    puts("PASS in-band config applied");
     return 0;
 }
 """
@@ -241,12 +284,17 @@ def test_command_lifecycle_and_safe_cleanup(tmp_path: Path, defines: list[str]) 
         "-I", str(INCLUDE),
     ]
     decoder_obj = tmp_path / "command_decoder.o"
+    migrate_obj = tmp_path / "rurp_config_migrate.o"
     exe = tmp_path / "driver"
     compile_ok([host_cc(), "-std=c11", "-c", *defines, *includes,
                 str(REPO_ROOT / "src/command_decoder.c"), "-o", str(decoder_obj)],
                cwd=REPO_ROOT, allow_warnings=True)
+    compile_ok([host_cxx(), "-std=c++17", "-c", *defines, *includes,
+                str(REPO_ROOT / "src/rurp_config_migrate.cpp"), "-o", str(migrate_obj)],
+               cwd=REPO_ROOT, allow_warnings=True)
     compile_ok([host_cxx(), "-std=c++17", *defines, *includes, str(main),
-                str(decoder_obj), "-o", str(exe)], cwd=REPO_ROOT, allow_warnings=True)
+                str(decoder_obj), str(migrate_obj), "-o", str(exe)], cwd=REPO_ROOT,
+               allow_warnings=True)
     result = run_binary(exe, cwd=REPO_ROOT)
     assert result.returncode == 0, (
         f"dispatcher integration test failed:\n{result.stdout}\n{result.stderr}"
@@ -259,4 +307,6 @@ def test_command_lifecycle_and_safe_cleanup(tmp_path: Path, defines: list[str]) 
         "PASS address-range rejection",
         "PASS required-fields rejection",
         "PASS malformed bus rejection",
+        "PASS out-of-band config refused",
+        "PASS in-band config applied",
     }
