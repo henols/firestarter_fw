@@ -87,6 +87,13 @@ void mem_util_warn_if_uncalibrated(firestarter_handle_t* handle);
  */
 void mem_util_report_chip_id(firestarter_handle_t* handle, uint16_t actual, bool warn_only);
 
+/* Read a big-endian 16-bit word, such as a chip ID, from `address` and the byte after it. */
+uint16_t mem_util_read_u16_be(firestarter_handle_t* handle, uint32_t address);
+
+/* Report a read-back mismatch at `address` as MSG_ERR_VERIFY and set
+ * RESPONSE_CODE_ERROR. */
+void mem_util_report_verify_mismatch(firestarter_handle_t* handle, uint32_t address, uint8_t expected, uint8_t observed);
+
 static inline bool using_p1_as_vpp(const firestarter_handle_t* handle) {
     return (handle->pins == 32 && handle->bus_config.vpp_line == VPP_P1_32_DIP) ||
            (handle->pins == 28 && handle->bus_config.vpp_line == VPP_P1_28_DIP) ||

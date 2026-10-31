@@ -18,9 +18,6 @@ void flash_nor_unlock_erase_execute(firestarter_handle_t* handle);
 void flash_nor_unlock_sector_erase(firestarter_handle_t* handle, uint32_t sector_address);
 void flash_nor_unlock_write_init(firestarter_handle_t* handle);
 void flash_nor_unlock_write_execute(firestarter_handle_t* handle);
-void flash_nor_unlock_check_chip_id_execute(firestarter_handle_t* handle);
-
-uint16_t flash_nor_unlock_get_chip_id(firestarter_handle_t* handle);
 
 void configure_flash_nor_unlock(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CONFIGURING_FLASH);
@@ -35,7 +32,7 @@ void configure_flash_nor_unlock(firestarter_handle_t* handle) {
         break;
     case CMD_CHECK_CHIP_ID:
         handle->firestarter_operation_init = NULL;
-        handle->firestarter_operation_main = flash_nor_unlock_check_chip_id_execute;
+        handle->firestarter_operation_main = flash_util_check_chip_id_execute;
         break;
     // A second query arm, modelled on CMD_CHECK_CHIP_ID
     // just above. This file assigns flash_util_check_chip_id_init before the
@@ -59,7 +56,7 @@ void flash_nor_unlock_write_init(firestarter_handle_t* handle) {
     // multi-step operation. Current write commands do not set this flag.
     if (!is_operation_in_progress(handle)) {
         if (handle->chip_id > 0) {
-            flash_nor_unlock_check_chip_id_execute(handle);
+            flash_util_check_chip_id_execute(handle);
             if (handle->response_code == RESPONSE_CODE_ERROR) {
                 return;
             }
@@ -109,20 +106,12 @@ void flash_nor_unlock_erase_execute(firestarter_handle_t* handle) {
 }
 
 void flash_nor_unlock_sector_erase(firestarter_handle_t* handle, uint32_t sector_address) {
-    byte_flip_t sector_erase_seq[6] = {
-        {0x5555, 0xAA},
-        {0x2AAA, 0x55},
-        {0x5555, 0x80},
-        {0x5555, 0xAA},
-        {0x2AAA, 0x55},
-        {sector_address, 0x30},
-    };
+    // The chip-erase sequence with the last cycle aimed at the sector.
+    byte_flip_t sector_erase_seq[6];
+    flash_util_copy_P(sector_erase_seq, FLASH_ERASE, 6);
+    sector_erase_seq[5].address = sector_address;
+    sector_erase_seq[5].byte = 0x30;
     flash_util_byte_flipping(handle, sector_erase_seq, 6);
-}
-
-
-void flash_nor_unlock_check_chip_id_execute(firestarter_handle_t* handle) {
-    flash_util_check_chip_id_execute(handle);
 }
 
 // CMD_LOCK_STATUS operation for the 0x06 AMD
@@ -133,27 +122,6 @@ void flash_nor_unlock_check_chip_id_execute(firestarter_handle_t* handle) {
 // enters/exits ID mode via FLASH_ENABLE_ID/FLASH_DISABLE_ID, so no VPP/VPE
 // control-register bit is ever written on this path.
 void flash_nor_unlock_read_protection_execute(firestarter_handle_t* handle) {
-    uint8_t raw = flash_util_read_in_id_mode(handle, FLASH_NOR_UNLOCK_PROTECT_VERIFY_ADDR);
-    uint8_t _b[2];
-    _b[0] = raw;
-    if (raw == FLASH_NOR_UNLOCK_PROTECT_UNPROTECTED) {
-        _b[1] = 0x00;
-        handle->response_code = RESPONSE_CODE_OK;
-    } else if (raw == FLASH_NOR_UNLOCK_PROTECT_PROTECTED) {
-        _b[1] = 0x01;
-        handle->response_code = RESPONSE_CODE_OK;
-    } else {
-        // Unrecognised raw value: an observation the host must classify,
-        // not an error this firmware can adjudicate (151-DESIGN.md §1's
-        // 0xFF sentinel convention, reusing hw_get_version's precedent).
-        // The DATA frame is emitted either way so the raw byte still
-        // reaches the host -- never coerce this into 0x00 or 0x01.
-        _b[1] = 0xFF;
-        handle->response_code = RESPONSE_CODE_WARNING;
-    }
-    LOG_DATA_ID_BYTES(MSG_DATA_PROTECTION_STATUS, _b, 2);
-}
-
-uint16_t flash_nor_unlock_get_chip_id(firestarter_handle_t* handle) {
-    return flash_util_get_chip_id(handle);
+    flash_util_report_protection(handle, FLASH_NOR_UNLOCK_PROTECT_VERIFY_ADDR,
+                                 FLASH_NOR_UNLOCK_PROTECT_UNPROTECTED, FLASH_NOR_UNLOCK_PROTECT_PROTECTED);
 }

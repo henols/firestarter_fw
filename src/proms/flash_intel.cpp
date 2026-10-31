@@ -184,8 +184,7 @@ static bool flash_intel_poll_sr(firestarter_handle_t* handle, uint16_t timeout_m
 
 void flash_intel_check_chip_id(firestarter_handle_t* handle) {
     handle->firestarter_set_data(handle, 0, 0x90);  // enter autoselect
-    uint16_t chip_id = handle->firestarter_get_data(handle, 0x0000) << 8;
-    chip_id |= handle->firestarter_get_data(handle, 0x0001);
+    uint16_t chip_id = mem_util_read_u16_be(handle, 0x0000);
     handle->firestarter_set_data(handle, 0, 0xFF);  // exit autoselect
     mem_util_report_chip_id(handle, chip_id, is_flag_set(FLAG_FORCE));
 }

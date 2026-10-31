@@ -43,8 +43,6 @@ bool memory_get_control_register(firestarter_handle_t* handle, rurp_register_t b
 uint8_t memory_get_data(firestarter_handle_t* handle, uint32_t address);
 void memory_set_data(firestarter_handle_t* handle, uint32_t address, uint8_t data);
 
-uint8_t programming = 0;
-
 void configure_memory(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CONFIGURING_MEMORY);
     handle->firestarter_operation_init = NULL;
@@ -221,18 +219,7 @@ bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle) {
     if (rurp_calibration_is_plausible((uint32_t)cfg->r1, (uint32_t)cfg->r2, cfg->bandgap_mv)) {
         return false;
     }
-    uint8_t _cal[8];
-    uint32_t r1 = (uint32_t)cfg->r1;
-    uint32_t r2 = (uint32_t)cfg->r2;
-    _cal[0] = (uint8_t)((r1 >> 24) & 0xFF);
-    _cal[1] = (uint8_t)((r1 >> 16) & 0xFF);
-    _cal[2] = (uint8_t)((r1 >>  8) & 0xFF);
-    _cal[3] = (uint8_t)((r1      ) & 0xFF);
-    _cal[4] = (uint8_t)((r2 >> 24) & 0xFF);
-    _cal[5] = (uint8_t)((r2 >> 16) & 0xFF);
-    _cal[6] = (uint8_t)((r2 >>  8) & 0xFF);
-    _cal[7] = (uint8_t)((r2      ) & 0xFF);
-    LOG_ERROR_ID_BYTES(MSG_ERR_CALIBRATION, _cal, 8);
+    LOG_DATA_ID_U32_U32(MSG_ERR_CALIBRATION, cfg->r1, cfg->r2);
     handle->response_code = RESPONSE_CODE_ERROR;
     return true;
 }
@@ -265,12 +252,7 @@ void mem_util_report_chip_id(firestarter_handle_t* handle, uint16_t actual, bool
     if (actual == handle->chip_id) {
         return;
     }
-    uint8_t _b[4];
-    _b[0] = (uint8_t)((actual >> 8) & 0xFF);
-    _b[1] = (uint8_t)(actual & 0xFF);
-    _b[2] = (uint8_t)((handle->chip_id >> 8) & 0xFF);
-    _b[3] = (uint8_t)(handle->chip_id & 0xFF);
-    LOG_ID_BYTES(warn_only ? MSG_WARN_CHIP_ID_MISMATCH : MSG_ERR_CHIP_ID_MISMATCH, _b, 4);
+    LOG_DATA_ID_U16_U16(warn_only ? MSG_WARN_CHIP_ID_MISMATCH : MSG_ERR_CHIP_ID_MISMATCH, actual, handle->chip_id);
     handle->response_code = warn_only ? RESPONSE_CODE_WARNING : RESPONSE_CODE_ERROR;
 }
 
@@ -407,21 +389,27 @@ void memory_verify_execute(firestarter_handle_t* handle) {
         uint8_t byte = handle->firestarter_get_data(handle, handle->address + i);
         uint8_t expected = handle->data_buffer[i];
         if (byte != expected) {
-            {
-                uint32_t addr = (uint32_t)(handle->address + i);
-                uint8_t _b[5] = {
-                    (uint8_t)expected,
-                    (uint8_t)byte,
-                    (uint8_t)((addr >> 16) & 0xFF),
-                    (uint8_t)((addr >> 8) & 0xFF),
-                    (uint8_t)(addr & 0xFF),
-                };
-                LOG_ERROR_ID_BYTES(MSG_ERR_VERIFY, _b, 5);
-            }
-            handle->response_code = RESPONSE_CODE_ERROR;
+            mem_util_report_verify_mismatch(handle, handle->address + i, expected, byte);
             return;
         }
     }
+}
+
+uint16_t mem_util_read_u16_be(firestarter_handle_t* handle, uint32_t address) {
+    uint16_t value = handle->firestarter_get_data(handle, address) << 8;
+    return value | handle->firestarter_get_data(handle, address + 1);
+}
+
+void mem_util_report_verify_mismatch(firestarter_handle_t* handle, uint32_t address, uint8_t expected, uint8_t observed) {
+    uint8_t _b[5] = {
+        expected,
+        observed,
+        (uint8_t)((address >> 16) & 0xFF),
+        (uint8_t)((address >> 8) & 0xFF),
+        (uint8_t)(address & 0xFF),
+    };
+    LOG_ERROR_ID_BYTES(MSG_ERR_VERIFY, _b, 5);
+    handle->response_code = RESPONSE_CODE_ERROR;
 }
 
 // Utility functions

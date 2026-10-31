@@ -436,8 +436,7 @@ uint16_t eprom_get_chip_id(firestarter_handle_t* handle) {
 
     handle->firestarter_set_control_register(handle, CTRL_VPP_A9_ENABLE, 1);
     delay(100);
-    uint16_t chip_id = handle->firestarter_get_data(handle, 0x0000) << 8;
-    chip_id |= (handle->firestarter_get_data(handle, 0x0001));
+    uint16_t chip_id = mem_util_read_u16_be(handle, 0x0000);
     handle->firestarter_set_control_register(handle, EPROM_HV_ALL_OFF_MASK, 0);
     return chip_id;
 }
