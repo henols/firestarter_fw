@@ -138,6 +138,8 @@ extern "C" {
 
     void rurp_write_to_register(uint8_t reg, rurp_register_t data);
     rurp_register_t rurp_read_from_register(uint8_t reg);
+    // millis() at the last write that switched the VPP regulator off.
+    uint32_t rurp_get_regulator_off_ms();
 
     void rurp_write_data_buffer(uint8_t data);
     uint8_t rurp_read_data_buffer();

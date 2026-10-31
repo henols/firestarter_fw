@@ -199,6 +199,9 @@ extern "C" rurp_register_t rurp_read_from_register(uint8_t reg) {
     (void)reg;
     return 0;
 }
+extern "C" uint32_t rurp_get_regulator_off_ms() {
+    return 0;
+}
 #endif
 
 /* Chip / data bus helpers — referenced (transitively) by the proms TUs that

@@ -167,6 +167,7 @@ typedef struct bus_config {
     uint8_t matching_lines;                     // Number of matching address lines
     uint8_t rw_line;                            // RW line mapping
     uint8_t vpp_line;                           // VPP line mapping
+    uint8_t read_high_needs_reg_off;            // read_high_mask also switches VPE onto the socket (Rev 2.x line 21)
     uint32_t static_high_mask;                  // Bus lines unconditionally driven HIGH (e.g. CE2, tied-high NC pins)
     uint32_t read_high_mask;                    // P1-VPP line driven HIGH for a read; set by mem_util_set_read_high_mask()
 } bus_config_t;

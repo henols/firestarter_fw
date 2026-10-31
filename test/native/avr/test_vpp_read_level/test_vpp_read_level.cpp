@@ -15,7 +15,10 @@
  * register as CTRL_ADDRESS_LINE_18. On Rev 0/1 that is the A18 latch bit, a
  * logic level, so a read drives it high. On Rev 2.x
  * rurp_map_ctrl_reg_for_hardware_revision() maps it onto the pin-1 VPP
- * switch, so driving it high would switch the VPP rail onto pin 1.
+ * switch, so driving it high switches VPE onto pin 1 (#142). With the
+ * regulator off VPE idles at about 4.8 V, so a plain read turns the switch
+ * on, after VPE has had RURP_VPE_DISCHARGE_MS to discharge. Every read with
+ * the regulator on (the chip-ID read, the write path) keeps it off.
  *
  * test_val_eprom checks the remap output. This suite checks the PHYSICAL
  * control byte that the board latches while the chip is read.
@@ -43,6 +46,7 @@ extern "C" uint8_t read_snapshot_msb(int i);
 extern "C" rurp_register_t read_snapshot_ctrl_logical(int i);
 extern "C" uint8_t read_snapshot_ctrl_physical(int i);
 extern "C" rurp_configuration_t* rurp_get_config();
+extern "C" void set_regulator_off_ms(uint32_t ms);
 
 void setUp(void) {
     ArduinoFakeReset();
@@ -54,6 +58,7 @@ void setUp(void) {
     When(Method(ArduinoFake(), millis)).AlwaysReturn(0);
     rurp_get_config()->hardware_revision = REVISION_2_0;
     reset_register_cache(0, 0, 0);
+    set_regulator_off_ms(0);
     clear_read_snapshots();
 }
 
@@ -105,13 +110,77 @@ void test_rev2_32pin_chip_id_read_keeps_p1_vpp_switch_off(void) {
     assert_p1_switch_off_on_every_read("the regulated rail is switched onto pin 1 during the chip-ID read");
 }
 
-void test_rev2_32pin_plain_read_keeps_p1_vpp_switch_off(void) {
+/* A plain read switches the idle VPE rail onto pin 1, so the pin is at VCC
+ * level, and the regulator stays off for every read. */
+void test_rev2_32pin_plain_read_holds_pin1_at_idle_vpe(void) {
     firestarter_handle_t h = make_handle(0x08, 32, VPP_P1_32_DIP, 0x20000, CMD_READ);
     h.address = 0;
     h.data_size = 16;
     h.mem_size = 16;
     h.firestarter_operation_main(&h);
-    assert_p1_switch_off_on_every_read("the VPP rail is switched onto pin 1 during a plain read");
+    TEST_ASSERT_TRUE_MESSAGE(read_snapshot_count() > 0, "no data read was observed");
+    for (int i = 0; i < read_snapshot_count(); i++) {
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(CTRL_VPP_P1_ENABLE_REV2, read_snapshot_ctrl_physical(i) & CTRL_VPP_P1_ENABLE_REV2,
+                                       "pin 1 is low during a plain read");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0, read_snapshot_ctrl_physical(i) & CTRL_VPP_REGULATOR_ENABLE_REV2,
+                                       "the regulator is on while VPE is switched onto pin 1");
+    }
+}
+
+/* The verify reads of a write run with the regulator on. The pin-1 switch
+ * must be off for each of them, or the programming voltage reaches pin 1
+ * while the chip drives its outputs. */
+void test_rev2_32pin_write_reads_keep_p1_vpp_switch_off(void) {
+    firestarter_handle_t h = make_handle(0x08, 32, VPP_P1_32_DIP, 0x20000, CMD_WRITE);
+    h.address = 0;
+    h.data_size = 4;
+    memset(h.data_buffer, 0x00, 4);
+    h.firestarter_operation_main(&h);
+    for (int i = 0; i < read_snapshot_count(); i++) {
+        TEST_ASSERT_TRUE_MESSAGE(read_snapshot_ctrl_logical(i) & CTRL_VPP_REGULATOR_ENABLE,
+                                 "precondition: the regulator is on during the write-path read");
+    }
+    assert_p1_switch_off_on_every_read("the regulated rail is switched onto pin 1 during a write-path read");
+}
+
+/* ─── Rev 2 board: VPE discharges before a read switches it onto pin 1 ───── */
+
+void test_regulator_switch_off_records_the_time(void) {
+    When(Method(ArduinoFake(), millis)).AlwaysReturn(1234);
+    rurp_write_to_register(CONTROL_REGISTER, CTRL_VPP_REGULATOR_ENABLE);
+    rurp_write_to_register(CONTROL_REGISTER, 0);
+    TEST_ASSERT_EQUAL_UINT32(1234, rurp_get_regulator_off_ms());
+}
+
+void test_rev2_32pin_read_soon_after_regulator_off_waits_for_discharge(void) {
+    set_regulator_off_ms(1000);
+    When(Method(ArduinoFake(), millis)).AlwaysReturn(1050);
+    make_handle(0x08, 32, VPP_P1_32_DIP, 0x20000, CMD_READ);
+    Verify(Method(ArduinoFake(), delay).Using(RURP_VPE_DISCHARGE_MS - 50)).Once();
+}
+
+void test_rev2_32pin_read_after_discharge_does_not_wait(void) {
+    set_regulator_off_ms(1000);
+    When(Method(ArduinoFake(), millis)).AlwaysReturn(1000 + RURP_VPE_DISCHARGE_MS);
+    make_handle(0x08, 32, VPP_P1_32_DIP, 0x20000, CMD_READ);
+    Verify(Method(ArduinoFake(), delay)).Never();
+}
+
+/* Only a read switches VPE onto pin 1, so only a read waits. */
+void test_rev2_32pin_chip_id_does_not_wait_for_discharge(void) {
+    set_regulator_off_ms(1000);
+    When(Method(ArduinoFake(), millis)).AlwaysReturn(1000);
+    make_handle(0x08, 32, VPP_P1_32_DIP, 0x20000, CMD_CHECK_CHIP_ID);
+    Verify(Method(ArduinoFake(), delay)).Never();
+}
+
+/* Rev 1 holds pin 1 high through its own A18 bit, so a read never waits. */
+void test_rev1_32pin_read_does_not_wait_for_discharge(void) {
+    rurp_get_config()->hardware_revision = REVISION_1;
+    set_regulator_off_ms(1000);
+    When(Method(ArduinoFake(), millis)).AlwaysReturn(1000);
+    make_handle(0x08, 32, VPP_P1_32_DIP, 0x20000, CMD_READ);
+    Verify(Method(ArduinoFake(), delay)).Never();
 }
 
 /* 28-pin: pin 1 is at VCC (MSB bit 7 = bus line 15) for every read, and the
@@ -180,23 +249,44 @@ void test_unconfigured_read_holds_pin1_high_once_the_mask_is_set(void) {
 
 /* ─── The read-high mask, set once per command ───────────────────────────── */
 
-static uint32_t read_high_mask_for(uint8_t pins, uint8_t vpp_line) {
+static bus_config_t read_high_config_for(uint8_t pins, uint8_t vpp_line) {
     firestarter_handle_t h = make_unconfigured_handle(pins, vpp_line);
     mem_util_set_read_high_mask(&h);
-    return h.bus_config.read_high_mask;
+    return h.bus_config;
 }
 
 void test_read_high_mask_holds_logic_level_p1_lines(void) {
-    TEST_ASSERT_EQUAL_HEX32((uint32_t)1 << VPP_P1_28_DIP, read_high_mask_for(28, VPP_P1_28_DIP));
-    TEST_ASSERT_EQUAL_HEX32((uint32_t)1 << VPP_P21_24_DIP, read_high_mask_for(24, VPP_P21_24_DIP));
+    bus_config_t c = read_high_config_for(28, VPP_P1_28_DIP);
+    TEST_ASSERT_EQUAL_HEX32((uint32_t)1 << VPP_P1_28_DIP, c.read_high_mask);
+    TEST_ASSERT_FALSE(c.read_high_needs_reg_off);
+    c = read_high_config_for(24, VPP_P21_24_DIP);
+    TEST_ASSERT_EQUAL_HEX32((uint32_t)1 << VPP_P21_24_DIP, c.read_high_mask);
+    TEST_ASSERT_FALSE(c.read_high_needs_reg_off);
     rurp_get_config()->hardware_revision = REVISION_1;
-    TEST_ASSERT_EQUAL_HEX32((uint32_t)1 << VPP_P1_32_DIP, read_high_mask_for(32, VPP_P1_32_DIP));
+    c = read_high_config_for(32, VPP_P1_32_DIP);
+    TEST_ASSERT_EQUAL_HEX32((uint32_t)1 << VPP_P1_32_DIP, c.read_high_mask);
+    TEST_ASSERT_FALSE(c.read_high_needs_reg_off);
 }
 
-void test_read_high_mask_is_empty_where_the_line_switches_vpp_or_is_not_p1(void) {
-    TEST_ASSERT_EQUAL_HEX32(0, read_high_mask_for(32, VPP_P1_32_DIP));
-    TEST_ASSERT_EQUAL_HEX32(0, read_high_mask_for(28, 0xFF));
-    TEST_ASSERT_EQUAL_HEX32(0, read_high_mask_for(32, VPP_P1_28_DIP));
+void test_read_high_mask_on_the_rev2_p1_switch_needs_the_regulator_off(void) {
+    bus_config_t c = read_high_config_for(32, VPP_P1_32_DIP);
+    TEST_ASSERT_EQUAL_HEX32((uint32_t)1 << VPP_P1_32_DIP, c.read_high_mask);
+    TEST_ASSERT_TRUE(c.read_high_needs_reg_off);
+}
+
+void test_read_high_mask_is_empty_where_the_line_is_not_p1(void) {
+    TEST_ASSERT_EQUAL_HEX32(0, read_high_config_for(28, 0xFF).read_high_mask);
+    TEST_ASSERT_EQUAL_HEX32(0, read_high_config_for(32, VPP_P1_28_DIP).read_high_mask);
+}
+
+/* dev addr: on Rev 2 the remap drives line 21 only while the regulator is off. */
+void test_rev2_remap_holds_line21_low_while_the_regulator_is_on(void) {
+    firestarter_handle_t h = make_unconfigured_handle(32, VPP_P1_32_DIP);
+    mem_util_set_read_high_mask(&h);
+    uint32_t line21 = (uint32_t)1 << VPP_P1_32_DIP;
+    TEST_ASSERT_EQUAL_HEX32(line21, mem_util_remap_address_bus(&h, 0, READ_FLAG) & line21);
+    reset_register_cache(0, 0, CTRL_VPP_REGULATOR_ENABLE);
+    TEST_ASSERT_EQUAL_HEX32(0, mem_util_remap_address_bus(&h, 0, READ_FLAG) & line21);
 }
 
 int main(int argc, char** argv) {
@@ -205,14 +295,23 @@ int main(int argc, char** argv) {
     UNITY_BEGIN();
 
     RUN_TEST(test_rev2_32pin_chip_id_read_keeps_p1_vpp_switch_off);
-    RUN_TEST(test_rev2_32pin_plain_read_keeps_p1_vpp_switch_off);
+    RUN_TEST(test_rev2_32pin_plain_read_holds_pin1_at_idle_vpe);
+    RUN_TEST(test_rev2_32pin_write_reads_keep_p1_vpp_switch_off);
     RUN_TEST(test_rev2_28pin_chip_id_read_holds_pin1_high_with_switch_off);
     RUN_TEST(test_rev1_32pin_plain_read_holds_pin1_high_with_switch_off);
+
+    RUN_TEST(test_regulator_switch_off_records_the_time);
+    RUN_TEST(test_rev2_32pin_read_soon_after_regulator_off_waits_for_discharge);
+    RUN_TEST(test_rev2_32pin_read_after_discharge_does_not_wait);
+    RUN_TEST(test_rev2_32pin_chip_id_does_not_wait_for_discharge);
+    RUN_TEST(test_rev1_32pin_read_does_not_wait_for_discharge);
 
     RUN_TEST(test_unconfigured_read_remap_does_not_call_a_null_handler);
     RUN_TEST(test_unconfigured_read_holds_pin1_high_once_the_mask_is_set);
     RUN_TEST(test_read_high_mask_holds_logic_level_p1_lines);
-    RUN_TEST(test_read_high_mask_is_empty_where_the_line_switches_vpp_or_is_not_p1);
+    RUN_TEST(test_read_high_mask_on_the_rev2_p1_switch_needs_the_regulator_off);
+    RUN_TEST(test_read_high_mask_is_empty_where_the_line_is_not_p1);
+    RUN_TEST(test_rev2_remap_holds_line21_low_while_the_regulator_is_on);
 
     return UNITY_END();
 }

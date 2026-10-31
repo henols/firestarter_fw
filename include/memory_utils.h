@@ -16,6 +16,7 @@ extern "C" {
 
 uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t address, uint8_t read_write);
 void mem_util_set_read_high_mask(firestarter_handle_t* handle);
+void mem_util_wait_vpe_discharged(void);
 /* Shared final read-and-compare pass after pulse verification converges.
  * Required by the EPROM program path regardless of standalone commands. */
 void memory_verify_execute(firestarter_handle_t* handle);
@@ -97,7 +98,8 @@ static inline bool using_p1_as_vpp(const firestarter_handle_t* handle) {
  * socket. Lines 0-15 reach the socket from the address latches through a
  * Schottky diode, so they are logic levels on every revision. A line above
  * them is a control-register bit: on Rev 0/1 line 21 is the A18 latch bit,
- * and on Rev 2.x it is the same bit as the pin-1 VPP switch.
+ * and on Rev 2.x it is the same bit as the pin-1 VPP switch. A read may then
+ * drive the line high only while the regulator is off and VPE is discharged.
  */
 static inline bool vpp_line_switches_vpp(const firestarter_handle_t* handle) {
     uint8_t line = handle->bus_config.vpp_line;
