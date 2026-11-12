@@ -275,10 +275,11 @@ static void put_be32(uint8_t* p, uint32_t v) {
     put_be16(p + 2, (uint16_t)v);
 }
 
-// The config command's flow without the calibration step: decode the frame,
-// apply it to a copy of the live configuration, then commit the copy when a
-// field changed. Returns false where the firmware refuses the command.
-static bool apply_config_frame(const config_frame& f, rurp_configuration_t* live) {
+// The decoder and the commit together: cmd_decode checks the frame, then
+// rurp_config_commit takes the decoded fields only when every field is in its
+// band. Returns false where either one refuses. The CMD_CONFIG arm of
+// src/firestarter.cpp itself runs in tests/test_command_lifecycle_behavior.py.
+static bool decode_and_commit(const config_frame& f, rurp_configuration_t* live) {
     firestarter_handle_t handle = {};
     uint8_t* frame = (uint8_t*)handle.data_buffer;
     frame[CF_OFF_MAGIC] = CF_MAGIC;
@@ -296,11 +297,9 @@ static bool apply_config_frame(const config_frame& f, rurp_configuration_t* live
     if (cmd_decode(&handle) != CMD_DECODE_OK) {
         return false;
     }
-    rurp_configuration_t copy = *live;
-    if (cmd_apply_config(&handle, &copy) & CMD_CFG_FIELD_CHANGED) {
-        return rurp_config_commit(live, &copy);
-    }
-    return true;
+    rurp_configuration_t candidate = *live;
+    cmd_apply_config(&handle, &candidate);
+    return rurp_config_commit(live, &candidate);
 }
 
 #define R1 CF_CONFIG_PRESENT_R1
@@ -326,7 +325,7 @@ static void test_an_out_of_band_config_frame_is_refused_not_corrected(void) {
     for (unsigned i = 0; i < sizeof(refused) / sizeof(refused[0]); i++) {
         rurp_configuration_t live = good();
         const rurp_configuration_t before = live;
-        TEST_ASSERT_FALSE_MESSAGE(apply_config_frame(refused[i], &live), refused[i].name);
+        TEST_ASSERT_FALSE_MESSAGE(decode_and_commit(refused[i], &live), refused[i].name);
         TEST_ASSERT_EQUAL_MEMORY_MESSAGE(&before, &live, sizeof(live), refused[i].name);
     }
 }
@@ -347,7 +346,7 @@ static void test_every_frame_the_host_sends_is_accepted(void) {
     for (unsigned i = 0; i < sizeof(ok) / sizeof(ok[0]); i++) {
         const char* name = ok[i].frame.name;
         rurp_configuration_t live = good();
-        TEST_ASSERT_TRUE_MESSAGE(apply_config_frame(ok[i].frame, &live), name);
+        TEST_ASSERT_TRUE_MESSAGE(decode_and_commit(ok[i].frame, &live), name);
         TEST_ASSERT_EQUAL_INT32_MESSAGE(ok[i].r1, live.r1, name);
         TEST_ASSERT_EQUAL_INT32_MESSAGE(ok[i].r2, live.r2, name);
         TEST_ASSERT_EQUAL_UINT8_MESSAGE(ok[i].rev, live.hardware_revision, name);

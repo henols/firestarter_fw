@@ -21,17 +21,15 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-_HERE = Path(__file__).resolve().parent
-_REPO_ROOT = _HERE.parent
-_INCLUDE = _REPO_ROOT / "include"
-_SEAM_SRC = _REPO_ROOT / "src" / "rurp_vpp.cpp"
+from ._host_build import INCLUDE, REPO_ROOT, host_cxx, run_binary, run_compiler
+
+_SEAM_SRC = REPO_ROOT / "src" / "rurp_vpp.cpp"
 _PY32_COMPILE_COMMANDS_ENV = "FIRESTARTER_PY32_COMPILE_COMMANDS"
 
 _EXPECTED_MODE_MANUAL = 0
@@ -55,7 +53,7 @@ def _avr_macro_sets():
     Returns (params, error); error is set when PlatformIO cannot resolve the
     configuration, so the test fails instead of collecting nothing."""
     result = subprocess.run(
-        [sys.executable, "-m", "platformio", "project", "config", "-d", str(_REPO_ROOT), "--json-output"],
+        [sys.executable, "-m", "platformio", "project", "config", "-d", str(REPO_ROOT), "--json-output"],
         capture_output=True,
         text=True,
     )
@@ -110,22 +108,6 @@ def test_every_real_build_has_a_macro_set():
         assert len(param.values[0]) > 1, f"env {param.id} has no -D build flags: {param.values[0]!r}"
 
 
-def _resolve_compiler():
-    """Resolve the host C++ compiler, fail-closed.
-
-    If $CXX (or 'g++') cannot be resolved via shutil.which, this raises via a
-    plain assert, which the test runner reports as a FAILURE, never a skipped
-    outcome. build.yml runs this module through `pytest tests/`.
-    """
-    compiler = shutil.which(os.environ.get("CXX", "g++"))
-    assert compiler is not None, (
-        "host C++ compiler not found on PATH (checked $CXX, falling back to "
-        "'g++'). This must FAIL the suite, never be silently skipped -- no "
-        "embedded toolchain is invoked here."
-    )
-    return compiler
-
-
 def _write_shim_tu(tmp_path):
     """Write the measured RESEARCH shim into tmp_path, fresh every call --
     never a committed fixture translation unit (D-03 declined one). Includes
@@ -147,29 +129,18 @@ def _write_shim_tu(tmp_path):
     return tu_path
 
 
-def _compile(compiler, defines, sources, output_path):
+def _compile(defines, sources, output_path):
     """Compile (and, when a real main is present, link) the given source
     files with the given macro definitions into a real binary at
-    output_path. List argv only, never a shell; always passes
-    -std=gnu++17 -Wall -Wextra and the include/ path. A definition whose
-    value contains double quotes needs no extra escaping here -- there is
-    no shell in the way, so the literal Python string is exactly what the
-    compiler receives as argv."""
-    argv = [compiler, "-std=gnu++17", "-Wall", "-Wextra", "-I", str(_INCLUDE)]
-    argv += [f"-D{define}" for define in defines]
-    argv += [str(source) for source in sources]
-    argv += ["-o", str(output_path)]
-    return subprocess.run(argv, capture_output=True, text=True)
-
-
-def _run_binary(binary_path):
-    """Execute the compiled binary as a second subprocess, list argv,
-    capturing output. The seam's result value crosses this process boundary
-    on stdout, never this run's exit code (Trap 2): 1 is also the exit code
-    of a compile failure, a link failure and a crash, so returning it from
-    main would make the correct answer indistinguishable from every
-    failure mode."""
-    return subprocess.run([str(binary_path)], capture_output=True, text=True)
+    output_path; always with -std=gnu++17 -Wall -Wextra and the include/
+    path. There is no shell in the way, so a definition whose value contains
+    double quotes reaches the compiler exactly as written."""
+    return run_compiler([
+        host_cxx(), "-std=gnu++17", "-Wall", "-Wextra", "-I", str(INCLUDE),
+        *(f"-D{define}" for define in defines),
+        *(str(source) for source in sources),
+        "-o", str(output_path),
+    ])
 
 
 def _has_error_directive_naming(stderr, text):
@@ -186,11 +157,10 @@ def test_manual_control_on_every_board_macro_set(tmp_path, defines):
     are supplied), compiled AND run. Parses the result from stdout, never
     the run subprocess's exit code (Trap 2)."""
     assert not isinstance(defines, str), defines
-    compiler = _resolve_compiler()
     tu_path = _write_shim_tu(tmp_path)
     binary_path = tmp_path / "seam_under_test"
 
-    compile_result = _compile(compiler, defines, (tu_path, _SEAM_SRC), binary_path)
+    compile_result = _compile(defines, (tu_path, _SEAM_SRC), binary_path)
     assert compile_result.returncode == 0, (
         f"expected a clean compile for board macro-set {defines!r}.\n"
         f"stdout:\n{compile_result.stdout}\nstderr:\n{compile_result.stderr}"
@@ -201,7 +171,7 @@ def test_manual_control_on_every_board_macro_set(tmp_path, defines):
         f"stdout:\n{compile_result.stdout}\nstderr:\n{compile_result.stderr}"
     )
 
-    run_result = _run_binary(binary_path)
+    run_result = run_binary(binary_path)
     assert run_result.returncode == 0, (
         f"expected the compiled binary to run cleanly for board macro-set "
         f"{defines!r}.\n"
@@ -236,10 +206,9 @@ def test_forced_capability_macro_fails_closed_in_the_source(tmp_path):
     authored #error is the one that must fire. This is what makes the
     harness non-vacuous: a header-only leg would pass vacuously and the
     "the macro is genuinely consulted" argument would evaporate."""
-    compiler = _resolve_compiler()
     binary_path = tmp_path / "forced_capability"
 
-    result = _compile(compiler, ("__AVR__", "RURP_HAS_VPP_DAC=1"), (_SEAM_SRC,), binary_path)
+    result = _compile(("__AVR__", "RURP_HAS_VPP_DAC=1"), (_SEAM_SRC,), binary_path)
 
     assert result.returncode != 0, (
         "expected a non-zero compile exit with RURP_HAS_VPP_DAC forced to 1 "
@@ -259,11 +228,10 @@ def test_unset_and_non_avr_fails_closed_in_the_header(tmp_path):
     seam ever included from include/rurp_shield.h (measured: pio test
     -e native goes to 17 suites / 0 succeeded) -- this leg is the standing
     explanation for why that include does not exist."""
-    compiler = _resolve_compiler()
     tu_path = _write_shim_tu(tmp_path)
     binary_path = tmp_path / "unset_non_avr"
 
-    result = _compile(compiler, (), (tu_path,), binary_path)
+    result = _compile((), (tu_path,), binary_path)
 
     assert result.returncode != 0, (
         "expected a non-zero compile exit with neither __AVR__ nor "

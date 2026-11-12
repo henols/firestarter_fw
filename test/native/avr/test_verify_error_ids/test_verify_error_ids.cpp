@@ -39,41 +39,13 @@ extern "C" {
 }
 #include "firestarter.h"
 #include "../_shared/sdp_bus_config.h"
+#include "../_shared/frame_capture.h"
 
 using namespace fakeit;
 
 extern "C" void verify_ids_set_readback(uint8_t value);
-
-/* ─────────────────────────────────────────────────────────────────────────
- * Serial-capture seam -- copied from test_eeprom28c_sdp.cpp, the only
- * in-tree suite that asserts an emitted message id. Walks rurp_log_id()'s
- * fixed, documented wire layout (4-byte magic, 2-byte big-endian length, 1
- * id byte, params, 1 crc byte, 1 anchor byte) and never consults a
- * message-id-to-param-count lookup table, so it stays correct for any id.
- * ───────────────────────────────────────────────────────────────────────── */
-static std::vector<uint8_t> captured_frames;
-
-static void verify_ids_captured_frame_ids(std::vector<uint8_t>* out_ids) {
-    size_t offset = 0;
-    while (offset + 7 <= captured_frames.size()) {
-        uint16_t len_value = (uint16_t)(((uint16_t)captured_frames[offset + 4] << 8) | captured_frames[offset + 5]);
-        size_t frame_size = 4 + 2 + (size_t)len_value + 1;
-        if (offset + frame_size > captured_frames.size()) {
-            break; /* incomplete trailing frame -- not expected in these cases */
-        }
-        out_ids->push_back(captured_frames[offset + 6]);
-        offset += frame_size;
-    }
-}
-
-static bool verify_ids_contains(const std::vector<uint8_t>& ids, uint8_t id) {
-    for (size_t i = 0; i < ids.size(); i++) {
-        if (ids[i] == id) {
-            return true;
-        }
-    }
-    return false;
-}
+extern "C" unsigned verify_ids_read_count();
+extern "C" void verify_ids_reset_read_count();
 
 /* Every id test asserts a non-zero frame count BEFORE its membership
  * assertions -- a run that captures zero frames must fail every id
@@ -92,11 +64,7 @@ void setUp(void) {
     ArduinoFakeReset();
     captured_frames.clear();
 
-    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t)))
-        .AlwaysDo([](uint8_t b) -> size_t {
-            captured_frames.push_back(b);
-            return (size_t)1;
-        });
+    capture_serial_writes();
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
@@ -201,13 +169,13 @@ void test_shared_final_pass_verify_mismatch_raises_verify_id_not_timeout(void) {
     memory_verify_execute(&h);
 
     std::vector<uint8_t> ids;
-    verify_ids_captured_frame_ids(&ids);
+    captured_frame_ids(&ids);
     TEST_ASSERT_GREATER_THAN_MESSAGE(0, (int)verify_ids_frame_count(ids),
         "non-vacuity: a mismatch must capture at least one frame -- an empty capture "
         "would pass every membership assertion below vacuously");
-    TEST_ASSERT_TRUE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_VERIFY),
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_VERIFY),
         "a mismatching read-back must raise MSG_ERR_VERIFY");
-    TEST_ASSERT_FALSE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_OP_TIMEOUT),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_OP_TIMEOUT),
         "the shared final-pass verify has no timing path -- it must never raise MSG_ERR_OP_TIMEOUT");
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
         "a mismatching read-back must set RESPONSE_CODE_ERROR");
@@ -225,8 +193,8 @@ void test_shared_final_pass_verify_match_raises_neither_id(void) {
     memory_verify_execute(&h);
 
     std::vector<uint8_t> ids;
-    verify_ids_captured_frame_ids(&ids);
-    TEST_ASSERT_FALSE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_VERIFY),
+    captured_frame_ids(&ids);
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_VERIFY),
         "a matching read-back must never raise MSG_ERR_VERIFY");
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_WARNING, h.response_code,
         "a matching read-back must leave response_code exactly as it was before the call");
@@ -244,12 +212,12 @@ void test_flash_util_data_poll_timeout_raises_timeout_id_not_verify_id(void) {
     flash_util_wait_program(&h, 0, 0x80);
 
     std::vector<uint8_t> ids;
-    verify_ids_captured_frame_ids(&ids);
+    captured_frame_ids(&ids);
     TEST_ASSERT_GREATER_THAN_MESSAGE(0, (int)verify_ids_frame_count(ids),
         "non-vacuity: a timed-out poll must capture at least one frame");
-    TEST_ASSERT_TRUE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_OP_TIMEOUT),
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_OP_TIMEOUT),
         "a DQ7 bit that never matches must raise MSG_ERR_OP_TIMEOUT");
-    TEST_ASSERT_FALSE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_VERIFY),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_VERIFY),
         "flash_util_wait_program is a DQ7 data-poll wait with no compare-and-report "
         "path -- it can NEVER raise MSG_ERR_VERIFY. Pinning it to the verify id would be "
         "a false pin, which is exactly what this leg exists to rule out.");
@@ -266,7 +234,7 @@ void test_flash_util_data_poll_match_raises_no_error_frame(void) {
     flash_util_wait_program(&h, 0, 0x80);
 
     std::vector<uint8_t> ids;
-    verify_ids_captured_frame_ids(&ids);
+    captured_frame_ids(&ids);
     TEST_ASSERT_EQUAL_MESSAGE(0, (int)verify_ids_frame_count(ids),
         "a DQ7 bit that matches on both confirmation reads must return without emitting "
         "any error frame at all");
@@ -296,12 +264,12 @@ void test_eeprom28c_page_readback_mismatch_raises_verify_id_not_eeprom_timeout(v
     h.firestarter_operation_main(&h); /* eeprom28c_write_execute */
 
     std::vector<uint8_t> ids;
-    verify_ids_captured_frame_ids(&ids);
+    captured_frame_ids(&ids);
     TEST_ASSERT_GREATER_THAN_MESSAGE(0, (int)verify_ids_frame_count(ids),
         "non-vacuity: a mismatching page read-back must capture at least one frame");
-    TEST_ASSERT_TRUE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_VERIFY),
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_VERIFY),
         "a mismatching page read-back must raise MSG_ERR_VERIFY");
-    TEST_ASSERT_FALSE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_EEPROM_TIMEOUT),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_EEPROM_TIMEOUT),
         "the DQ7 completion poll succeeded -- MSG_ERR_EEPROM_TIMEOUT (its sibling failure "
         "on the SAME function) must NOT also appear");
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
@@ -316,22 +284,21 @@ void test_eeprom28c_page_readback_match_raises_no_verify_id(void) {
     h.data_buffer[0] = (char)0x01;
     verify_ids_set_readback(0x01); /* matches exactly -- both the DQ7 poll and the full-byte compare succeed */
     h.response_code = RESPONSE_CODE_OK;
+    verify_ids_reset_read_count();
 
     h.firestarter_operation_main(&h); /* eeprom28c_write_execute */
 
     std::vector<uint8_t> ids;
-    verify_ids_captured_frame_ids(&ids);
-    /* Unlike memory_verify_execute and flash_util_wait_program (which
-     * emit nothing at all on success), eeprom28c_write_execute
-     * emits MSG_INFO_PAGE_LOAD_WORST_US even on a fully successful write in
-     * a DEV_TOOLS build, which [env:native] is -- so a truly empty capture
-     * here would mean the drive never actually ran, not that it succeeded
-     * quietly. */
-    TEST_ASSERT_TRUE_MESSAGE(verify_ids_frame_count(ids) >= 1,
-        "non-vacuity: a successful page write still emits its cadence-report frame");
-    TEST_ASSERT_FALSE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_VERIFY),
+    captured_frame_ids(&ids);
+    /* Non-vacuity in every build: the write must have run its page wait (two
+     * DQ7 reads that agree) and its one-byte read-back. A DEV_TOOLS build
+     * also sends MSG_INFO_PAGE_LOAD_WORST_US, a stable build sends no frame,
+     * so the frame count cannot be the floor. */
+    TEST_ASSERT_EQUAL_MESSAGE(3, verify_ids_read_count(),
+        "non-vacuity: two DQ7 poll reads and one read-back read");
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_VERIFY),
         "a matching page read-back must never raise MSG_ERR_VERIFY");
-    TEST_ASSERT_FALSE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_EEPROM_TIMEOUT),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_EEPROM_TIMEOUT),
         "a matching page read-back must never raise MSG_ERR_EEPROM_TIMEOUT either");
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
         "a fully converging page write must leave RESPONSE_CODE_OK");
@@ -356,12 +323,12 @@ void test_per_pulse_loop_exhausts_pulse_budget_raises_max_pulses_not_energy_cap(
     h.firestarter_operation_main(&h); /* eprom_write_execute */
 
     std::vector<uint8_t> ids;
-    verify_ids_captured_frame_ids(&ids);
+    captured_frame_ids(&ids);
     TEST_ASSERT_GREATER_THAN_MESSAGE(0, (int)verify_ids_frame_count(ids),
         "non-vacuity: an exhausted pulse budget must capture at least one frame");
-    TEST_ASSERT_TRUE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_MAX_PULSES),
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_MAX_PULSES),
         "a byte that never converges, under an uncapped energy budget, must raise MSG_ERR_MAX_PULSES");
-    TEST_ASSERT_FALSE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_ENERGY_CAP),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_ENERGY_CAP),
         "energy_cap_us == 0 (uncapped) on this protocol -- MSG_ERR_ENERGY_CAP must never appear");
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
         "an exhausted pulse budget must set RESPONSE_CODE_ERROR");
@@ -386,12 +353,12 @@ void test_per_pulse_loop_exhausts_energy_cap_raises_energy_cap_not_max_pulses(vo
     h.firestarter_operation_main(&h); /* eprom_write_execute */
 
     std::vector<uint8_t> ids;
-    verify_ids_captured_frame_ids(&ids);
+    captured_frame_ids(&ids);
     TEST_ASSERT_GREATER_THAN_MESSAGE(0, (int)verify_ids_frame_count(ids),
         "non-vacuity: an exhausted energy cap must capture at least one frame");
-    TEST_ASSERT_TRUE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_ENERGY_CAP),
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_ENERGY_CAP),
         "an energy cap small enough to exhaust before the pulse budget must raise MSG_ERR_ENERGY_CAP");
-    TEST_ASSERT_FALSE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_MAX_PULSES),
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, (uint8_t)MSG_ERR_MAX_PULSES),
         "the pulse budget (255) is far from exhausted when the energy cap trips -- "
         "MSG_ERR_MAX_PULSES must not appear");
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,

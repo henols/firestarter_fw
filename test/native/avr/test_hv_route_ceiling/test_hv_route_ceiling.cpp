@@ -9,13 +9,20 @@
 #include <ArduinoFake.h>
 #include <unity.h>
 
+#include <vector>
+
 #include "firestarter.h"
 #include "eprom.h"
+#include "memory.h"
+#include "messages.h"
+
+#include "../_shared/frame_capture.h"
 
 using namespace fakeit;
 
 extern "C" unsigned hv_route_ceiling_voltage_read_count();
 extern "C" void hv_route_ceiling_reset_voltage_read_count();
+extern "C" void hv_route_ceiling_set_voltage_mv(uint16_t mv);
 
 void setUp(void) {
     ArduinoFakeReset();
@@ -159,55 +166,55 @@ void test_manual_override_wins_before_any_table_read_on_unresolved_protocol(void
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
- * Counter non-vacuity: proves the instrument is live and bound to the same
- * rurp_read_voltage_mv symbol eprom.cpp links against. It does NOT prove
- * that eprom_check_vpp increments it -- that claim is not made here.
- * ───────────────────────────────────────────────────────────────────────── */
-
-void test_voltage_read_counter_is_live_and_moves_on_a_direct_call(void) {
-    hv_route_ceiling_reset_voltage_read_count();
-    TEST_ASSERT_EQUAL_MESSAGE(0, hv_route_ceiling_voltage_read_count(), "counter must start at zero after reset");
-    rurp_read_voltage_mv();
-    TEST_ASSERT_EQUAL_MESSAGE(1, hv_route_ceiling_voltage_read_count(),
-        "the counter must move from zero to one on a direct call to the same rurp_read_voltage_mv symbol the resolver links against");
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
- * D-22, made falsifiable: reproduces the reversal's own two-row table. The
- * witness is the bench record's ADC_PAIRED_DROP_MV figure, not the shipped
- * ceiling -- a monitor reading on the drop path at the same pot setting the
- * ceiling itself was measured at.
+ * D-22, made falsifiable against production: the bench record's drop-path
+ * monitor reading, 18700 mV, is fed to eprom_check_vpp. For a required
+ * 18000 mV its under-voltage check stays silent, so an ADC-triggered route
+ * switch would have missed this row; the path rule routes VPE anyway. For a
+ * required 21000 mV the same check fires. Each case also proves that the
+ * voltage-read counter is live: eprom_check_vpp reads the rail once.
  * ───────────────────────────────────────────────────────────────────────── */
 
 static const uint16_t kBenchPairedDropPathMonitorMv = 18700;
 
+/* Runs eprom_check_vpp (the 0x07 CMD_ERASE init) against the bench reading
+ * and returns the ids of the frames it sent. */
+static std::vector<uint8_t> check_vpp_at_bench_reading(uint16_t required_mv) {
+    captured_frames.clear();
+    capture_serial_writes();
+    hv_route_ceiling_set_voltage_mv(kBenchPairedDropPathMonitorMv);
+    firestarter_handle_t h = make_handle(0x07, required_mv, 0);
+    h.cmd = CMD_ERASE;
+    h.mem_size = 65536;
+    h.response_code = RESPONSE_CODE_OK;
+    configure_memory(&h);
+    hv_route_ceiling_reset_voltage_read_count();
+    h.firestarter_operation_init(&h);
+    TEST_ASSERT_EQUAL_MESSAGE(1, hv_route_ceiling_voltage_read_count(), "eprom_check_vpp must read the rail once");
+    std::vector<uint8_t> ids;
+    captured_frame_ids(&ids);
+    return ids;
+}
+
 void test_d22_row_one_18000_required_adc_check_would_stay_silent_while_path_rule_routes(void) {
     const uint16_t required_mv = 18000;
-    rurp_register_t mask = route_for(0x07, required_mv, 0);
-    TEST_ASSERT_EQUAL_HEX16_MESSAGE(CTRL_VPP_REGULATOR_ENABLE, mask,
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(CTRL_VPP_REGULATOR_ENABLE, route_for(0x07, required_mv, 0),
         "D-22 row one: the path rule routes VPE for a required 18000 mV");
-    bool adc_check_would_fire = kBenchPairedDropPathMonitorMv < (uint32_t)required_mv * 95 / 100;
-    TEST_ASSERT_FALSE_MESSAGE(adc_check_would_fire,
-        "D-22 row one: eprom_check_vpp's existing adc < required*95/100 comparison, evaluated against the "
-        "bench-paired drop-path monitor reading, would stay silent for a required 18000 mV -- an "
-        "ADC-triggered implementation would have missed this row");
-    TEST_ASSERT_TRUE_MESSAGE(RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV < required_mv,
-        "D-22 row one: the ceiling is genuinely below the required voltage, which is why the path rule must route");
     TEST_ASSERT_EQUAL_MESSAGE(0, hv_route_ceiling_voltage_read_count(), "D-22 row one routing call must read no voltage");
+    std::vector<uint8_t> ids = check_vpp_at_bench_reading(required_mv);
+    TEST_ASSERT_FALSE_MESSAGE(ids_contains(ids, MSG_WARN_VPP_LOW_MV),
+        "D-22 row one: eprom_check_vpp's under-voltage check stays silent at the bench drop-path reading "
+        "for a required 18000 mV -- an ADC-triggered route switch would have missed this row");
 }
 
 void test_d22_row_two_21000_required_adc_check_would_fire_but_only_this_row_would_be_caught(void) {
     const uint16_t required_mv = 21000;
-    rurp_register_t mask = route_for(0x07, required_mv, 0);
-    TEST_ASSERT_EQUAL_HEX16_MESSAGE(CTRL_VPP_REGULATOR_ENABLE, mask,
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(CTRL_VPP_REGULATOR_ENABLE, route_for(0x07, required_mv, 0),
         "D-22 row two: the path rule routes VPE for a required 21000 mV");
-    bool adc_check_would_fire = kBenchPairedDropPathMonitorMv < (uint32_t)required_mv * 95 / 100;
-    TEST_ASSERT_TRUE_MESSAGE(adc_check_would_fire,
-        "D-22 row two: the same ADC comparison WOULD fire for a required 21000 mV, which is why an "
-        "ADC-triggered implementation would have caught only this one row of the ten");
-    TEST_ASSERT_TRUE_MESSAGE(RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV < required_mv,
-        "D-22 row two: the ceiling is genuinely below the required voltage here too");
     TEST_ASSERT_EQUAL_MESSAGE(0, hv_route_ceiling_voltage_read_count(), "D-22 row two routing call must read no voltage");
+    std::vector<uint8_t> ids = check_vpp_at_bench_reading(required_mv);
+    TEST_ASSERT_TRUE_MESSAGE(ids_contains(ids, MSG_WARN_VPP_LOW_MV),
+        "D-22 row two: the same under-voltage check DOES fire at the bench drop-path reading for a "
+        "required 21000 mV");
 }
 
 int main(int argc, char** argv) {
@@ -231,8 +238,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_zero_required_voltage_on_0x07_stays_fail_closed_on_drop_path);
 
     RUN_TEST(test_manual_override_wins_before_any_table_read_on_unresolved_protocol);
-
-    RUN_TEST(test_voltage_read_counter_is_live_and_moves_on_a_direct_call);
 
     RUN_TEST(test_d22_row_one_18000_required_adc_check_would_stay_silent_while_path_rule_routes);
     RUN_TEST(test_d22_row_two_21000_required_adc_check_would_fire_but_only_this_row_would_be_caught);

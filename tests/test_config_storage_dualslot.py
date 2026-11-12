@@ -7,40 +7,17 @@ Compile and execute the production dual-slot storage core using injected in-memo
 """
 
 
-import os
 import re
-import shutil
-import subprocess
-from pathlib import Path
 
-import pytest
+from ._host_build import INCLUDE, REPO_ROOT, compile_ok, host_cxx, run_binary
 
-_HERE = Path(__file__).resolve().parent
-_REPO_ROOT = _HERE.parent
-_INCLUDE = _REPO_ROOT / "include"
-_PLATFORM_SRC = _REPO_ROOT / "platform" / "py32f071" / "src"
+_PLATFORM_SRC = REPO_ROOT / "platform" / "py32f071" / "src"
 _CORE_SRC = _PLATFORM_SRC / "config_storage_dualslot.cpp"
 
 _CRC32_KAT_INPUT = b"123456789"
 _CRC32_KAT_EXPECTED = 0xCBF43926
 
 _KV_RE = re.compile(r"(\w+)=(\S+)")
-
-
-def _resolve_compiler():
-    """Resolve the host C++ compiler, fail-closed.
-
-    If $CXX (or 'g++') cannot be resolved via shutil.which, this raises via a
-    plain assert, which the test runner reports as a FAILURE, never a skipped
-    outcome. build.yml runs this module through `pytest tests/`.
-    """
-    compiler = shutil.which(os.environ.get("CXX", "g++"))
-    assert compiler is not None, (
-        "host C++ compiler not found on PATH (checked $CXX, falling back to "
-        "'g++'). This must FAIL the suite, never be silently skipped -- no "
-        "embedded toolchain is invoked here."
-    )
-    return compiler
 
 
 _FAKE_PREAMBLE = """
@@ -402,60 +379,23 @@ def _write_ram_fake_tu(tmp_path, scenario, main_text):
     return tu_path
 
 
-def _compile(compiler, sources, output_path):
-    """Compile (and link) the given source files into a real binary at
-    output_path. List argv only, never a shell; always
-    -std=gnu++17 -Wall -Wextra, -I the repo include/ directory and -I the
-    platform source directory."""
-    argv = [
-        compiler,
-        "-std=gnu++17",
-        "-Wall",
-        "-Wextra",
-        "-I",
-        str(_INCLUDE),
-        "-I",
-        str(_PLATFORM_SRC),
-    ]
-    argv += [str(source) for source in sources]
-    argv += ["-o", str(output_path)]
-    return subprocess.run(argv, capture_output=True, text=True)
-
-
-def _run_binary(binary_path):
-    """Execute the compiled binary as a second subprocess, list argv. Every
-    result crosses this process boundary on stdout, never the run's exit
-    code: 1 is also the exit code of a compile failure, a link failure and a
-    crash, so returning it from main would make the correct answer
-    indistinguishable from every failure mode. Every committed scenario's
-    main() returns 0 unconditionally."""
-    return subprocess.run([str(binary_path)], capture_output=True, text=True)
-
-
-def _compile_and_run(compiler, tmp_path, scenario, main_text, core_src=None):
-    """Write the scenario's fresh TU, compile it together with the core
-    source (by explicit path -- D-02) using the shared helper every
-    committed test calls, run it, and return the parsed stdout rows.
-    `core_src` defaults to the real, shipped
-    platform/py32f071/src/config_storage_dualslot.cpp; Task 2's mutation
-    demonstrations pass a scratch copy instead, through this SAME helper."""
-    core = core_src if core_src is not None else _CORE_SRC
+def _compile_and_run(tmp_path, scenario, main_text):
+    """Write the scenario's fresh TU, compile it together with the shipped
+    platform/py32f071/src/config_storage_dualslot.cpp (by explicit path --
+    D-02), run it, and return the parsed stdout rows. Every committed
+    scenario's main() returns 0 unconditionally; its result crosses on
+    stdout."""
     tu_path = _write_ram_fake_tu(tmp_path, scenario, main_text)
     binary_path = tmp_path / f"dualslot_{scenario}"
 
-    compile_result = _compile(compiler, (core, tu_path), binary_path)
-    assert compile_result.returncode == 0, (
-        f"expected a clean compile for scenario {scenario!r}.\n"
-        f"argv: {compiler} ... {tu_path}\n"
-        f"stdout:\n{compile_result.stdout}\nstderr:\n{compile_result.stderr}"
-    )
-    assert compile_result.stderr == "", (
-        f"expected zero bytes of -Wall -Wextra warning output for scenario "
-        f"{scenario!r}.\nstdout:\n{compile_result.stdout}\n"
-        f"stderr:\n{compile_result.stderr}"
-    )
+    compile_ok([
+        host_cxx(), "-std=gnu++17", "-Wall", "-Wextra",
+        "-I", str(INCLUDE), "-I", str(_PLATFORM_SRC),
+        str(_CORE_SRC), str(tu_path),
+        "-o", str(binary_path),
+    ])
 
-    run_result = _run_binary(binary_path)
+    run_result = run_binary(binary_path)
     assert run_result.returncode == 0, (
         f"expected the compiled binary to run cleanly for scenario "
         f"{scenario!r}.\nstdout:\n{run_result.stdout}\nstderr:\n{run_result.stderr}"
@@ -469,24 +409,19 @@ def _compile_and_run(compiler, tmp_path, scenario, main_text, core_src=None):
     return rows, run_result
 
 
-def test_crc32_matches_the_independent_known_answer_vector():
+def test_crc32_matches_the_independent_known_answer_vector(tmp_path):
     """Coverage 1 -- D-05: the compiled core's rurp_config_crc32 over the
     nine bytes b"123456789" returns 0xCBF43926. Both the input and the
     expected value are constants written in THIS file, never derived from
     the module under test -- the non-vacuity anchor for the other six
     (HOST-06 discipline)."""
-    compiler = _resolve_compiler()
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        rows, run_result = _compile_and_run(compiler, tmp_path, "crc_kat", _MAIN_CRC_KAT)
-        observed = int(rows[0]["crc32"], 16)
-        assert observed == _CRC32_KAT_EXPECTED, (
-            f"expected CRC32({_CRC32_KAT_INPUT!r}) == "
-            f"{_CRC32_KAT_EXPECTED:#010x}, got {observed:#010x}.\n"
-            f"stdout:\n{run_result.stdout}"
-        )
+    rows, run_result = _compile_and_run(tmp_path, "crc_kat", _MAIN_CRC_KAT)
+    observed = int(rows[0]["crc32"], 16)
+    assert observed == _CRC32_KAT_EXPECTED, (
+        f"expected CRC32({_CRC32_KAT_INPUT!r}) == "
+        f"{_CRC32_KAT_EXPECTED:#010x}, got {observed:#010x}.\n"
+        f"stdout:\n{run_result.stdout}"
+    )
 
 
 def test_blank_slots_report_no_valid_record(tmp_path):
@@ -494,8 +429,7 @@ def test_blank_slots_report_no_valid_record(tmp_path):
     returns false. The companion "magic trap" sub-case (magic still
     invalid, crc32 self-consistent) proves the rejection is on `magic`, not
     a CRC accident."""
-    compiler = _resolve_compiler()
-    rows, run_result = _compile_and_run(compiler, tmp_path, "blank", _MAIN_BLANK)
+    rows, run_result = _compile_and_run(tmp_path, "blank", _MAIN_BLANK)
 
     blank_loaded = int(rows[1]["blank_loaded"])
     assert blank_loaded == 0, (
@@ -516,8 +450,7 @@ def test_newest_sequence_wins_when_both_slots_valid(tmp_path):
     """Coverage 3: two valid records with different `sequence`, the higher
     one wins, tested in both slot orders so the result is not an artefact
     of scan order."""
-    compiler = _resolve_compiler()
-    rows, run_result = _compile_and_run(compiler, tmp_path, "newest_wins", _MAIN_NEWEST_WINS)
+    rows, run_result = _compile_and_run(tmp_path, "newest_wins", _MAIN_NEWEST_WINS)
 
     order1 = rows[1]
     order2 = rows[2]
@@ -538,9 +471,8 @@ def test_slot_with_bad_crc_is_rejected_in_favour_of_the_other(tmp_path):
     highest-severity mitigation: an oversized `length` field is rejected
     before any copy, with the caller's sentinel-filled buffer intact past
     `len` and no primitive-level flash write attributable to it."""
-    compiler = _resolve_compiler()
     rows, run_result = _compile_and_run(
-        compiler, tmp_path, "bad_crc_and_length_bound", _MAIN_BAD_CRC_AND_LENGTH_BOUND
+        tmp_path, "bad_crc_and_length_bound", _MAIN_BAD_CRC_AND_LENGTH_BOUND
     )
 
     badcrc = rows[1]
@@ -574,8 +506,7 @@ def test_both_slots_corrupt_reports_no_valid_record(tmp_path):
     false, the SAME outcome as the blank case from a DIFFERENT input --
     together the two make D-15's blank/corrupt equivalence a proven claim
     rather than an assumption."""
-    compiler = _resolve_compiler()
-    rows, run_result = _compile_and_run(compiler, tmp_path, "both_corrupt", _MAIN_BOTH_CORRUPT)
+    rows, run_result = _compile_and_run(tmp_path, "both_corrupt", _MAIN_BOTH_CORRUPT)
 
     both_corrupt_loaded = int(rows[1]["both_corrupt_loaded"])
     assert both_corrupt_loaded == 0, (
@@ -595,9 +526,8 @@ def test_interrupted_write_leaves_the_previous_record_loadable(tmp_path):
     (ceil(sizeof(StoredConfiguration)/4) words) -- not a blanket "always
     the previous record" claim, which 126-07 measured to be false for
     N >= the footprint on this host."""
-    compiler = _resolve_compiler()
     rows, run_result = _compile_and_run(
-        compiler, tmp_path, "interrupted_write", _MAIN_INTERRUPTED_WRITE
+        tmp_path, "interrupted_write", _MAIN_INTERRUPTED_WRITE
     )
 
     footprint_words = int(rows[0]["footprint_words"])
@@ -631,9 +561,8 @@ def test_interrupted_write_leaves_the_previous_record_loadable(tmp_path):
 def test_successive_saves_alternate_slots(tmp_path):
     """Coverage 7: four successive saves land in alternating physical
     slots with strictly increasing `sequence`."""
-    compiler = _resolve_compiler()
     rows, run_result = _compile_and_run(
-        compiler, tmp_path, "successive_saves", _MAIN_SUCCESSIVE_SAVES
+        tmp_path, "successive_saves", _MAIN_SUCCESSIVE_SAVES
     )
 
     save_rows = [r for r in rows if "save_iter" in r]

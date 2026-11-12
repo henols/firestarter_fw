@@ -27,6 +27,7 @@
 #include <Arduino.h>
 #include <ArduinoFake.h>
 #include <unity.h>
+#include <cstdio>
 
 extern "C" {
 #include "memory.h"
@@ -39,11 +40,8 @@ extern "C" {
 
 using namespace fakeit;
 
-/* Recording API — symbols compiled because host_stubs.cpp defines HOST_STUBS_RECORD_BUS. */
-extern "C" void clear_bus_recording();
-extern "C" int  bus_recording_count();
-extern "C" uint8_t recorded_reg(int i);
-extern "C" rurp_register_t recorded_data(int i);
+#include "../_shared/bus_recording.h"
+#include "../_shared/dispatch_expect.h"
 
 /* Debug session w27c512-write-slow-3x -- read-back model + saturation
  * reporter, compiled because host_stubs.cpp defines
@@ -134,111 +132,66 @@ static bool recording_has_vpp_enable(uint8_t vpp_bit) {
     return false;
 }
 
-/* NOTE: CTRL_VPP_VPE_DROP_ENABLE is 0x100 when HARDWARE_REVISION is defined —
- * it does not fit in uint8_t. The recording buffer stores uint8_t data values,
- * so CTRL_VPP_VPE_DROP_ENABLE cannot be detected via the 8-bit recording when
- * HARDWARE_REVISION is defined. Use CTRL_VPP_REGULATOR_ENABLE (0x80) and
- * CTRL_VPP_P1_ENABLE (0x08) which fit in 8 bits for VPP-enable detection. */
-static bool recording_has_any_vpp_enable(void) {
-    return recording_has_vpp_enable(CTRL_VPP_REGULATOR_ENABLE) ||
-           recording_has_vpp_enable(CTRL_VPP_P1_ENABLE);
-}
-
 /* ─── POSITIVE tests: CMD_WRITE + init → VPP regulator must fire ─────────── */
 
-/* Protocol 0x07 (EPROM_STD): write init must enable CTRL_VPP_REGULATOR_ENABLE. */
-void test_eprom_0x07_write_enables_vpp_regulator(void) {
-    firestarter_handle_t h = make_handle(0x07, CMD_WRITE);
+/* Configures a CMD_WRITE for `protocol`, runs its init, and asserts that the
+ * init records CTRL_VPP_REGULATOR_ENABLE in the CTL register. */
+static void check_write_enables_vpp(uint32_t protocol) {
+    char msg[96];
+    firestarter_handle_t h = make_handle(protocol, CMD_WRITE);
     configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on protocol 0x07 CMD_WRITE");
+    snprintf(msg, sizeof(msg), "configure_memory must not error on protocol 0x%02X CMD_WRITE",
+             (unsigned)protocol);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code, msg);
     if (h.firestarter_operation_init) {
         h.firestarter_operation_init(&h);
     }
-    TEST_ASSERT_TRUE_MESSAGE(
-        recording_has_vpp_enable(CTRL_VPP_REGULATOR_ENABLE),
-        "configure_eprom 0x07 write must record CTRL_VPP_REGULATOR_ENABLE in CTL register");
+    snprintf(msg, sizeof(msg),
+             "configure_eprom 0x%02X write must record CTRL_VPP_REGULATOR_ENABLE in CTL register",
+             (unsigned)protocol);
+    TEST_ASSERT_TRUE_MESSAGE(recording_has_vpp_enable(CTRL_VPP_REGULATOR_ENABLE), msg);
+}
+
+/* Protocol 0x07 (EPROM_STD): write init must enable CTRL_VPP_REGULATOR_ENABLE. */
+void test_eprom_0x07_write_enables_vpp_regulator(void) {
+    check_write_enables_vpp(0x07);
 }
 
 /* Protocol 0x08 (EPROM_QUICK): same mechanism as 0x07. */
 void test_eprom_0x08_write_enables_vpp_regulator(void) {
-    firestarter_handle_t h = make_handle(0x08, CMD_WRITE);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on protocol 0x08 CMD_WRITE");
-    if (h.firestarter_operation_init) {
-        h.firestarter_operation_init(&h);
-    }
-    TEST_ASSERT_TRUE_MESSAGE(
-        recording_has_vpp_enable(CTRL_VPP_REGULATOR_ENABLE),
-        "configure_eprom 0x08 write must record CTRL_VPP_REGULATOR_ENABLE in CTL register");
+    check_write_enables_vpp(0x08);
 }
 
 /* Protocol 0x0B (EPROM_LEGACY): direct VPE path — CTRL_VPP_REGULATOR_ENABLE only. */
 void test_eprom_0x0B_write_enables_vpp_regulator(void) {
-    firestarter_handle_t h = make_handle(0x0B, CMD_WRITE);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on protocol 0x0B CMD_WRITE");
-    if (h.firestarter_operation_init) {
-        h.firestarter_operation_init(&h);
-    }
-    TEST_ASSERT_TRUE_MESSAGE(
-        recording_has_vpp_enable(CTRL_VPP_REGULATOR_ENABLE),
-        "configure_eprom 0x0B write must record CTRL_VPP_REGULATOR_ENABLE in CTL register");
+    check_write_enables_vpp(0x0B);
 }
 
-/* ─── NEGATIVE CONTROL: CMD_READ, configure-only — VPP must NOT fire ─────── */
+/* ─── configure_memory sends 0x07, 0x08 and 0x0B to configure_eprom ─────── */
 
-void test_eprom_0x07_read_configure_only_does_not_enable_vpp(void) {
-    firestarter_handle_t h = make_handle(0x07, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on protocol 0x07 CMD_READ");
-    /* Note: CTRL_VPP_VPE_DROP_ENABLE is 0x100 when HARDWARE_REVISION defined —
-     * it cannot be detected via uint8_t recording; check 8-bit-fit VPP bits only. */
-    for (int i = 0; i < bus_recording_count(); i++) {
-        if (recorded_reg(i) == CONTROL_REGISTER) {
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_REGULATOR_ENABLE,
-                recorded_data(i),
-                "configure_eprom 0x07 CMD_READ configure-phase must NOT set CTRL_VPP_REGULATOR_ENABLE");
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_P1_ENABLE,
-                recorded_data(i),
-                "configure_eprom 0x07 CMD_READ configure-phase must NOT set CTRL_VPP_P1_ENABLE");
-        }
+/* Compares the operation pointers that configure_memory sets for `protocol`
+ * with the pointers of configure_eprom, for CMD_READ, CMD_WRITE, CMD_ERASE
+ * and CMD_CHECK_CHIP_ID. */
+static void check_dispatches_to_eprom(uint32_t protocol) {
+    static const uint8_t cmds[] = {CMD_READ, CMD_WRITE, CMD_ERASE, CMD_CHECK_CHIP_ID};
+    for (size_t c = 0; c < sizeof(cmds); c++) {
+        char ctx[80];
+        snprintf(ctx, sizeof(ctx), "protocol 0x%02X cmd %u -> configure_eprom", (unsigned)protocol,
+                 (unsigned)cmds[c]);
+        assert_dispatches_to(make_handle(protocol, cmds[c]), configure_eprom, ctx);
     }
 }
 
-void test_eprom_0x08_read_configure_only_does_not_enable_vpp(void) {
-    firestarter_handle_t h = make_handle(0x08, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on protocol 0x08 CMD_READ");
-    for (int i = 0; i < bus_recording_count(); i++) {
-        if (recorded_reg(i) == CONTROL_REGISTER) {
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_REGULATOR_ENABLE,
-                recorded_data(i),
-                "configure_eprom 0x08 CMD_READ configure-phase must NOT set CTRL_VPP_REGULATOR_ENABLE");
-        }
-    }
+void test_eprom_0x07_dispatches_to_eprom(void) {
+    check_dispatches_to_eprom(0x07);
 }
 
-void test_eprom_0x0B_read_configure_only_does_not_enable_vpp(void) {
-    firestarter_handle_t h = make_handle(0x0B, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "configure_memory must not error on protocol 0x0B CMD_READ");
-    for (int i = 0; i < bus_recording_count(); i++) {
-        if (recorded_reg(i) == CONTROL_REGISTER) {
-            TEST_ASSERT_BITS_LOW_MESSAGE(
-                (uint8_t)CTRL_VPP_REGULATOR_ENABLE,
-                recorded_data(i),
-                "configure_eprom 0x0B CMD_READ configure-phase must NOT set CTRL_VPP_REGULATOR_ENABLE");
-        }
-    }
+void test_eprom_0x08_dispatches_to_eprom(void) {
+    check_dispatches_to_eprom(0x08);
+}
+
+void test_eprom_0x0B_dispatches_to_eprom(void) {
+    check_dispatches_to_eprom(0x0B);
 }
 
 /* ═════════════════════════════════════════════════════════════════════════
@@ -757,9 +710,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_eprom_0x0B_write_enables_vpp_regulator);
 
     /* NEGATIVE CONTROL: configure-only (CMD_READ, no init) — no VPP bits set */
-    RUN_TEST(test_eprom_0x07_read_configure_only_does_not_enable_vpp);
-    RUN_TEST(test_eprom_0x08_read_configure_only_does_not_enable_vpp);
-    RUN_TEST(test_eprom_0x0B_read_configure_only_does_not_enable_vpp);
+    RUN_TEST(test_eprom_0x07_dispatches_to_eprom);
+    RUN_TEST(test_eprom_0x08_dispatches_to_eprom);
+    RUN_TEST(test_eprom_0x0B_dispatches_to_eprom);
 
     /* WRITE-CADENCE INVARIANT (debug session w27c512-write-slow-3x) -- the
      * per-pass route-assert law, enforced here because CI runs only the two

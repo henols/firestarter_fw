@@ -29,11 +29,7 @@ extern "C" {
 
 using namespace fakeit;
 
-/* Recording API — symbols compiled because host_stubs.cpp defines HOST_STUBS_RECORD_BUS. */
-extern "C" void clear_bus_recording();
-extern "C" int  bus_recording_count();
-extern "C" uint8_t recorded_reg(int i);
-extern "C" rurp_register_t recorded_data(int i);
+#include "../_shared/bus_recording.h"
 
 void setUp(void) {
     ArduinoFakeReset();
@@ -237,12 +233,6 @@ void test_issue120_direct_write_accepts_valid_end_boundary(void) {
     TEST_ASSERT_EQUAL_UINT32(1, issue120_writes);
 }
 
-/* Every HV control bit at the full register width. On the wide layout
- * CTRL_VPP_VPE_DROP_ENABLE is above bit 7, so an 8-bit mask would miss it. */
-static const rurp_register_t kHvBits = (rurp_register_t)(CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE |
-                                                         CTRL_VPP_A9_ENABLE | CTRL_VPE_ENABLE |
-                                                         CTRL_VPP_VPE_DROP_ENABLE);
-
 void test_sram_dispatch_all_protocols_and_commands_assert_no_hv(void) {
     const uint32_t protocols[] = {0x0E, 0x27, 0x28, 0x29};
     const uint8_t commands[] = {CMD_READ, CMD_WRITE};
@@ -261,6 +251,25 @@ void test_sram_dispatch_all_protocols_and_commands_assert_no_hv(void) {
                 }
             }
         }
+    }
+}
+
+/* mem_util_operation_end: region_end 0 means the whole device, a region end
+ * inside the device is kept, and one past the device is clamped to mem_size. */
+void test_operation_end_resolves_and_clamps_region_end(void) {
+    firestarter_handle_t h = {};
+    h.mem_size = 1024;
+    const struct { uint32_t region_end; uint32_t expected; const char* name; } cases[] = {
+        {0, 1024, "region_end 0 is the whole device"},
+        {1, 1, "a region end inside the device is kept"},
+        {700, 700, "a region end inside the device is kept"},
+        {1024, 1024, "a region end at mem_size is kept"},
+        {1025, 1024, "a region end past mem_size is clamped"},
+        {0xFFFFFFFFUL, 1024, "the largest region end is clamped"},
+    };
+    for (const auto& c : cases) {
+        h.region_end = c.region_end;
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(c.expected, mem_util_operation_end(&h), c.name);
     }
 }
 
@@ -283,5 +292,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_issue120_read_end_is_empty_and_last_byte_is_read);
     RUN_TEST(test_issue120_direct_write_and_verify_refuse_out_of_range);
     RUN_TEST(test_issue120_direct_write_accepts_valid_end_boundary);
+    RUN_TEST(test_operation_end_resolves_and_clamps_region_end);
     return UNITY_END();
 }

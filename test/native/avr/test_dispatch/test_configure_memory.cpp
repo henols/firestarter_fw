@@ -8,18 +8,13 @@
  *
  * One test per protocol in KNOWN_PROTOCOLS (build_db.py:89). Each test
  * constructs a minimal firestarter_handle_t (protocol, cmd, response_code)
- * and asserts `configure_memory()` does not raise RESPONSE_CODE_ERROR (i.e.
- * the chip resolved to a real handler).
+ * and asserts that `configure_memory()` sets the operation pointers of the
+ * expected configure_<family>() function.
  *
  * (protocol-only dispatch): dispatch is keyed on `protocol` alone
  * — there is no backward-compat fallback axis. Any unrecognized protocol,
  * including 0, reaches `configure_not_implemented()`; see
  * test_not_implemented.cpp for fail-closed coverage.
- *
- * Why TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, ...) and not an operation-
- * pointer check? `configure_sram()` is a stub today and leaves the
- * firestarter_operation_init pointer NULL — pointer-set assertions would
- * spuriously fail. response_code is the robust dispatch-success signal.
  */
 
 #include <Arduino.h>
@@ -31,6 +26,14 @@ extern "C" {
 #include "memory.h"
 }
 #include "firestarter.h"
+#include "eeprom_28c.h"
+#include "eprom.h"
+#include "flash_5v_page.h"
+#include "flash_intel.h"
+#include "flash_nor_unlock.h"
+#include "sram.h"
+
+#include "../_shared/dispatch_expect.h"
 
 using namespace fakeit;
 
@@ -58,134 +61,116 @@ static firestarter_handle_t make_handle(uint32_t protocol, uint8_t mem_type, uin
     return h;
 }
 
-/* Positive dispatch tests — one per protocol in KNOWN_PROTOCOLS.
- * Each asserts that configure_memory() does NOT set response_code to
- * RESPONSE_CODE_ERROR (i.e. dispatch reached a real handler). */
+/* Positive dispatch tests -- one per protocol in KNOWN_PROTOCOLS. Each
+ * compares the operation pointers that configure_memory() sets with the
+ * pointers that the expected configure_<family>() sets on a fresh handle, for
+ * CMD_WRITE and CMD_CHECK_CHIP_ID. CMD_READ cannot tell the families apart:
+ * every family keeps configure_memory's memory_read_execute. */
+static void check_protocol_dispatch(uint32_t protocol, configure_family_fn_t family, const char* family_name) {
+    static const uint8_t cmds[] = {CMD_WRITE, CMD_CHECK_CHIP_ID};
+    static const char* cmd_names[] = {"CMD_WRITE", "CMD_CHECK_CHIP_ID"};
+    for (size_t c = 0; c < 2; c++) {
+        char ctx[96];
+        snprintf(ctx, sizeof(ctx), "protocol 0x%02X %s -> %s", (unsigned)protocol, cmd_names[c], family_name);
+        assert_dispatches_to(make_handle(protocol, 0, cmds[c]), family, ctx);
+    }
+}
 
 void test_protocol_0x06_dispatches_nor_unlock(void) {
-    firestarter_handle_t h = make_handle(0x06, 0, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    check_protocol_dispatch(0x06, configure_flash_nor_unlock, "configure_flash_nor_unlock");
 }
 
 void test_protocol_0x05_dispatches_5v_page(void) {
-    firestarter_handle_t h = make_handle(0x05, 0, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    check_protocol_dispatch(0x05, configure_flash_5v_page, "configure_flash_5v_page");
 }
 
 void test_protocol_0x35_dispatches_5v_page(void) {
-    firestarter_handle_t h = make_handle(0x35, 0, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    check_protocol_dispatch(0x35, configure_flash_5v_page, "configure_flash_5v_page");
 }
 
 void test_protocol_0x39_dispatches_5v_page(void) {
-    firestarter_handle_t h = make_handle(0x39, 0, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    check_protocol_dispatch(0x39, configure_flash_5v_page, "configure_flash_5v_page");
 }
 
 void test_protocol_0x07_dispatches_eprom(void) {
-    firestarter_handle_t h = make_handle(0x07, 0, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    check_protocol_dispatch(0x07, configure_eprom, "configure_eprom");
 }
 
 void test_protocol_0x08_dispatches_eprom(void) {
-    firestarter_handle_t h = make_handle(0x08, 0, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    check_protocol_dispatch(0x08, configure_eprom, "configure_eprom");
 }
 
 void test_protocol_0x0B_dispatches_eprom(void) {
-    firestarter_handle_t h = make_handle(0x0B, 0, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    check_protocol_dispatch(0x0B, configure_eprom, "configure_eprom");
 }
 
 void test_protocol_0x0E_dispatches_sram(void) {
-    firestarter_handle_t h = make_handle(0x0E, 0, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    check_protocol_dispatch(0x0E, configure_sram, "configure_sram");
 }
 
 void test_protocol_0x27_dispatches_sram(void) {
-    firestarter_handle_t h = make_handle(0x27, 0, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    check_protocol_dispatch(0x27, configure_sram, "configure_sram");
 }
 
 void test_protocol_0x28_dispatches_sram(void) {
-    firestarter_handle_t h = make_handle(0x28, 0, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    check_protocol_dispatch(0x28, configure_sram, "configure_sram");
 }
 
 void test_protocol_0x29_dispatches_sram(void) {
-    firestarter_handle_t h = make_handle(0x29, 0, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    check_protocol_dispatch(0x29, configure_sram, "configure_sram");
 }
 
 void test_protocol_0x10_dispatches_flash_intel(void) {
-    firestarter_handle_t h = make_handle(0x10, 0, CMD_READ);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    check_protocol_dispatch(0x10, configure_flash_intel, "configure_flash_intel");
 }
 
 void test_protocol_0x0D_dispatches_eeprom28c(void) {
-    firestarter_handle_t h = make_handle(0x0D, 0, CMD_READ);
+    check_protocol_dispatch(0x0D, configure_eeprom28c, "configure_eeprom28c");
+}
+
+/* CMD_CHECK_CHIP_ID on the 0x05 family must set a chip-ID read: a NULL main
+ * would make the op layer refuse the command. */
+static void check_5v_page_chip_id(uint32_t protocol) {
+    firestarter_handle_t h = make_handle(protocol, 0, CMD_CHECK_CHIP_ID);
     configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_main,
+        "CMD_CHECK_CHIP_ID on the 0x05 family must set a non-NULL operation_main");
+    assert_dispatches_to(make_handle(protocol, 0, CMD_CHECK_CHIP_ID), configure_flash_5v_page,
+                         "CMD_CHECK_CHIP_ID on the 0x05 family");
 }
 
 void test_5v_page_check_chip_id_0x05_sets_operation(void) {
-    firestarter_handle_t h = make_handle(0x05, 0, CMD_CHECK_CHIP_ID);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "CMD_CHECK_CHIP_ID on 0x05 must not error");
-    TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_main,
-        "CMD_CHECK_CHIP_ID on 0x05 must set a non-NULL operation_main");
+    check_5v_page_chip_id(0x05);
 }
 
 void test_5v_page_check_chip_id_0x35_sets_operation(void) {
-    firestarter_handle_t h = make_handle(0x35, 0, CMD_CHECK_CHIP_ID);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "CMD_CHECK_CHIP_ID on 0x35 must not error");
-    TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_main,
-        "CMD_CHECK_CHIP_ID on 0x35 must set a non-NULL operation_main");
+    check_5v_page_chip_id(0x35);
 }
 
 void test_5v_page_check_chip_id_0x39_sets_operation(void) {
-    firestarter_handle_t h = make_handle(0x39, 0, CMD_CHECK_CHIP_ID);
-    configure_memory(&h);
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
-        "CMD_CHECK_CHIP_ID on 0x39 must not error");
-    TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_main,
-        "CMD_CHECK_CHIP_ID on 0x39 must set a non-NULL operation_main");
+    check_5v_page_chip_id(0x39);
 }
 
 struct protocol_family_row_t {
     uint32_t protocol;
     const char* family_name;
+    configure_family_fn_t family;
 };
 
 static const protocol_family_row_t kAllProtocolFamilies[] = {
-    {0x07, "eprom (0x07/0x08/0x0B)"},
-    {0x08, "eprom (0x07/0x08/0x0B)"},
-    {0x0B, "eprom (0x07/0x08/0x0B)"},
-    {0x0D, "eeprom28c (0x0D)"},
-    {0x10, "flash_intel (0x10)"},
-    {0x06, "flash_nor_unlock (0x06)"},
-    {0x05, "flash_5v_page (0x05/0x35/0x39)"},
-    {0x35, "flash_5v_page (0x05/0x35/0x39)"},
-    {0x39, "flash_5v_page (0x05/0x35/0x39)"},
-    {0x0E, "sram (0x0E/0x27/0x28/0x29)"},
-    {0x27, "sram (0x0E/0x27/0x28/0x29)"},
-    {0x28, "sram (0x0E/0x27/0x28/0x29)"},
-    {0x29, "sram (0x0E/0x27/0x28/0x29)"},
+    {0x07, "eprom (0x07/0x08/0x0B)", configure_eprom},
+    {0x08, "eprom (0x07/0x08/0x0B)", configure_eprom},
+    {0x0B, "eprom (0x07/0x08/0x0B)", configure_eprom},
+    {0x0D, "eeprom28c (0x0D)", configure_eeprom28c},
+    {0x10, "flash_intel (0x10)", configure_flash_intel},
+    {0x06, "flash_nor_unlock (0x06)", configure_flash_nor_unlock},
+    {0x05, "flash_5v_page (0x05/0x35/0x39)", configure_flash_5v_page},
+    {0x35, "flash_5v_page (0x05/0x35/0x39)", configure_flash_5v_page},
+    {0x39, "flash_5v_page (0x05/0x35/0x39)", configure_flash_5v_page},
+    {0x0E, "sram (0x0E/0x27/0x28/0x29)", configure_sram},
+    {0x27, "sram (0x0E/0x27/0x28/0x29)", configure_sram},
+    {0x28, "sram (0x0E/0x27/0x28/0x29)", configure_sram},
+    {0x29, "sram (0x0E/0x27/0x28/0x29)", configure_sram},
 };
 static const size_t kAllProtocolFamiliesCount = sizeof(kAllProtocolFamilies) / sizeof(kAllProtocolFamilies[0]);
 
@@ -207,6 +192,8 @@ void test_case_group1_read_write_verify_never_null_main_for_any_protocol(void) {
                 cmd_names[c], (unsigned)kAllProtocolFamilies[i].protocol,
                 kAllProtocolFamilies[i].family_name);
             TEST_ASSERT_NOT_NULL_MESSAGE(h.firestarter_operation_main, msg);
+            assert_dispatches_to(make_handle(kAllProtocolFamilies[i].protocol, 0, cmds[c]),
+                                 kAllProtocolFamilies[i].family, msg);
         }
     }
 }

@@ -11,29 +11,17 @@ host now back-solves the bandgap and sends it as bg.
 """
 
 
-import os
 import re
-import shutil
-import subprocess
-from pathlib import Path
 
 import pytest
 
-_HERE = Path(__file__).resolve().parent
-_REPO_ROOT = _HERE.parent
-_INCLUDE = _REPO_ROOT / "include"
-_SOURCES = (_REPO_ROOT / "src" / "command_decoder.c",)
+from ._host_build import INCLUDE, REPO_ROOT, compile_ok, host_cc, run_binary
+
+_SOURCES = (REPO_ROOT / "src" / "command_decoder.c",)
 
 # The config field each CMD_CONFIG frame carries.
 _FRAMES = ("vcc", "bg", "r1")
 _RESULT_RE = re.compile(r"^FRAME (\d+) (\d+)$")
-
-
-def _resolve_compiler():
-    """Resolve the host C compiler. A missing compiler fails the test."""
-    compiler = shutil.which(os.environ.get("CC", "gcc"))
-    assert compiler is not None, "host C compiler not found on PATH ($CC or gcc)"
-    return compiler
 
 
 def _write_driver(tmp_path):
@@ -72,21 +60,16 @@ def _write_driver(tmp_path):
 
 
 def _parse_results(tmp_path, defines):
-    compiler = _resolve_compiler()
     driver = _write_driver(tmp_path)
     binary = tmp_path / "config_frames"
-    argv = [
-        compiler, "-std=gnu11", "-Wall", "-Wextra", "-DHARDWARE_REVISION",
+    compile_ok([
+        host_cc(), "-std=gnu11", "-Wall", "-Wextra", "-DHARDWARE_REVISION",
         *defines,
-        "-I", str(_INCLUDE),
+        "-I", str(INCLUDE),
         *(str(s) for s in _SOURCES), str(driver),
         "-o", str(binary),
-    ]
-    compiled = subprocess.run(argv, capture_output=True, text=True)
-    assert compiled.returncode == 0 and compiled.stderr == "", (
-        f"expected a clean, warning-free compile.\nstderr:\n{compiled.stderr}"
-    )
-    ran = subprocess.run([str(binary)], capture_output=True, text=True)
+    ])
+    ran = run_binary(binary)
     assert ran.returncode == 0, f"binary failed.\nstderr:\n{ran.stderr}"
     results = {}
     for line in ran.stdout.splitlines():
@@ -97,31 +80,46 @@ def _parse_results(tmp_path, defines):
     return results
 
 
+@pytest.fixture(scope="module")
+def decode(tmp_path_factory):
+    """Compiles and runs the decoder once per define set in this module, and
+    returns a copy of its results."""
+    cache = {}
+
+    def _decode(defines):
+        key = tuple(defines)
+        if key not in cache:
+            cache[key] = _parse_results(tmp_path_factory.mktemp("bandgap"), key)
+        return dict(cache[key])
+
+    return _decode
+
+
 _DECODE_OK = 0
 _REFUSE_CONFIG_FIELD = 9  # CF_REFUSE_CONFIG_FIELD in include/command_frame.h
 
 
 @pytest.mark.parametrize("frame", _FRAMES[:2])
-def test_py32_refuses_a_bandgap_calibration_frame(tmp_path, frame):
-    results = _parse_results(tmp_path, ["-DRURP_PLATFORM_PY32F071=1"])
+def test_py32_refuses_a_bandgap_calibration_frame(decode, frame):
+    results = decode(["-DRURP_PLATFORM_PY32F071=1"])
     assert results[frame] == _REFUSE_CONFIG_FIELD, (
         f"the PY32 port never reads the stored bandgap, so {frame} must be "
         f"refused; got {results[frame]}"
     )
 
 
-def test_py32_still_accepts_a_divider_frame(tmp_path):
-    results = _parse_results(tmp_path, ["-DRURP_PLATFORM_PY32F071=1"])
+def test_py32_still_accepts_a_divider_frame(decode):
+    results = decode(["-DRURP_PLATFORM_PY32F071=1"])
     assert results[_FRAMES[2]] == _DECODE_OK, results
 
 
 @pytest.mark.parametrize("frame", _FRAMES[1:])
-def test_avr_accepts_a_bandgap_and_a_divider_frame(tmp_path, frame):
+def test_avr_accepts_a_bandgap_and_a_divider_frame(decode, frame):
     # Non-vacuity: the bg frame decodes where calibration exists.
-    results = _parse_results(tmp_path, [])
+    results = decode([])
     assert results[frame] == _DECODE_OK, results
 
 
-def test_avr_refuses_the_retired_vcc_bit(tmp_path):
-    results = _parse_results(tmp_path, [])
+def test_avr_refuses_the_retired_vcc_bit(decode):
+    results = decode([])
     assert results["vcc"] == _REFUSE_CONFIG_FIELD, results

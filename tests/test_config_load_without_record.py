@@ -9,18 +9,13 @@ then resets every field, including the shield override, and saves the result.
 """
 
 
-import os
 import re
-import shutil
-import subprocess
-from pathlib import Path
 
-_HERE = Path(__file__).resolve().parent
-_REPO_ROOT = _HERE.parent
-_INCLUDE = _REPO_ROOT / "include"
+from ._host_build import INCLUDE, REPO_ROOT, compile_ok, host_cxx, run_binary
+
 _SOURCES = (
-    _REPO_ROOT / "src" / "rurp_config_utils.cpp",
-    _REPO_ROOT / "src" / "rurp_config_migrate.cpp",
+    REPO_ROOT / "src" / "rurp_config_utils.cpp",
+    REPO_ROOT / "src" / "rurp_config_migrate.cpp",
 )
 
 _DEFAULTS_RE = re.compile(r"^DEFAULTS r1=(\d+) r2=(\d+) bg=(\d+)$")
@@ -28,13 +23,6 @@ _BOOT_RE = re.compile(r"^BOOT rev=(\d+)$")
 _RESULT_RE = re.compile(
     r"^RESULT version=(\S*) r1=(\d+) r2=(\d+) rev=(\d+) bg=(\d+) saves=(\d+)$"
 )
-
-
-def _resolve_compiler():
-    """Resolve the host C++ compiler. A missing compiler fails the test."""
-    compiler = shutil.which(os.environ.get("CXX", "g++"))
-    assert compiler is not None, "host C++ compiler not found on PATH ($CXX or g++)"
-    return compiler
 
 
 def _write_driver(tmp_path, load_result):
@@ -88,20 +76,15 @@ def _write_driver(tmp_path, load_result):
 
 
 def _run(tmp_path, load_result):
-    compiler = _resolve_compiler()
     driver = _write_driver(tmp_path, load_result)
     binary = tmp_path / f"load_{load_result}"
-    argv = [
-        compiler, "-std=gnu++17", "-Wall", "-Wextra", "-DHARDWARE_REVISION",
-        "-I", str(_INCLUDE),
+    compile_ok([
+        host_cxx(), "-std=gnu++17", "-Wall", "-Wextra", "-DHARDWARE_REVISION",
+        "-I", str(INCLUDE),
         *(str(s) for s in _SOURCES), str(driver),
         "-o", str(binary),
-    ]
-    compiled = subprocess.run(argv, capture_output=True, text=True)
-    assert compiled.returncode == 0 and compiled.stderr == "", (
-        f"expected a clean, warning-free compile.\nstderr:\n{compiled.stderr}"
-    )
-    ran = subprocess.run([str(binary)], capture_output=True, text=True)
+    ])
+    ran = run_binary(binary)
     assert ran.returncode == 0, f"binary failed.\nstderr:\n{ran.stderr}"
     result = None
     defaults = None

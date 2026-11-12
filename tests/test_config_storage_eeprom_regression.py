@@ -7,49 +7,27 @@ Compile and execute production configuration-persistence code with a fake EEPROM
 """
 
 
-import os
+import copy
 import re
-import shutil
-import subprocess
-from pathlib import Path
 
 import pytest
 
-_HERE = Path(__file__).resolve().parent
-_REPO_ROOT = _HERE.parent
-_INCLUDE = _REPO_ROOT / "include"
+from ._host_build import INCLUDE, REPO_ROOT, host_cxx, run_binary, run_compiler
 
-_CANDIDATE_SOURCES = (
-    _REPO_ROOT / "src" / "rurp_config_utils.cpp",
-    _REPO_ROOT / "src" / "boards" / "rurp_config_storage_eeprom.cpp",
+_SOURCES = (
+    REPO_ROOT / "src" / "rurp_config_utils.cpp",
+    REPO_ROOT / "src" / "boards" / "rurp_config_storage_eeprom.cpp",
     # rurp_validate_config delegates its per-field migration here (v1.43), so
     # the link set needs it. The migration was extracted precisely so it could
     # be covered by behaviour in test/native/avr/test_config_migrate rather
     # than by scanning this file's text.
-    _REPO_ROOT / "src" / "rurp_config_migrate.cpp",
+    REPO_ROOT / "src" / "rurp_config_migrate.cpp",
 )
-_RESOLVED_SOURCES = tuple(p for p in _CANDIDATE_SOURCES if p.is_file())
 
 _CONFIG_START = 48
 
 _ACCESS_RE = re.compile(r"^ACCESS (\w+) ([GP]) (\d+) (\d+)$")
 _SIZEOF_RE = re.compile(r"^SIZEOF (\d+)$")
-
-
-def _resolve_compiler():
-    """Resolve the host C++ compiler, fail-closed.
-
-    If $CXX (or 'g++') cannot be resolved via shutil.which, this raises via a
-    plain assert, which the test runner reports as a FAILURE, never a skipped
-    outcome. build.yml runs this module through `pytest tests/`.
-    """
-    compiler = shutil.which(os.environ.get("CXX", "g++"))
-    assert compiler is not None, (
-        "host C++ compiler not found on PATH (checked $CXX, falling back to "
-        "'g++'). This must FAIL the suite, never be silently skipped -- no "
-        "embedded toolchain is invoked here."
-    )
-    return compiler
 
 
 def _write_fake_eeprom_header(tmp_path):
@@ -204,53 +182,29 @@ def _write_driver_tu(tmp_path):
     return tu_path
 
 
-def _compile(compiler, sources, include_dirs, output_path):
-    """Compile and link the given source files into a real binary at
-    output_path. List argv only, never a shell; always passes
-    -std=gnu++17 -Wall -Wextra and an -I entry for every directory in
-    include_dirs (the repo include/ directory AND tmp_path, so the fake
-    EEPROM.h shadows nothing real)."""
-    argv = [compiler, "-std=gnu++17", "-Wall", "-Wextra", "-DARDUINO_AVR_UNO"]
-    for include_dir in include_dirs:
-        argv += ["-I", str(include_dir)]
-    argv += [str(source) for source in sources]
-    argv += ["-o", str(output_path)]
-    return subprocess.run(argv, capture_output=True, text=True)
-
-
-def _run_binary(binary_path):
-    """Execute the compiled binary as a second subprocess, list argv,
-    capturing output. The result crosses this process boundary on stdout,
-    never this run's exit code (Trap 2): 1 is also the exit code of a
-    compile failure, a link failure and a crash, so returning it from main
-    would make the correct answer indistinguishable from every failure
-    mode."""
-    return subprocess.run([str(binary_path)], capture_output=True, text=True)
-
-
 def _run_regression_harness(tmp_path):
-    """Compile and run the resolved pre-refactor source(s) plus the fresh
-    fake EEPROM.h and driver TU, and parse stdout into a dict of
+    """Compile and run the source(s) plus the fresh fake EEPROM.h and driver
+    TU, and parse stdout into a dict of
     {"load": [...], "save": [...], "validate": [...], "sizeof": int}, each
     list holding (op, idx, length) tuples in the order printed. Returns
     (compile_result, run_result, parsed); run_result is None if the compile
-    failed."""
-    compiler = _resolve_compiler()
+    failed. The -I entries are the repo include/ directory AND tmp_path, so
+    the fake EEPROM.h shadows nothing real."""
     _write_fake_eeprom_header(tmp_path)
     driver_tu = _write_driver_tu(tmp_path)
     binary_path = tmp_path / "config_storage_regression"
 
-    compile_result = _compile(
-        compiler,
-        (*_RESOLVED_SOURCES, driver_tu),
-        (_INCLUDE, tmp_path),
-        binary_path,
-    )
+    compile_result = run_compiler([
+        host_cxx(), "-std=gnu++17", "-Wall", "-Wextra", "-DARDUINO_AVR_UNO",
+        "-I", str(INCLUDE), "-I", str(tmp_path),
+        *(str(source) for source in _SOURCES), str(driver_tu),
+        "-o", str(binary_path),
+    ])
 
     run_result = None
     parsed = {"load": [], "save": [], "validate": [], "sizeof": None}
     if compile_result.returncode == 0:
-        run_result = _run_binary(binary_path)
+        run_result = run_binary(binary_path)
         for line in run_result.stdout.splitlines():
             match = _ACCESS_RE.match(line)
             if match:
@@ -264,14 +218,27 @@ def _run_regression_harness(tmp_path):
     return compile_result, run_result, parsed
 
 
-def test_pre_refactor_tu_compiles_and_runs_with_zero_warnings(tmp_path):
-    """Coverage 1 -- compiles and runs the resolved pre-refactor source(s)
+@pytest.fixture(scope="module")
+def _harness_once(tmp_path_factory):
+    return _run_regression_harness(tmp_path_factory.mktemp("eeprom_regression"))
+
+
+@pytest.fixture
+def harness(_harness_once):
+    """The one compile-and-run of this module. Each test gets its own copy
+    of the parsed accesses."""
+    compile_result, run_result, parsed = _harness_once
+    return compile_result, run_result, copy.deepcopy(parsed)
+
+
+def test_pre_refactor_tu_compiles_and_runs_with_zero_warnings(harness):
+    """Coverage 1 -- compiles and runs the source(s)
     against the hand-written fake EEPROM.h, asserting a clean compile, zero
     bytes of -Wall -Wextra warning output (not merely exit 0), and a clean
     run."""
-    compile_result, run_result, _parsed = _run_regression_harness(tmp_path)
+    compile_result, run_result, _parsed = harness
     assert compile_result.returncode == 0, (
-        f"expected a clean compile of {_RESOLVED_SOURCES!r}.\n"
+        f"expected a clean compile of {_SOURCES!r}.\n"
         f"stdout:\n{compile_result.stdout}\nstderr:\n{compile_result.stderr}"
     )
     assert compile_result.stderr == "", (
@@ -285,7 +252,7 @@ def test_pre_refactor_tu_compiles_and_runs_with_zero_warnings(tmp_path):
     )
 
 
-def test_load_config_get_access_at_config_start_with_sizeof_length(tmp_path):
+def test_load_config_get_access_at_config_start_with_sizeof_length(harness):
     """Coverage 2 -- CFG-04: rurp_load_config() reads once at index 48 with a
     length equal to sizeof(rurp_configuration_t) as the compiled binary itself
     reported it. Compared against the binary's own reported sizeof, never
@@ -303,7 +270,7 @@ def test_load_config_get_access_at_config_start_with_sizeof_length(tmp_path):
     boot. That property is proved by behaviour in
     test/native/avr/test_config_migrate (test_a_current_config_is_left_alone),
     which runs the real migrator rather than inspecting access traces."""
-    compile_result, run_result, parsed = _run_regression_harness(tmp_path)
+    compile_result, run_result, parsed = harness
     assert compile_result.returncode == 0 and compile_result.stderr == "", (
         f"expected a clean, warning-free compile.\n"
         f"stdout:\n{compile_result.stdout}\nstderr:\n{compile_result.stderr}"
@@ -330,10 +297,10 @@ def test_load_config_get_access_at_config_start_with_sizeof_length(tmp_path):
     )
 
 
-def test_save_config_put_access_at_config_start_with_sizeof_length(tmp_path):
+def test_save_config_put_access_at_config_start_with_sizeof_length(harness):
     """Coverage 3 -- CFG-04: rurp_save_config() produces exactly one
     recorded put access, at index 48, with the same symbolic length."""
-    compile_result, run_result, parsed = _run_regression_harness(tmp_path)
+    compile_result, run_result, parsed = harness
     assert compile_result.returncode == 0 and compile_result.stderr == "", (
         f"expected a clean, warning-free compile.\n"
         f"stdout:\n{compile_result.stdout}\nstderr:\n{compile_result.stderr}"
@@ -351,13 +318,13 @@ def test_save_config_put_access_at_config_start_with_sizeof_length(tmp_path):
     )
 
 
-def test_validate_config_write_back_produces_put_on_version_mismatch(tmp_path):
+def test_validate_config_write_back_produces_put_on_version_mismatch(harness):
     """Coverage 4 -- the D-14 write-back at rurp_config_utils.cpp:38:
     rurp_validate_config() on a struct whose version does not match
     CONFIG_VERSION writes the defaults back and triggers exactly one put,
     at index 48 with the same symbolic length -- this must behave
     identically after the split."""
-    compile_result, run_result, parsed = _run_regression_harness(tmp_path)
+    compile_result, run_result, parsed = harness
     assert compile_result.returncode == 0 and compile_result.stderr == "", (
         f"expected a clean, warning-free compile.\n"
         f"stdout:\n{compile_result.stdout}\nstderr:\n{compile_result.stderr}"
@@ -376,10 +343,10 @@ def test_validate_config_write_back_produces_put_on_version_mismatch(tmp_path):
     )
 
 
-def test_non_vacuity_source_resolved_and_access_recorded(tmp_path):
-    """Coverage 5 -- the two-way Discretion-default check: at least one
-    candidate source path resolved AND rurp_load_config() recorded at
-    least one access. Deliberately scoped to the load phase alone rather
+def test_non_vacuity_source_resolved_and_access_recorded(harness):
+    """Coverage 5 -- rurp_load_config() recorded at least one access. A
+    missing source file fails the compile, so the sources need no separate
+    check. Deliberately scoped to the load phase alone rather
     than a sum across all three phases: the driver seeds BOTH the fake's
     backing storage and the live global config with matching data, so an
     unmutated rurp_load_config() records exactly one get and a mutation
@@ -391,11 +358,7 @@ def test_non_vacuity_source_resolved_and_access_recorded(tmp_path):
     own, unrelated calls regardless of what this phase's mutation does).
     This is the leg that catches a silently-absent access -- an
     exit-code-only test would report a no-op harness as green."""
-    assert len(_RESOLVED_SOURCES) >= 1, (
-        f"expected at least one of {_CANDIDATE_SOURCES!r} to resolve at "
-        f"collection time; resolved none."
-    )
-    compile_result, run_result, parsed = _run_regression_harness(tmp_path)
+    compile_result, run_result, parsed = harness
     assert compile_result.returncode == 0 and compile_result.stderr == "", (
         f"expected a clean, warning-free compile.\n"
         f"stdout:\n{compile_result.stdout}\nstderr:\n{compile_result.stderr}"
