@@ -41,10 +41,7 @@ static bool flash_5v_page_mask(uint16_t requested, uint32_t* out_mask) {
 
 void flash_5v_page_write_init(firestarter_handle_t* handle);
 void flash_5v_page_write_execute(firestarter_handle_t* handle);
-void flash_5v_page_check_chip_id_execute(firestarter_handle_t* handle);
 static bool flash_5v_page_wait_for_page_write(firestarter_handle_t* handle, uint32_t address, uint8_t expected);
-
-uint16_t flash_5v_page_get_chip_id(firestarter_handle_t* handle);
 
 void configure_flash_5v_page(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CONFIGURING_FLASH4);
@@ -55,7 +52,7 @@ void configure_flash_5v_page(firestarter_handle_t* handle) {
             break;
         case CMD_CHECK_CHIP_ID:
             handle->firestarter_operation_init = NULL;
-            handle->firestarter_operation_main = flash_5v_page_check_chip_id_execute;
+            handle->firestarter_operation_main = flash_util_check_chip_id_execute;
             break;
         // Software chip erase (#62): the W29C020C "Software Chip Erase"
         // command, which the AT29C and SST29EE parts share, at the same
@@ -156,10 +153,6 @@ static bool flash_5v_page_wait_for_page_write(firestarter_handle_t* handle, uint
     return false;
 }
 
-void flash_5v_page_check_chip_id_execute(firestarter_handle_t* handle) {
-    flash_util_check_chip_id_execute(handle);
-}
-
 // CMD_LOCK_STATUS for the 0x05 Winbond Product-ID boot-block family. Reads the
 // boot-block status byte through the shared AMD/JEDEC ID-mode helper and
 // reports the raw byte plus a firmware decode.
@@ -172,27 +165,6 @@ void flash_5v_page_check_chip_id_execute(firestarter_handle_t* handle) {
 // write forced" -- worded for a write-path failure, not a status read that
 // wrote nothing. The DATA frame below already carries the observation.
 void flash_5v_page_read_protection_execute(firestarter_handle_t* handle) {
-    uint8_t raw = flash_util_read_in_id_mode(handle, FLASH_5V_PAGE_BOOT_BLOCK_STATUS_ADDR);
-    uint8_t _b[2];
-    _b[0] = raw;
-    if (raw == FLASH_5V_PAGE_BOOT_BLOCK_UNLOCKED) {
-        _b[1] = 0x00;
-        handle->response_code = RESPONSE_CODE_OK;
-    } else if (raw == FLASH_5V_PAGE_BOOT_BLOCK_LOCKED) {
-        _b[1] = 0x01;
-        handle->response_code = RESPONSE_CODE_OK;
-    } else {
-        // Unrecognised raw value: an observation the host must classify,
-        // not an error this firmware can adjudicate (151-DESIGN.md §1's
-        // 0xFF sentinel convention, reusing hw_get_version's precedent).
-        // The DATA frame is emitted either way so the raw byte still
-        // reaches the host -- never coerce this into 0x00 or 0x01.
-        _b[1] = 0xFF;
-        handle->response_code = RESPONSE_CODE_WARNING;
-    }
-    LOG_DATA_ID_BYTES(MSG_DATA_PROTECTION_STATUS, _b, 2);
-}
-
-uint16_t flash_5v_page_get_chip_id(firestarter_handle_t* handle) {
-    return flash_util_get_chip_id(handle);
+    flash_util_report_protection(handle, FLASH_5V_PAGE_BOOT_BLOCK_STATUS_ADDR,
+                                 FLASH_5V_PAGE_BOOT_BLOCK_UNLOCKED, FLASH_5V_PAGE_BOOT_BLOCK_LOCKED);
 }
