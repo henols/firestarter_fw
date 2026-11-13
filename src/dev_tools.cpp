@@ -32,6 +32,7 @@ extern "C" const uint8_t firestarter_dev_tools_image PROGMEM __attribute__((used
 static bool dt_wait_for_button(void) {
     unsigned long start = millis();
     while (!rurp_user_button_pressed()) {
+        rurp_watchdog_reset();
         if ((unsigned long)(millis() - start) >= DT_BUTTON_WAIT_MS) {
             return false;
         }

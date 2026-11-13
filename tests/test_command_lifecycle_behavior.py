@@ -33,8 +33,11 @@ static int ce_level = 0;
 static int cleared[3] = {};
 static rurp_register_t latch[256] = {};
 static std::string boot_order;
+static unsigned wdt_resets = 0;
 
 unsigned long millis() { return fake_ms; }
+extern "C" void rurp_watchdog_start() { boot_order += "wdt;"; }
+extern "C" void rurp_watchdog_reset() { wdt_resets++; }
 extern "C" void rurp_load_config() { boot_order += "config;"; }
 extern "C" void rurp_board_setup() { boot_order += "board;"; }
 extern "C" uint8_t rurp_get_physical_hardware_revision() { return 0; }
@@ -187,13 +190,29 @@ int main() {
     setup();
     // The shield latches are cleared before the config load can write EEPROM.
     // Detection runs after the load, so the EEPROM revision override is set.
+    // The watchdog starts last, after the serial wait in board setup.
 #ifdef HARDWARE_REVISION
-    assert(boot_order == "board;config;detect;");
+    assert(boot_order == "board;config;detect;wdt;");
 #else
-    assert(boot_order == "board;config;");
+    assert(boot_order == "board;config;wdt;");
 #endif
     assert(handle.cmd == CMD_IDLE);
     puts("PASS boot order");
+
+    // Every loop pass resets the watchdog: idle, mid-command and on timeout.
+    reset();
+    wdt_resets = 0;
+    loop();
+    assert(wdt_resets == 1);
+    frame(read_cmd);
+    loop();
+    assert(wdt_resets == 3);
+    handle.cmd = CMD_READ;
+    timeout_started_ms = fake_ms - TIMEOUT_MS;
+    loop();
+    assert(wdt_resets == 4);
+    assert_idle();
+    puts("PASS watchdog reset");
 
     reset();
     arm();
@@ -301,6 +320,7 @@ def test_command_lifecycle_and_safe_cleanup(tmp_path: Path, defines: list[str]) 
     )
     assert set(result.stdout.splitlines()) == {
         "PASS boot order",
+        "PASS watchdog reset",
         "PASS cleanup",
         "PASS timeout",
         "PASS completion",
