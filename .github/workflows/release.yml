@@ -1,0 +1,222 @@
+name: Firestarter release
+# A release happens ONLY when a version tag is pushed. A push to a branch never
+# publishes; build.yml is CI only.
+#
+#   3.2.0b1, 3.2.0rc1  -> GitHub pre-release, images built WITH dev tools,
+#                         plus the py32f071 image
+#   3.2.0              -> GitHub release, images WITHOUT dev tools; marked
+#                         Latest when it is the highest stable version
+#
+# The tag IS the version. It is compiled into every image (FW_VERSION is
+# VERSION ":" board), and no file in the repository holds it. A tag goes on a
+# commit on main. To release:
+#
+#   git tag 3.2.0b1 <commit-on-main> && git push origin 3.2.0b1
+#
+# or use the release script of the meta repository (RELEASING.md), which adds
+# checks first and verifies the release.
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+*']
+
+# Never cancel a release half way: that could leave a tag without its assets.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # fetch-depth: 0 is needed for origin/main ancestry and version tags.
+      # Python behavioral tests do not inspect Git history.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # actions/checkout fetches the pushed tag as a lightweight tag. If an
+      # annotated release tag is on the same commit, git describe picks that
+      # older tag, and the build carries the wrong version. Fetch the real tags.
+      - name: Fetch the annotated tags
+        run: git fetch --force --tags origin
+
+      - name: Check the tag
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+((b|rc)[0-9]+)?$ ]]; then
+            echo "::error::tag '$TAG' is not X.Y.Z, X.Y.ZbN or X.Y.ZrcN"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag '$TAG' points at a commit that is not on main"
+            exit 1
+          fi
+          # The meta release script makes the same check. A commit without the binary
+          # command frame has no floor. A frame file whose floor cannot be read stops
+          # the release: a skipped check could publish binary-frame firmware below it.
+          FRAME=include/command_frame.h
+          if [ -f "$FRAME" ]; then
+            FLOOR=$(sed -n 's/^#define CF_MIN_FEATURE "\([0-9]*\.[0-9]*\)"$/\1/p' "$FRAME")
+            if [ -z "$FLOOR" ]; then
+              echo "::error::cannot read CF_MIN_FEATURE from $FRAME"
+              exit 1
+            fi
+            IFS=. read -r V_MAJOR V_MINOR _ <<<"$TAG"
+            IFS=. read -r F_MAJOR F_MINOR <<<"$FLOOR"
+            if (( V_MAJOR < F_MAJOR || (V_MAJOR == F_MAJOR && V_MINOR < F_MINOR) )); then
+              echo "::error::tag '$TAG' is below $FLOOR, the first version of the binary command frame"
+              exit 1
+            fi
+          fi
+          PRERELEASE=false
+          if [[ "$TAG" =~ (b|rc)[0-9]+$ ]]; then
+            PRERELEASE=true
+          fi
+          # Only the highest stable version is Latest: firestarter_app's stable
+          # channel reads /releases/latest.
+          LATEST=false
+          if [ "$PRERELEASE" = false ]; then
+            HIGHEST=$(git tag --list | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
+            if [ "$HIGHEST" = "$TAG" ]; then
+              LATEST=true
+            fi
+          fi
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG (pre-release: $PRERELEASE, latest: $LATEST)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio pytest
+
+      - name: Run native unit tests (DEV_TOOLS)
+        run: pio test -e native
+
+      - name: Run native unit tests (no DEV_TOOLS)
+        run: pio test -e native_nodevtools
+
+      - name: Run the Python test tree
+        run: pytest tests/ -v
+
+      # version_from_git.py already gives the tag to a PlatformIO build on
+      # this commit. The py32f071 image is a CMake build and reads the header,
+      # so write the tag there too. This edit is never committed,
+      # and it comes after the tests, because some tests need a clean tree.
+      - name: Write the tag into include/version.h
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          sed -i "s/^#define VERSION \".*\"/#define VERSION \"$TAG\"/" include/version.h
+          grep -Fq "#define VERSION \"$TAG\"" include/version.h
+
+      # A pre-release ships WITH the dev commands, a stable release without.
+      - name: Build the AVR images
+        env:
+          PLATFORMIO_BUILD_FLAGS: ${{ steps.tag.outputs.prerelease == 'true' && '-D DEV_TOOLS=1' || '' }}
+        run: pio run
+
+      - name: Check the AVR images (version and dev commands)
+        env:
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ steps.tag.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          CHECKED=0
+          for ENV in uno uno328pb leonardo; do
+            MATCHES=(.pio/build/"$ENV"/firestarter_*.elf)
+            if [ "${#MATCHES[@]}" -ne 1 ]; then
+              echo "::error::expected exactly one firestarter_*.elf under .pio/build/$ENV, found ${#MATCHES[@]}"
+              exit 2
+            fi
+            STRINGS_OUT="$RUNNER_TEMP/$ENV.txt"
+            strings "${MATCHES[0]}" > "$STRINGS_OUT"
+            if ! grep -Fxq -- "$TAG:$ENV" "$STRINGS_OUT"; then
+              echo "::error::$ENV image does not carry the version string '$TAG:$ENV'"
+              exit 1
+            fi
+            # The firestarter_dev_tools_image symbol exists only in an image built
+            # with DEV_TOOLS=1 (src/dev_tools.cpp).
+            if grep -Fq -- 'firestarter_dev_tools_image' "$STRINGS_OUT"; then HAS_DEV=true; else HAS_DEV=false; fi
+            if [ "$HAS_DEV" != "$PRERELEASE" ]; then
+              echo "::error::$ENV image: dev commands present=$HAS_DEV, expected $PRERELEASE"
+              exit 1
+            fi
+            CHECKED=$((CHECKED + 1))
+          done
+          if [ "$CHECKED" -ne 3 ]; then
+            echo "::error::checked $CHECKED envs, expected 3"
+            exit 2
+          fi
+          echo "PASS: uno, uno328pb and leonardo carry $TAG, dev commands=$PRERELEASE" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # py32f071 is a beta-only board, so only a pre-release carries its image.
+      # continue-on-error belongs HERE, never inside the composite action: the
+      # py32f071.yml gate uses the same action and must stay loud. A broken ARM
+      # build leaves the asset out of the release instead of failing the AVR
+      # release.
+      - name: Build the PY32F071 image
+        id: arm
+        if: steps.tag.outputs.prerelease == 'true'
+        continue-on-error: true
+        uses: ./.github/actions/build-py32f071
+
+      # Reads `outcome`, not `conclusion`: a continue-on-error step reports
+      # conclusion success even when it failed.
+      - name: Report a missing PY32F071 image
+        if: steps.tag.outputs.prerelease == 'true' && steps.arm.outcome == 'failure'
+        run: |
+          MSG="PY32F071 image not produced — this release carries no py32f071 asset."
+          echo "::warning::${MSG}"
+          { echo "### PY32F071"; echo "${MSG}"; } >> "$GITHUB_STEP_SUMMARY"
+
+      # firestarter_app's firmware.py looks for this exact asset name.
+      - name: Check the PY32F071 image
+        if: steps.arm.outcome == 'success'
+        env:
+          TAG: ${{ github.ref_name }}
+          HEX_PATH: ${{ steps.arm.outputs.hex_path }}
+          SDK_SHA: ${{ steps.arm.outputs.sdk_sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$HEX_PATH" ] || [ "$(basename "$HEX_PATH")" != firestarter_py32f071.hex ]; then
+            echo "::error::emitted asset '$HEX_PATH' is not firestarter_py32f071.hex"
+            exit 1
+          fi
+          PINNED=$(sed -nE 's/^\s*GIT_TAG\s+([0-9a-f]{40})\s*$/\1/p' platform/py32f071/CMakeLists.txt | head -n1)
+          if [ -z "$PINNED" ] || [ "$SDK_SHA" != "$PINNED" ]; then
+            echo "::error::resolved SDK SHA '$SDK_SHA' does not match the declared GIT_TAG '$PINNED'"
+            exit 1
+          fi
+          arm-none-eabi-objcopy -I ihex -O binary "$HEX_PATH" "$RUNNER_TEMP/py32.bin"
+          if ! strings "$RUNNER_TEMP/py32.bin" | grep -Fq -- "$TAG:py32f071"; then
+            echo "::error::py32f071 image does not contain the version string '$TAG:py32f071'"
+            exit 1
+          fi
+          echo "PASS: firestarter_py32f071.hex carries $TAG, SDK $SDK_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          # The second entry matches nothing on a stable release or a failed
+          # ARM build. fail_on_unmatched_files stays false, so the asset is
+          # simply absent.
+          files: |
+            .pio/build/**/firestarter_*.hex
+            build/py32f071/firestarter_*.hex
+          prerelease: ${{ steps.tag.outputs.prerelease == 'true' }}
+          make_latest: ${{ steps.tag.outputs.latest }}
+          generate_release_notes: true

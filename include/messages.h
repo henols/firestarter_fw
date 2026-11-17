@@ -12,7 +12,7 @@
  * then synced here. Edit the catalog there and re-sync.
  *
  * Catalog version: 1
- * Total messages: 83
+ * Total messages: 91
  */
 
 #ifndef __MESSAGES_H__
@@ -49,6 +49,7 @@ extern "C" {
 #define MSG_INFO_MAIN_DONE                0x41
 #define MSG_INFO_INIT_START               0x42
 #define MSG_INFO_END_START                0x43
+#define MSG_INFO_REGISTERS                0x44
 #define MSG_INFO_RETRIES                  0x51
 #define MSG_INFO_REG_HEADER               0x52
 #define MSG_INFO_BIT_HEADER               0x53
@@ -77,7 +78,9 @@ extern "C" {
 #define MSG_WARN_SDP_TBLC_EXCEEDED        0x87
 #define MSG_WARN_VCC_IMPLAUSIBLE          0x88
 #define MSG_WARN_NOT_CALIBRATED           0x89
-#define MSG_ERR_BAD_JSON                  0xA0
+#define MSG_WARN_VPP_LOW_MV               0x8A
+#define MSG_WARN_VPP_HIGH_MV              0x8B
+#define MSG_ERR_BAD_FRAME                 0xA0
 #define MSG_ERR_NO_CMD                    0xA1
 #define MSG_ERR_SETUP                     0xA2
 #define MSG_ERR_PARSE_CFG                 0xA3
@@ -111,20 +114,25 @@ extern "C" {
 #define MSG_ERR_FL4_PAGE_SIZE             0xBF
 #define MSG_ERR_FL4_PAGE_ALIGN            0xC0
 #define MSG_ERR_CALIBRATION               0xC1
+#define MSG_ERR_BAD_COMMAND               0xC2
+#define MSG_ERR_FRAME_VERSION             0xC3
+#define MSG_ERR_VPP_HIGH_MV               0xC4
 #define MSG_DATA_PROGRESS                 0xE0
 #define MSG_DATA_PROTECTION_STATUS        0xE1
 #define MSG_DATA_SENDING                  0xE2
+#define MSG_DATA_VPP_MV                   0xE3
 #define MSG_DATA_VPP_VOLTAGE              0xE4
 #define MSG_DATA_VPE_VOLTAGE              0xE5
 #define MSG_DATA_CHUNK                    0xE6
 #define MSG_DATA_ADC_RAW                  0xE7
+#define MSG_DATA_VPE_MV                   0xE8
 #define MSG_DEBUG                         0xF0
 
 // --- Debug sub-IDs (sorted ascending) ---
 #define DBG_FIRESTARTER_STARTED      0x00
 #define DBG_FIRMWARE_VERSION         0x01
 #define DBG_HARDWARE_REVISION        0x02
-#define DBG_PARSE_JSON               0x03
+#define DBG_PARSE_COMMAND            0x03
 #define DBG_CMD                      0x04
 #define DBG_SETUP                    0x05
 #define DBG_CMD_FINISHED             0x06

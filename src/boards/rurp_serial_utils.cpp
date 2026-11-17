@@ -346,65 +346,15 @@ static uint8_t crc8_ccitt(uint8_t crc, uint8_t b) {
     return pgm_read_byte(&CRC8_TABLE[crc ^ b]);
 }
 
-// Board-agnostic frame emitter — same line discipline as Phase-9-deleted
-// text-prefix log helpers (single-byte writes, .flush() at end). Does NOT
-// consult com_mode; the strong override on Uno gates this call. Leonardo's
-// USB-CDC has no PORTD aliasing risk so it uses the weak default of
-// rurp_log_id which calls this unconditionally.
-void _firestarter_emit_frame(uint8_t id, const uint8_t* params, uint8_t param_count) {
-    // Wire-frame budget guard: `len = 1 (id) + param_count + 1 (crc)` must
-    // fit in a uint8_t. With param_count >= 254 the `len` byte wraps silently
-    // and the host decoder reads a shorter body than we actually emit — frame
-    // desync. The catalog enforces a 24-byte PARAM_BUDGET cap upstream, but
-    // this is the wire boundary; refuse oversize frames here regardless so
-    // callers (including future LOG_ID_BYTES users) cannot trip the wrap.
-    // Silent drop is deliberate — we cannot emit a valid frame on the same
-    // serial channel without risking the desync we are trying to prevent.
-    if (param_count > 65533) {   // u16 max (65535) - 2 (for id + crc)
-        return;
-    }
-
-    // Magic preamble (4 bytes from PROGMEM).
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[0]));
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[1]));
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[2]));
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[3]));
-
-    // Length field (u16 big-endian, W-04): counts id + params + crc;
-    // excludes the len field itself and the trailing 0x0A anchor.
-    uint16_t len_u16 = (uint16_t)(1 + param_count + 1);
-    SERIAL_PORT.write((uint8_t)(len_u16 >> 8));    // MSB
-    SERIAL_PORT.write((uint8_t)(len_u16 & 0xFF));  // LSB
-
-    // CRC8 accumulator runs over [id, params].
-    uint8_t crc = 0;
-
-    // ID.
-    SERIAL_PORT.write(id);
-    crc = crc8_ccitt(crc, id);
-
-    // Params.
-    for (uint8_t i = 0; i < param_count; i++) {
-        uint8_t b = params[i];
-        SERIAL_PORT.write(b);
-        crc = crc8_ccitt(crc, b);
-    }
-
-    // CRC byte.
-    SERIAL_PORT.write(crc);
-
-    // 0x0A re-sync anchor.
-    SERIAL_PORT.write((uint8_t)0x0A);
-
-    SERIAL_PORT.flush();
-}
-
-// Wide variant of _firestarter_emit_frame that accepts a
-// uint16_t param_count so MSG_DATA_CHUNK payloads up to 512 / 1024 bytes
-// do not overflow the uint8_t loop counter. All other wire-frame fields
-// (magic preamble, u16 len, CRC8, 0x0A anchor) are identical.
+// Board-agnostic frame emitter: single-byte writes, .flush() at end. It does
+// not consult com_mode; the Uno strong override of rurp_log_id gates the call.
+// The narrow _firestarter_emit_frame in rurp_serial_utils.h calls this one, so
+// every frame has the same bytes whatever its parameter count type.
 void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t param_count) {
-    if (param_count > 65533) {   // u16 max (65535) - 2 (for id + crc)
+    // The u16 length field counts id + params + crc, so it can carry at most
+    // 65533 parameter bytes. A longer frame would wrap the length and desync
+    // the host decoder, so it is not sent.
+    if (param_count > 65533) {
         return;
     }
 
@@ -414,7 +364,8 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
     SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[2]));
     SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[3]));
 
-    // Length field (u16 big-endian, W-04).
+    // Length field (u16 big-endian): counts id + params + crc; excludes the
+    // len field itself and the trailing 0x0A anchor.
     uint16_t len_u16 = (uint16_t)(1 + param_count + 1);
     SERIAL_PORT.write((uint8_t)(len_u16 >> 8));    // MSB
     SERIAL_PORT.write((uint8_t)(len_u16 & 0xFF));  // LSB
@@ -426,7 +377,7 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
     SERIAL_PORT.write(id);
     crc = crc8_ccitt(crc, id);
 
-    // Params — uint16_t loop counter for large chunks.
+    // Params.
     for (uint16_t i = 0; i < param_count; i++) {
         uint8_t b = params[i];
         SERIAL_PORT.write(b);
@@ -448,11 +399,8 @@ __attribute__((weak)) void rurp_log_id(uint8_t id, const uint8_t* params, uint8_
     _firestarter_emit_frame(id, params, param_count);
 }
 
-// Fixed-shape packers. Each LOG_*_ID_U{8,16,24,32} macro previously inlined
-// the byte-array build at every call site (~10-30 instructions × ~30 sites).
-// Sharing the pack here keeps the call site to a single CALL and reduces
-// Flash use by ~200-400 B on AVR. No com_mode gate needed; rurp_log_id
-// itself routes through the strong override on Uno.
+// Centralized byte packers keep AVR log call sites small. Uno's
+// rurp_log_id override applies the required communication-mode gate.
 void rurp_log_id_u8(uint8_t id, uint8_t v) {
     uint8_t b[1] = { v };
     rurp_log_id(id, b, 1);

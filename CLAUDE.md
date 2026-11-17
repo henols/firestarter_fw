@@ -14,66 +14,72 @@ pio test -e native -f "*test_dispatch*"     # run only the configure_memory disp
 pytest tests/ -v                            # run the Python test tree
 ```
 
-`platformio.ini` defines these environments: `uno`, `uno328pb`, `leonardo`, `native` and
-`native_nodevtools`.
-
 ## What CI runs
 
 Three workflows exist. Read the trigger before you decide that CI tested a commit.
 
 | Workflow | Fires on | Publishes |
 |---|---|---|
-| `build.yml` | A push to any branch except `beta`, and every pull request | **A stable release, on a push to `main` only.** That push bumps the version, tags it and uploads a `make_latest` release. |
-| `beta-build.yml` | A push to `beta`, and manual dispatch | **A pre-release, on every push.** It bumps the version and attaches the `.hex` assets. |
+| `build.yml` | A push to any branch, and every pull request | Nothing. It is CI only. |
+| `release.yml` | A push of a version tag `X.Y.Z`, `X.Y.ZbN` or `X.Y.ZrcN` on `main` | **A GitHub release.** A `b`/`rc` tag gives a pre-release with dev tools and the py32f071 image. A plain tag gives a stable release marked Latest, without dev tools. |
 | `py32f071.yml` | A push to any branch, and pull requests that touch ARM paths | Nothing. It is the ARM build gate and never continues on error. |
 
+**Only a version tag publishes.** A merge to `main` publishes nothing. To make a release, use the
+`release` skill of the meta repository. A commit that carries the binary command frame cannot be
+tagged below `CF_MIN_FEATURE` (`3.3`): the meta release script and `release.yml` both refuse it.
+The firmware releases independently of `firestarter_app`.
+
+**The version comes from the tag.** `version_from_git.py` (a `pre:` extra_script) defines `VERSION`
+from `git describe`: the tag itself on a tagged commit, `<next>.devN` between tags. With no release
+tag in reach, the fallback in `include/version.h` (`0.0.0`) applies. `release.yml` also writes the
+tag into `include/version.h` before it builds, because the CMake build of py32f071 reads the header.
+
 `build.yml` ignores a commit that touches only `**.md`, `**.sh`, `.gitignore`, `docs/`,
-`documents/`, `images/`, `.vscode/` or `.editorconfig/`. `beta-build.yml` has no path filter. The
-version compiles into the binary, so a documentation-only push to `beta` publishes a new firmware
-version.
+`documents/`, `images/`, `.vscode/` or `.editorconfig/`. It runs these steps in this order:
 
-`build.yml` runs these steps in this order:
+1. `pio test -e native`.
+2. `pio test -e native_nodevtools`.
+3. `pytest tests/ -v` (host compile-and-run regression tests).
+4. `pio run`, without and then with `-D DEV_TOOLS=1`.
 
-1. `pio test -e native`. This step runs on pull requests only.
-2. `pio test -e native_nodevtools`. This step always runs.
-3. `pytest tests/ -v`. This step needs full git history, so the checkout sets `fetch-depth: 0`.
-4. `pio run`.
+`release.yml` runs the same tests, then builds the configuration that the tag asks for.
 
-**This repository has two test trees.** `test/` holds the PlatformIO Unity suites. `tests/` holds a
-Python suite. Most Python tests scan firmware source text. These source scans are legacy and
-pending removal: add none, and do not count one as a guard. Refer to
-`agent-os/standards/testing/no-source-introspection.md` in the meta repository. Both trees run in
-`build.yml`. No CI job
-runs a `pio` environment other than `native` and `native_nodevtools`.
+**Both test trees exercise code behavior.** `test/` holds the PlatformIO Unity suites. `tests/`
+holds Python harness tests that compile and execute production code or preprocess production
+safety guards. Do not add tests that enforce comments, exact source snippets, line numbers,
+Git blob hashes, commit ancestry, design-record prose, or historical development decisions.
+Both trees run in `build.yml`. No CI job runs a `pio` environment other than `native` and
+`native_nodevtools`.
 
 ### Which channel ships dev tools
 
-The shared `[env]` block in `platformio.ini` does not enable dev tools. `beta-build.yml` sets
-`PLATFORMIO_BUILD_FLAGS` to `-D DEV_TOOLS=1` for its `pio run`. Each pre-release image therefore
-implements `CMD_DEV_ADDRESS` (`7`) and `CMD_DEV_REGISTER` (`8`). The host commands
-`firestarter dev addr` and `firestarter dev reg` need them. `build.yml` sets no such flag, so a
-stable image refuses both commands.
+The shared `[env]` block in `platformio.ini` does not enable dev tools. For a pre-release tag,
+`release.yml` sets `PLATFORMIO_BUILD_FLAGS` to `-D DEV_TOOLS=1` for its `pio run`. Each pre-release
+image therefore implements `CMD_DEV_ADDRESS` (`7`) and `CMD_DEV_REGISTER` (`8`). The host commands
+`firestarter dev addr` and `firestarter dev reg` need them. For a stable tag it sets no such flag,
+so a stable image refuses both commands.
 
 **`platformio.ini` tells you what a local build does. It does not tell you what ships.** To build
-a local image that matches the beta artifact, run:
+a local image that matches a pre-release artifact, run:
 
 ```bash
 PLATFORMIO_BUILD_FLAGS="-D DEV_TOOLS=1" pio run -e leonardo
 ```
 
 A plain `pio run` gives a stable-configured image. That image answers the two dev commands with an
-unknown-command error. It still reports the version string in `include/version.h`.
+unknown-command error. It still reports the version that `version_from_git.py` derives.
 
-CI checks both directions. A step in `beta-build.yml` fails the run if an AVR image does not have
-the dev commands. A step in `build.yml` fails the run if an AVR image has them.
+CI checks both directions. `build.yml` builds both configurations and fails if either image has
+the wrong dev-command set. `release.yml` checks the same for the images it publishes, and checks
+that each image carries the tag as its version string.
 
 ## Architecture
 
 ### Protocol Dispatch
 
-The firmware dispatches **only** on `handle->protocol`. It reads that value from the `algorithm`
-JSON field. No second dispatch axis exists. The `protocol` value alone sets the electrical identity
-of a chip family.
+The firmware dispatches **only** on `handle->protocol`. It reads that value from the `protocol`
+field of the command frame (the host's `algorithm` key). No second dispatch axis exists. The
+`protocol` value alone sets the electrical identity of a chip family.
 
 The SRAM protocols (`0x0E`, `0x27`, `0x28`, `0x29`) therefore go to `configure_sram`, never to
 `configure_eprom`. This is important because `configure_eprom` enables the 12V VPP boost regulator.
@@ -108,15 +114,16 @@ the code:
    `configure_eprom()`. The UV-EPROM family.
 6. `PROTO_SRAM_32PIN` (`0x0E`), `PROTO_SRAM_24PIN` (`0x27`), `PROTO_SRAM_28PIN` (`0x28`) and
    `PROTO_SRAM_32PIN_NVRAM` (`0x29`) → `configure_sram()`. This arm never enables the VPP regulator.
-7. `0x11`, `0x2A`, `0x2B` and `0x2C` → `configure_not_implemented()`. These are FWH (`0x11`) and
-   GAL/PLD (`0x2A`, `0x2B`, `0x2C`). RURP hardware cannot drive them. They have no `PROTO_` token,
-   so the code uses raw hex.
-8. All other values → `configure_not_implemented()`. This is one unconditional call at the end of
-   the function. It catches `protocol == 0`, `PROTO_EEPROM_8051BUS` (`0x34`) and each unknown value.
-   It returns `MSG_ERR_PROTOCOL_NOT_IMPLEMENTED` (`0xBB`) and changes no hardware state.
+7. All other values → `configure_not_implemented()`. This catches FWH (`0x11`) and GAL/PLD (`0x2A`,
+   `0x2B`, `0x2C`), which RURP hardware cannot drive, `protocol == 0`, `PROTO_EEPROM_8051BUS`
+   (`0x34`) and each unknown value. It returns `MSG_ERR_PROTOCOL_NOT_IMPLEMENTED` (`0xBB`) and
+   changes no hardware state.
 
-**Fail-closed rule.** Steps 7 and 8 send each named-infeasible, unknown or zero value to
-`configure_not_implemented()`. No other dispatch path exists for them.
+`configure_memory` selects the handler before it touches the bus. It writes address 0 to the
+address registers only for a protocol that steps 1 to 6 accept, and then calls the handler.
+
+**Fail-closed rule.** Step 7 sends each named-infeasible, unknown or zero value to
+`configure_not_implemented()`, before any register write. No other dispatch path exists for them.
 
 ### Algorithm Handlers
 
@@ -130,11 +137,11 @@ are in `src/proms/`.
 | `0x0B` | `PROTO_EPROM_24PIN` | `eprom.cpp` | Direct VPE route | 24-pin UV-EPROM. Refer to the 27C section. |
 | `0x0D` | `PROTO_EEPROM_PARALLEL` | `eeprom_28c.cpp` | None (5V) | SDP disable, then DQ7 page poll. Refer to the 0x0D section. |
 | `0x0E`, `0x27`, `0x28`, `0x29` | `PROTO_SRAM_32PIN`, `_24PIN`, `_28PIN`, `_32PIN_NVRAM` | `sram.cpp` | None (5V) | Generic read and write. |
-| `0x06` | `PROTO_FLASH_NOR_UNLOCK` | `flash_nor_unlock.cpp` | None (5V) | AMD unlock, sector erase. |
-| `0x05` | `PROTO_FLASH_5V_PAGE` | `flash_5v_page.cpp` | None (5V) | Page write, then DQ7 poll. |
+| `0x06` | `PROTO_FLASH_NOR_UNLOCK` | `flash_nor_unlock.cpp` | None (5V) | AMD unlock. Chip erase, or sector erase at a non-zero address. Each program and erase waits on DQ7. A write at a non-zero address does not erase. |
+| `0x05` | `PROTO_FLASH_5V_PAGE` | `flash_5v_page.cpp` | None (5V) | Page write, then DQ7 poll. Software chip erase. |
 | `0x35` | `PROTO_PHANTOM_0x35` | `flash_5v_page.cpp` | None (5V) | Phantom. No database chips. The upstream label names an ITE EC MCU. |
 | `0x39` | `PROTO_PHANTOM_0x39` | `flash_5v_page.cpp` | None (5V) | Phantom. No database chips. No upstream algorithm constant exists. |
-| `0x10` | `PROTO_FLASH_INTEL` | `flash_intel.cpp` | Regulator on pin 1 (`CTRL_VPP_P1_ENABLE`) | Command register, status-register poll. |
+| `0x10` | `PROTO_FLASH_INTEL` | `flash_intel.cpp` | Regulator on pin 1 (`CTRL_VPP_P1_ENABLE`), routed only after the rail measures in the window | Command register, status-register poll. |
 | `0x34` | `PROTO_EEPROM_8051BUS` | none | None (5V) | PCB-blocked. The terminal fail-closed call catches it. |
 
 ### The three 27C rows (`0x07`, `0x08`, `0x0B`)
@@ -156,11 +163,11 @@ VPE path.
 **High-voltage teardown.** Each **error** exit from the write path goes through one exit wrapper.
 That wrapper disables all high-voltage routes in the control register. A **successful** block
 leaves the route on, so the next block does not pay the settle time again. `command_done()` disables
-the route at the end of the operation. No test checks this behaviour. A legacy source contract
-(`tests/golden/eprom_params_citations.json`) scans the text. It is not a guard.
+the route at the end of the operation. This hardware-level teardown sequence still needs a
+focused executable regression test; source text checks must not substitute for one.
 
-**No overprogram.** No 27C row applies an overprogram pulse. No 27C row uses DQ7 polling. DQ7
-polling is a flash-family method.
+**No overprogram.** The firmware has no overprogram (margin) pulse. No 27C row uses DQ7 polling.
+DQ7 polling is a flash-family method.
 
 **Progress inside a block.** The per-byte loop sends `MSG_DATA_PROGRESS` (`0xE0`). A timer at
 `EPROM_PROGRESS_EMIT_INTERVAL_MS` (1000 ms) controls the send. A byte count does not. The payload
@@ -172,14 +179,17 @@ Two limits apply:
 - **`leonardo` and native only.** On `SERIAL_ON_IO` targets (`uno`, `uno328pb`) the send and its
   `last_emit_ms` state compile out. This is a hardware limit:
   1. `rurp_set_programmer_mode()` stops the UART for the full programmer-mode window.
-  2. The Uno `rurp_log_id` override then holds frames in a 4-slot buffer.
-  3. When that buffer is full, the next frame is lost without an error.
-  4. A lost `MSG_ERR_MAX_PULSES` frame changes a program failure into a host transport timeout.
+  2. The Uno `rurp_log_id` override then holds frames in a 4-slot buffer (`include/deferred_log.h`).
+  3. When that buffer is full, an error, control or data frame replaces the newest INFO or WARN
+     frame. A new INFO or WARN frame, or any frame when no INFO or WARN frame is held, is lost
+     without an error.
+  4. A progress frame per byte would fill the buffer with frames that must not be lost, so a later
+     `MSG_ERR_MAX_PULSES` frame could still be lost and a program failure would become a host
+     transport timeout.
 
-  No test checks this limit. A legacy source contract
-  (`tests/test_progress_emission_is_leonardo_only.py`) scans the text. It is not a guard. No native
-  environment compiles `src/boards/uno_rurp_shield.cpp`.
-  The native capture stub has no `com_mode` gate.
+  The `test_messages` suite tests the buffer rule in `deferred_log.h`. Native tests do not compile
+  `src/boards/uno_rurp_shield.cpp`, and the capture stub lacks its `com_mode` gate. Verify the
+  behavior on the target board before changing this path.
 
 Per-row differences:
 
@@ -193,19 +203,22 @@ Per-row differences:
 | `energy_cap_us` | 0 (no cap) | 0 (no cap) | 50000 (50 ms) |
 | `--vpe-as-vpp` | Changes the route to direct VPE | Changes the route to direct VPE | No effect. The route is already direct. |
 
-The table values are in `src/proms/eprom_params.cpp`. The fallback widths are in
-`configure_eprom()` in `eprom.cpp`.
+The table is in `src/proms/eprom_params.cpp`, and `configure_eprom()` in `eprom.cpp` applies the
+fallback widths. `max_pulses`, `energy_cap_us` and the fallback widths come from the generated
+`include/eprom_rows.h` (meta `tools/protocol/eprom_rows.toml`).
 
 `VERIFY_PER_PULSE_PLUS_FINAL` reads the full array one more time after the loop is complete. A
 mismatch in that pass sends `MSG_ERR_VERIFY` (`0xAF`) with the same 5-byte payload that
 `memory_verify_execute` uses. `VERIFY_PER_PULSE` reads each byte after each pulse and does no final
-pass.
+pass. `FLAG_SKIP_FINAL_VERIFY` (`0x200`) drops the final pass: the host sets it for
+`write --verify`, which reads the whole region back itself. The per-pulse verify always runs.
 
 **Error IDs per row:**
 
 - `MSG_ERR_MAX_PULSES` (`0xBD`) can occur on all three rows.
-- `MSG_ERR_ENERGY_CAP` (`0xBE`) and the pre-flight refusal `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`) need
-  `energy_cap_us > 0`. They can occur on `0x0B` only.
+- `MSG_ERR_ENERGY_CAP` (`0xBE`) needs `energy_cap_us > 0`. It can occur on `0x0B` only.
+- The pre-flight refusal `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`) can occur on all three rows for a pulse
+  above `EPROM_PULSE_MAX_US` (65535µs). On `0x0B` it also occurs for a pulse above `energy_cap_us`.
 
 **The `0x0B` energy cap.** Each shipped pulse width divides 50000µs exactly. 200µs, 500µs and 1000µs
 give 250, 100 and 50 pulses. With an arbitrary `--pulse-us` value `w`, the total at failure is
@@ -232,6 +245,19 @@ that switch to the socket:
   edge joins it to socket pin 25 (24-pin pin 21). This was measured on a Rev 2.2 board in v1.37
   Phase 182 (2026-09-10). The Rev 2.0/2.1 "Closed" position is inferred to reach socket pin 3. It
   is not measured.
+
+**Pin 1 during a read (32-pin VPP-on-pin-1 parts, issue #142).** A read drives the VPP bus line
+high, because these parts need VPP at VCC level in read mode. On Rev 2.x, line 21 is the pin-1
+switch itself, so the read puts VPE on pin 1. With the regulator off, +5 V holds VPE at about
+4.8 V through L1 and D1. Two rules apply:
+
+- The read drives line 21 high only while `CTRL_VPP_REGULATOR_ENABLE` is off
+  (`read_high_needs_reg_off`). The chip-ID read and every read in the write path keep pin 1 low.
+- A `CMD_READ` waits until `RURP_VPE_DISCHARGE_MS` (200 ms) has passed since the regulator was
+  last switched off (`rurp_get_regulator_off_ms()`), so that C9 can discharge.
+
+On Rev 0/1, line 21 is the A18 latch bit, which reaches pin 1 through D33 as a logic level, so no
+wait is necessary.
 
 The host table `firestarter_app/firestarter/jumper_table.py` gives the setting for each pin map.
 Only the control-register stream shows the `0x08` route. No test on a real part shows it. This is not a claim that `0x08` VPP is
@@ -262,9 +288,7 @@ The six writes are inline, not a `.data` table, so the erase uses 0 bytes of RAM
 exists.
 
 **Do not implement the datasheet *hardware* Chip Erase mode.** It needs **12V on OE, pin 22** of
-`DIP28_28C256`, and that voltage damages a 5V part. `scripts/check_erase_no_vpp.py` scans the body
-of `eeprom28c_erase_execute` and fails on any control-register high-voltage write. That script is a
-legacy source scan, not a guard. Do not add that 12V path from the datasheet. For the same reason, algorithm 5
+`DIP28_28C256`, and that voltage damages a 5V part. Do not add that 12V path from the datasheet. For the same reason, algorithm 5
 never gets `FLAG_CAN_ERASE`. No firmware function implements the 12V path.
 
 `write` does **no blank check** on this protocol. Each page write erases the page internally. The
@@ -277,20 +301,45 @@ about the state before or after. The `Programming Protocols` wiki page, section 
 
 ### Wire Protocol
 
-The host sends each command as COBS-framed JSON with a CRC8, at 250000 baud. `src/json_parser.c`
-parses the JSON into `firestarter_handle_t`. The integer `algorithm` field goes into
-`handle->protocol`, which is the dispatch key.
+The host sends each command as one binary command frame, framed as COBS with a CRC8, at 250000
+baud. `cmd_decode()` in `src/command_decoder.c` decodes the frame into `firestarter_handle_t`:
 
-Key fields:
+```
+[0xF5 magic][version u8][cmd u8][flags u16 BE][length u16 BE][payload]
+```
 
-- `algorithm` — the integer protocol ID, stored in `handle->protocol`.
-- `vpp_mv` — the VPP voltage in millivolts. The ADC check uses it.
-- `memory-size` — the chip size in bytes.
-- `pulse-delay` — the write pulse width in µs. `0` selects the handler default.
-- `chip-id` — the expected manufacturer and device ID. `0` skips the ID check.
+Each multi-byte field is big-endian. `cf_payload_kind()` gives the payload of each command: the
+58-byte memory payload, the 14-byte config payload, or no payload. A command that the table does not
+name carries no payload. The dispatch switch then refuses it with `MSG_ERR_UNKNOWN_CMD`, as before.
 
-`json_parser.c` ignores unknown JSON fields. It does not read the old `type` key, so a `type` field
-from an older host has no effect.
+**`include/command_frame.h` is a generated file. Do not edit it.** The source of truth is
+`tools/protocol/command_frame.toml` in the meta repository. Codegen runs only there. The same run
+writes `test/native/avr/test_command_decode/command_vectors.h`. The host test suite encodes the same
+frames.
+
+The memory payload carries every command parameter, so no value can stay from an earlier command.
+A command without a memory payload clears `protocol` and `pulse_delay`, so no field of an earlier
+chip stays in the handle.
+`0` still means "not sent": `pulse_delay` `0` selects the handler default, `region_end` `0` means
+the whole device, `chip_id` `0` skips the ID check. `0xFF` in a bus-line field means "no line".
+
+The decoder checks the full frame before it writes any handle field. The refusals are:
+
+- `MSG_ERR_BAD_FRAME` (`0xA0`): the frame is shorter than the header, or the magic is wrong. A
+  JSON-era host gets this answer, because its first byte is `{`.
+- `MSG_ERR_FRAME_VERSION` (`0xC3`), with `CF_VERSION` as its parameter: the magic is right and the
+  frame version is not `CF_VERSION`. The host compares the parameter with its own frame version to
+  find the older side. Every later frame version must answer a mismatch the same way.
+- `MSG_ERR_BAD_COMMAND` (`0xC2`), with a `CF_REFUSE_*` reason code: an undefined flag bit, a
+  length that does not agree with the command, an address line outside bus lines 0–23, a duplicate
+  address line, a gap in the address lines, a control or static-high line outside the bus, a read
+  timing above 1000 µs, a `vpp_mv` above 25000, a start address past the end, an unknown config
+  value (this includes the retired calibration `vcc` bit, `0x08`), or a `rev` that is not 0–5 or
+  255. A memory command (`is_memory_cmd()`) also needs a non-zero `mem_size`, `protocol`, `pins` and `vpp_mv`.
+
+Before the binary protocol, the JSON parser clamped the read timings to 1000 µs. The decoder
+refuses them. It also refuses the bus-line values that the JSON parser used as unchecked shift
+counts (issue #115).
 
 ### Operation-Setup Ack (`MSG_OK_READY`)
 
@@ -298,69 +347,60 @@ from an older host has no effect.
 is one byte blob. Its length tells the host which fields it contains:
 
 ```
-[buffer_size u16 BE][hw_revision u8][ver_len u8][ver bytes][write_budget_s u16 BE]
+[buffer_size u16 BE][hw_revision u8][ver_len u8][ver bytes]
 ```
 
 `src/hardware_operations.cpp` and `src/dev_tools.cpp` send a short form that holds `buffer_size`
 only.
 
-- **`buffer_size`** — `DATA_BUFFER_SIZE`, 2 bytes. It is 512 by default and 1024 on `leonardo`. The
+- **`buffer_size`** — `DATA_BUFFER_SIZE`, 2 bytes. It is 1024 on `uno` and `uno328pb`, 1536 on `leonardo`, and 512 by default. The
   host sizes its data chunks from this value.
 - **`hw_revision` and `ver`** — the hardware-revision byte, then the firmware-version string. The
   string length changes with the board name. **Read `ver` at the offset that `ver_len` gives, never
   at a fixed index.** The host cannot connect to a firmware build that does not send this field.
   `_probe_port` in `firestarter_app` raises `FirmwareOutdatedError`.
-- **`write_budget_s`** — the worst-case write time per block, in **seconds**, as a `uint16_t`.
-  `eprom_block_budget_s()` calculates it and adds the margin, so the host adds no margin.
-  `include/eprom_budget.h` gives the margin rule. Write the field directly after the `ver` bytes, at
-  an offset calculated from `ver_len`. Never use a literal offset.
 
-  The firmware sends `write_budget_s` for **each** command, so the ack shape is the same for all
-  commands. The value is `0` for a non-EPROM protocol, and `0` when `configure_memory` did not run.
-  The host reads `0` as "not sent", because its plausibility range is `[1, 14400]`. It never reads
-  `0` as "no time needed".
+The ack has no write-time budget. The host calculates the worst-case time per block itself
+(`firestarter/write_budget.py` in `firestarter_app`), from the protocol, the pulse width and
+`buffer_size`. `max_pulses`, `energy_cap_us` and the fallback pulse widths come from
+`include/eprom_rows.h`, which the meta repository generates from `tools/protocol/eprom_rows.toml`
+together with the host's `eprom_rows.py`. **`include/eprom_rows.h` is a generated file. Do not edit
+it.** Change the values in `eprom_rows.toml` and run the meta sync.
 
 The catalog entry for `MSG_OK_READY` is a variable-length byte blob (`param_bytes = -1`). A new
 field at the end of the ack therefore needs no catalog edit and no codegen run.
 
 **`--pulse-us` and the wire.** The host option `firestarter write --pulse-us N` accepts `1..65535`.
 That range copies minipro, where `-o pulse=N` is a `uint16`. **It is not a wire limit.**
-`extract_long` in `json_parser.c` reads `pulse-delay` into a `uint32_t` with no clamp. The firmware
-limit is the pre-flight refusal `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`) in `configure_eprom`. It uses
-`energy_cap_us` and runs before any high voltage is on. Only the `0x0B` row can trigger it, so the
-host copies no table value to prevent it.
+The frame carries `pulse-delay` as a `uint32_t` with no clamp. The firmware limit is the
+pre-flight refusal `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`) in `configure_eprom`. It runs before any high
+voltage is on. It refuses a pulse above `EPROM_PULSE_MAX_US` (65535µs) on every row, and a pulse
+above `energy_cap_us` on the `0x0B` row. The host range never reaches the first limit, so the host
+copies no table value to prevent it.
+
+### Bandgap Calibration
+
+The host calculates the calibration. `hw_get_config` sends `MSG_OK_CFG` with the stored bandgap
+and the raw bandgap ADC count. The firmware takes that count in programmer mode, because every
+voltage measurement is taken in that mode. `firestarter cal --vcc` calculates
+`bandgap_mv = meter_mv * count / 1024`, refuses a result outside 1000–1200 mV, and writes the result
+with the config `bg` value. The firmware refuses a stored bandgap outside the same window
+(`rurp_config_commit`). On py32f071 the count is 0, and the decoder refuses `bg`.
 
 ### Key Files
 
-- `src/json_parser.c` — parses a JSON command into `firestarter_handle_t`. It ignores unknown
-  fields.
-- `src/proms/memory.cpp` — the top-level dispatch, `configure_memory()`.
-- `include/firestarter.h` — the `firestarter_handle_t` struct, the flag bits and the command codes.
-- `include/rurp_pinout.h` — the control-register bits and the ADC band thresholds.
+- `include/command_frame.h` — **a generated file. Do not edit it.** The frame layout and limits.
 - `include/messages.h` — **a generated file. Do not edit it.** It holds message IDs only. The source
   of truth is `tools/catalog/messages.toml` in the meta repository. Codegen runs only there. To change
   a message, edit `messages.toml`, run the codegen in the meta repository, and sync the result here.
 
 ### Constants
 
-Control-register bits in `rurp_pinout.h`:
+`CTRL_VPP_VPE_DROP_ENABLE` in `rurp_pinout.h` is `0x01` in a build without `HARDWARE_REVISION`
+and `0x100` in a build with it.
 
-- `CTRL_VPP_REGULATOR_ENABLE (0x80)` — enables the VPP boost regulator.
-- `CTRL_VPP_VPE_DROP_ENABLE` — drops VPE through a resistor to the VPP level. It is `0x01` in a
-  build without `HARDWARE_REVISION` and `0x100` in a build with it.
-- `CTRL_VPP_P1_ENABLE (0x08)` — routes VPP to socket pin 1.
-- `CTRL_VPP_A9_ENABLE (0x02)` — routes VPP to A9 for the EPROM chip-ID read.
-- `CTRL_VPE_ENABLE (0x04)` — applies VPE directly to the PGM pin.
-
-Control flags in `firestarter.h`:
-
-- `FLAG_FORCE (0x01)` — makes an ID mismatch a warning, not an error.
-- `FLAG_CAN_ERASE (0x02)` — the chip supports erase before write.
-- `FLAG_SKIP_ERASE (0x04)` — skips the automatic erase in write init.
-- `0x08` — **reserved. Never reuse it.** It was the skip-blank-check flag. Shipped hosts still send
-  it. `constants.py` in `firestarter_app` records the same reservation.
-- `FLAG_VPE_AS_VPP (0x10)` — selects the direct VPE path.
-- `firestarter.h` defines more flags, from `0x20` to `0x100`.
+Control flag `0x08` in `firestarter.h` is **reserved. Never reuse it.** It was the skip-blank-check
+flag. Shipped hosts still send it. `constants.py` in `firestarter_app` records the same reservation.
 
 `firestarter_app/firestarter/constants.py` duplicates these values. Change both sides together.
 
@@ -384,19 +424,12 @@ the defines, update that wiki page in the same change. Nothing checks this autom
 config storage, the three-tier flash path, the PCB checklist (rows R1–R7), the flash budget and the
 USB identity. `platform/py32f071/README.md` gives the status and points to it.
 
-Four tests read the record. Each has violating inputs:
+Treat `DESIGN.md` as design documentation, not a test oracle. Changes to flash geometry, the
+configuration region or hardware assumptions require review against the actual linker and
+firmware, plus an appropriate executable test. Neither comment presence nor matching prose
+is evidence of correct hardware behavior.
 
-- `tests/test_flash_path_record_sync.py` — the flash tiers, the PCB rows, the USB ship gate and the
-  socket-empty sentence (also required in the README).
-- `tests/test_flash_geometry_record_matches_linker.py` — the page, sector and flash values in the
-  record agree with `platform/py32f071/linker/PY32F071xB_FLASH.ld`.
-- `tests/test_config_storage_design_record.py` — the geometry citations, the commit steps, the
-  validation order and `CONFIG_MAGIC`.
-- `tests/test_py32_flash_map.py` — the linker cites the record, and the recorded host range agrees
-  with the linker regions.
-
-**When you change a fact in `DESIGN.md`, change the linker script or source in the same commit.**
-Some tests plant a mutation of the real record under `tmp_path`, so they need a clean tree.
+**When you change a fact in `DESIGN.md`, update the linker script or source in the same commit.**
 
 ## Native (Host) Test Environment
 
@@ -408,17 +441,13 @@ They need no AVR board.
 `[native_base]` in `platformio.ini` holds the shared settings. `[env:native]` and
 `[env:native_nodevtools]` both use `extends = native_base`. `[env:native]` adds `-D DEV_TOOLS=1`.
 
-`build_src_filter` compiles `src/proms/`, `src/boards/rurp_serial_utils.cpp`, `src/json_parser.c`
-and `src/operation_utils.cpp`. It excludes the other AVR-only units, for example
-`src/firestarter.cpp`, `src/dev_tools.cpp` and `src/eprom_operations.cpp`.
-
 The handlers still call `rurp_*` hardware functions and use `LOG_*_MSG` PROGMEM strings. Each suite
 has a `host_stubs.cpp` with no-op versions of these symbols. Shared stub code and shared test data
-are in `test/native/avr/_shared/`. Some suites also have an `avr/pgmspace.h` shim. That shim
-defines `PROGMEM`, `PSTR`, `PGM_P` and `pgm_read_*` for host memory.
+are in `test/native/avr/_shared/`.
 
-The `test_dispatch` suite checks `handle->firestarter_operation_main` and `handle->response_code`
-only. It never checks register side effects, so no-op stubs are sufficient for it.
+The `test_dispatch` suite compares the three operation pointers that `configure_memory` sets with
+the pointers that the expected `configure_<family>()` sets (`_shared/dispatch_expect.h`), and checks
+`handle->response_code`. It never checks register side effects, so no-op stubs are sufficient for it.
 
 ### Add a native test suite
 
@@ -428,5 +457,6 @@ only. It never checks register side effects, so no-op stubs are sufficient for i
 3. Add `-I test/native/avr/<dirname>` to `shared_build_flags` in `[native_base]`.
 4. Add stubs to the suite's `host_stubs.cpp` only if the suite calls more `rurp_*` functions.
 
-Both lists are in `[native_base]`, so one entry in each list adds the suite to both native
-environments. The suite then also runs in `native_nodevtools`, which runs on every CI push.
+Both lists are in `[native_base]`, so one entry in each list adds the suite to `[env:native]`.
+`[env:native_nodevtools]` has its own `test_filter` with only the suites whose behaviour depends on
+`DEV_TOOLS`. Add a suite there too only if it does.

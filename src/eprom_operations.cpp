@@ -30,6 +30,7 @@ bool eprom_erase(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_ERASE_PROM);
     if (!is_flag_set(FLAG_CAN_ERASE)) {
         LOG_ERROR_ID(MSG_ERR_NOT_SUPPORTED);
+        handle->response_code = RESPONSE_CODE_ERROR;
         return true;
     }
     return op_execute_simple_operation(handle);
@@ -44,14 +45,8 @@ bool eprom_check_chip_id(firestarter_handle_t* handle) {
     return op_execute_simple_operation(handle);
 }
 
-// Standalone entry points for CMD_SDP_UNLOCK / CMD_SDP_LOCK
-// (0x0D-only ops; configure_eeprom28c sets firestarter_operation_main to
-// eeprom28c_sdp_unlock_execute / eeprom28c_sdp_lock_execute). Deliberately no
-// LOG_DEBUG_ID_SUB line here -- eprom_read has none either, and adding one
-// would require a new DBG_* catalog id this phase does not need.
-// Deliberately no precondition check -- eprom_erase's FLAG_CAN_ERASE test has
-// no SDP analogue; the op-layer NULL-main guard is what
-// refuses these commands on a protocol whose handler set no main.
+// Standalone SDP commands reuse the simple operation handler. The operation
+// layer refuses unsupported protocols when no main callback is installed.
 bool eprom_sdp_unlock(firestarter_handle_t* handle) {
     return op_execute_simple_operation(handle);
 }
@@ -60,34 +55,23 @@ bool eprom_sdp_lock(firestarter_handle_t* handle) {
     return op_execute_simple_operation(handle);
 }
 
-// CMD_LOCK_STATUS entry point, in eprom_check_chip_id's
-// single-step shape above -- but deliberately WITHOUT a LOG_DEBUG_ID_SUB
-// line. CMD_LOCK_STATUS (16) is numerically greater
-// than CMD_READ_VPP (11), so it falls outside the second, independent
-// diagnostic-ordinal range in firestarter.cpp, and this command emits none
-// of that range's three DBG_* lines.
-// Adding a DBG_* call here would need a new [debug] catalog entry that is
-// deliberately not minted -- a chosen consequence, not an oversight.
 bool eprom_lock_status(firestarter_handle_t* handle) {
     return op_execute_simple_operation(handle);
 }
 
 // Returns true on success/continue, false on error.
 static inline bool _process_incoming_data(firestarter_handle_t* handle) {
-    // op_end is the operation's end, not the device's end: it equals
-    // handle->mem_size whenever no region was supplied (D-04's
-    // absent-semantics). eprom_write is this function's only caller now --
-    // the verify wrapper that used to share it was retired in 3.1.0 (Phase
-    // 204), along with its command surface. Under D-05 host and firmware
-    // agree on the region by construction, so the out-of-range refusal
-    // below becomes a fail-closed guard against a host/file mismatch
-    // rather than a live path.
+    // The operation's exclusive end bounds each received chunk; it defaults
+    // to the device size when no region is supplied.
     const uint32_t op_end = mem_util_operation_end(handle);
 
-    // The operation is "pull" based. The firmware requests a data chunk when it's ready.
-    // This provides software flow control and allows for larger data chunks, improving speed.
-    // We use a state flag to track if we are waiting for data.
-    if (handle->address >= op_end) {
+    // Transfer is pull-based: request the next chunk only when ready.
+    if (handle->address > op_end) {
+        LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return false;
+    }
+    if (handle->address == op_end) {
         set_operation_to_done(handle);
         return true;
     }
@@ -97,41 +81,47 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
     op_message_type msg_type = op_get_message(handle);
 
     if (msg_type == OP_MSG_INCOMPLETE) {
-        // No message from host. If we are not already waiting for data, request it.
         if (!is_operation_waiting_for_data(handle)) {
-            // On leonardo the firmware emits MSG_DATA_PROGRESS from inside the
-            // per-byte program loop (src/proms/eprom.cpp), so the host's
-            // progress bar can reflect bytes actually programmed rather than
-            // only bytes handed to the firmware at each chunk request below.
-            // On SERIAL_ON_IO targets (uno/uno328pb) that emission is compiled
-            // out, so the host's own chunk-handoff bar -- driven by this
-            // MSG_OK_REQ_DATA request/response cadence -- remains the only
-            // progress source there. The non-claim, restated: intra-block
-            // write progress is emitted on the EPROM path only, and delivered
-            // on leonardo only.
+            // Leonardo also emits per-byte EPROM progress; on Uno-class
+            // boards these chunk exchanges are the only progress source.
             LOG_OK_ID(MSG_OK_REQ_DATA);
             set_operation_waiting_for_data(handle);
         }
-        return true;  // Continue waiting.
+        return true;
     }
 
-    // We have received a message. Clear the flag so we can request the next chunk.
     clear_operation_waiting_for_data(handle);
 
     switch (msg_type) {
         case OP_MSG_DONE:
-            // The host has signaled it has no more data to send.
+            // Without a region-end the host may end the write at any cursor.
+            // With one, the write is complete only at op_end, and the check
+            // above finishes it there before any message is read. A DONE
+            // before op_end means the host sent less data than it declared.
+            if (handle->region_end != 0) {
+                LOG_ERROR_ID(MSG_ERR_CMD);
+                handle->response_code = RESPONSE_CODE_ERROR;
+                return false;
+            }
             set_operation_to_done(handle);
             return true;
         case OP_MSG_DATA:
-            // The host sent a data packet.
-            if (handle->address + handle->data_size > op_end) {
+            if (handle->data_size > DATA_BUFFER_SIZE ||
+                !mem_util_range_fits(handle->address, handle->data_size, op_end)) {
                 LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+                handle->response_code = RESPONSE_CODE_ERROR;
                 return false;
             }
             break;
         default:
-            // An error occurred in op_get_message or an unexpected message was received.
+            // op_get_message already logged a data error (OP_MSG_ERROR). Any
+            // other message here, for example a stray ACK, is a host
+            // protocol error: refuse it with an error frame, so the host
+            // does not wait for a timeout.
+            if (msg_type != OP_MSG_ERROR) {
+                LOG_ERROR_ID(MSG_ERR_CMD);
+            }
+            handle->response_code = RESPONSE_CODE_ERROR;
             return false;
     }
 
@@ -145,8 +135,25 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
 
 // Returns true on success/continue, false on error.
 static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
+    // A read ends at region-end when the command has one, else at mem_size.
+    const uint32_t op_end = mem_util_operation_end(handle);
+    if (handle->address > op_end) {
+        LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return false;
+    }
+    if (handle->address == op_end) {
+        set_operation_to_done(handle);
+        return true;
+    }
     if (!op_execute_function(handle->firestarter_operation_main, handle)) {
         return false;  // Error, so finished.
+    }
+
+    // The read handler fills up to a whole buffer within mem_size. Cut the
+    // chunk at the end of the operation's region.
+    if (handle->data_size > op_end - handle->address) {
+        handle->data_size = op_end - handle->address;
     }
 
     // Wrap the raw chip-byte chunk in a MSG_DATA_CHUNK ID frame.
@@ -162,7 +169,7 @@ static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
     }
 
     handle->address += handle->data_size;
-    if (handle->address >= handle->mem_size) {
+    if (handle->address >= op_end) {
         set_operation_to_done(handle);
     }
     return true;

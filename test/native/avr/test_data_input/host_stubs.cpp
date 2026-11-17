@@ -59,15 +59,12 @@ extern "C" uint16_t rurp_read_voltage_mv() {
     return 0;
 }
 
-/* rurp_get_config: referenced by the header-inlined
- * rurp_get_hardware_revision() (include/rurp_hw_rev_utils.h:61) which the
+/* rurp_get_config: referenced by the header-defined
+ * rurp_get_hardware_revision() (include/rurp_hw_rev_utils.h), which the
  * included leonardo_rurp_shield.cpp transitively pulls into the test TU.
- * Returns a zero-initialized config so the hardware-revision fallback path
- * (config->hardware_revision == 0xFF) is taken — that path calls
- * rurp_get_physical_hardware_revision(), which is ALSO header-defined into
- * the test TU by rurp_hw_rev_utils.h:37. Both are safe defaults — neither
- * is exercised by the data_input tests. */
-static rurp_configuration_t s_host_config = {};
+ * rurp_board_setup() runs before setup() loads the config, so the stub holds
+ * the production state before the load: hardware_revision 0xFF, no override. */
+static rurp_configuration_t s_host_config = {"", 0, 0, 0xFF, 0};
 extern "C" rurp_configuration_t* rurp_get_config() {
     return &s_host_config;
 }

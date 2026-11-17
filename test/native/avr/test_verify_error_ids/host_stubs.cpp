@@ -43,6 +43,17 @@ extern "C" void verify_ids_set_readback(uint8_t value) {
     s_verify_ids_readback = value;
 }
 
+static unsigned s_verify_ids_reads = 0;
+
+extern "C" unsigned verify_ids_read_count() {
+    return s_verify_ids_reads;
+}
+
+extern "C" void verify_ids_reset_read_count() {
+    s_verify_ids_reads = 0;
+}
+
 extern "C" uint8_t rurp_read_data_buffer() {
+    s_verify_ids_reads++;
     return s_verify_ids_readback;
 }

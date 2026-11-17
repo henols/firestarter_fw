@@ -159,11 +159,7 @@ extern "C" bool rurp_dualslot_load(const rurp_flash_primitives_t* primitives, vo
         return false;
     }
 
-    // Bounded by the smaller of the record's `length` and the caller's
-    // `len`. validate_record's step 2 already guarantees
-    // best.record.length <= len, which makes this min() redundant on the
-    // happy path -- kept anyway as defence in depth, deliberately, not
-    // because it is needed today.
+    // Clamp copy length independently of the earlier record validation.
     const size_t copy_len = (best.record.length < len) ? best.record.length : len;
     memcpy(blob, &best.record.configuration, copy_len);
     return true;
@@ -171,13 +167,11 @@ extern "C" bool rurp_dualslot_load(const rurp_flash_primitives_t* primitives, vo
 
 extern "C" bool rurp_dualslot_save(const rurp_flash_primitives_t* primitives, const void* blob, size_t len)
 {
-    // Step 1: determine the active slot by the same scan rurp_dualslot_load
-    // performs, so the two agree by construction and successive saves
-    // alternate. If no slot is valid, the inactive slot is slot 0.
+    // Reuse the load scan when choosing the inactive slot, ensuring saves
+    // alternate and a first save uses slot 0.
     const ScanResult active = scan_slots(primitives, sizeof(rurp_configuration_t));
     const uint8_t inactive_slot = active.found ? static_cast<uint8_t>(1u - active.slot) : static_cast<uint8_t>(0u);
 
-    // Step 2: build the record in RAM.
     StoredConfiguration record;
     memset(&record, 0, sizeof(record));
     record.magic = CONFIG_MAGIC;
@@ -218,14 +212,8 @@ extern "C" bool rurp_dualslot_save(const rurp_flash_primitives_t* primitives, co
     memset(page, 0xFF, sizeof(page));
     memcpy(page, &record, sizeof(record));
 
-    // Step 5: program the whole page. ITS COMPLETION IS THE COMMIT -- there
-    // is no separate header-write, commit-word or
-    // final-word step anywhere in this core; no primitive exists for one.
-    // The active slot was never touched, so an abort anywhere above leaves
-    // it loadable, and an aborted program leaves the inactive slot
-    // CRC-invalid, so a subsequent load() rejects it and returns the
-    // previous record -- exactly DESIGN.md's "a failed or interrupted save
-    // leaves the previous record usable," reached without a
-    // trailing-word commit this part cannot express.
+    // A complete page program commits the new record; there is no single-word
+    // commit primitive. The previous slot remains intact, and a torn write
+    // to the inactive slot is rejected by its CRC during the next load.
     return primitives->program_page(primitives->ctx, inactive_slot, page);
 }

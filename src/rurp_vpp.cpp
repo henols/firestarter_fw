@@ -7,15 +7,8 @@
 
 #include "rurp_vpp.h"
 
-/*
- * The VPP control capability
- * seam's implementation. Dependency-free by construction: the only include
- * is rurp_vpp.h itself. Zero production callers today -- these
- * three bodies exist so the seam compiles and its guards can be proven to
- * fire; nothing under src/ or platform/ calls them yet.
- *
- * Fire-proof: tests/test_vpp_seam_manual_on_every_board.py.
- */
+/* HAL-independent manual VPP capability implementation. These functions
+ * have no production callers until a platform enables the VPP control seam. */
 
 #if RURP_HAS_VPP_DAC
 #error "RURP_HAS_VPP_DAC=1 selects a closed-loop VPP DAC implementation that this branch does not provide"

@@ -8,81 +8,21 @@
 #ifndef __CONFIG_STORAGE_DUALSLOT_H__
 #define __CONFIG_STORAGE_DUALSLOT_H__
 
-/*
- * The HAL-free dual-slot config storage core.
- * This is the algorithm that scans, validates,
- * selects and alternates over two flash slots; it never touches a register
- * and never includes a HAL header.
+/* HAL-independent dual-slot configuration storage. The same algorithm runs
+ * against real PY32 flash primitives and a RAM-backed native test backend.
+ * Platform/HAL guards belong to the hardware backend, not this core.
  *
- * WHY INJECTED PRIMITIVES:
- *   This algorithm is compiled TWICE from this ONE source file: once linked
- *   against the real PY32 HAL (platform/py32f071/src/config_storage_flash.cpp
- *   supplies the primitives), and once linked against a RAM fake
- *   in tests/test_config_storage_dualslot.py. The tested code
- *   is therefore the shipped code. Two alternatives were considered and
- *   rejected: an independent fake reimplementation living only in the test
- *   (rejected -- it proves a copy behaves, not the shipped code); and
- *   compiling the real backend against a
- *   hand-written stub HAL header for the test to link against (rejected --
- *   the stub becomes an unversioned mirror of the pinned FetchContent SDK
- *   that the test venue cannot see, so it can silently drift from the real
- *   HAL's actual contract).
+ * The on-flash record embeds rurp_configuration_t without modification.
+ * Its record version is separate from CONFIG_VERSION inside the configuration.
+ * The PY32 HAL programs entire 256-byte pages (64 x 32-bit words); it cannot
+ * append an individual commit marker. Write a complete CRC-protected record
+ * to the erased inactive slot in a single page program. Never erase the
+ * active slot during a save, so interrupted writes leave it recoverable.
  *
- * WHY THIS FILE IS HAL-FREE AND UNGUARDED:
- *   No HAL include and no platform `#error` guard appears anywhere below,
- *   because the host test harness compiles this file directly with a bare
- *   host g++. The `#error` platform guard belongs in the HAL glue TU
- *   (config_storage_flash.cpp), never here.
- *
- * RECORD FORMAT:
- *   The six-field layout below is recorded in platform/py32f071/DESIGN.md
- *   §"Configuration storage", and `rurp_configuration_t` is
- *   embedded byte-for-byte and unmodified -- which is what makes
- *   "schema unchanged" structurally true rather than merely
- *   asserted in prose. The wrapper's `version` field is NOT `CONFIG_VERSION`
- *   (the `char[6]` literal "VER06" living inside `rurp_configuration_t`
- *   itself, include/rurp_shield.h:46) and must never be "reconciled" with it.
- *
- * COMMIT SEMANTICS:
- *   The obvious shape -- "erase the inactive slot, program the record
- *   body, program the header/CRC word LAST" -- names a step that cannot be
- *   executed on this part. `py32f071_hal_flash.h`'s `IS_FLASH_TYPEPROGRAM`
- *   accepts exactly one value (`FLASH_TYPEPROGRAM_PAGE`); `FLASH_Program_Page`
- *   writes 64 32-bit words unconditionally; RM V0.2 §4.2.3.2 hard-faults on
- *   any non-32-bit write. There is no primitive that writes a single trailing
- *   word. The amended shape, recorded in DESIGN.md, is what this core
- *   implements instead: erase the inactive slot, build the WHOLE 256-byte
- *   record (header and CRC included) in a 4-byte-aligned staging buffer, then
- *   issue ONE page program whose completion IS the commit. The active slot
- *   is never touched, so any interruption leaves the previous record
- *   loadable, and a page interrupted mid-burst fails CRC on the next load.
- *   There is no separate header-write, commit-word or final-word step
- *   anywhere in this core.
- *
- * VALIDATION ORDER (V5, load-bearing):
- *   Every byte read from either slot is UNTRUSTED INPUT: it may be blank
- *   (0xFF), garbage from a partial write, or a record left over from an
- *   unrelated firmware image. The mandatory order, each check gating the
- *   next, is `magic`, then `length` -- bounds-checked against the caller's
- *   buffer -- then `crc32`. A record whose `length` exceeds the caller's
- *   buffer is rejected BEFORE any copy is made; the CRC does not substitute
- *   for this bound check, because anyone able to write flash can recompute a
- *   matching CRC over whatever content they choose.
- *
- * SIZES ARE SYMBOLIC:
- *   Host `long` is 8 bytes; the target's is 4. `sizeof(StoredConfiguration)`
- *   therefore measures 48 / 31 / 36 bytes on host / AVR / (computed) ARM, and
- *   `g++ -m32` is unavailable in this environment to reproduce a 32-bit host
- *   figure. The only absolute claim anywhere in this core is the relational
- *   `sizeof(StoredConfiguration) <= 256`; no literal size or field offset may
- *   be written anywhere in this file or its implementation.
- *
- * FIRE-PROOF:
- *   tests/test_config_storage_dualslot.py exercises this core
- *   directly (the six named behaviours plus the CRC known-answer vector).
- *   tests/test_py32_flash_map.py gates the flash map this core addresses
- *   (slot addresses, page size, erase-unit separation).
- */
+ * Validate untrusted flash in order: magic, length within the caller's
+ * buffer, then CRC32. Never use an unvalidated length as a copy bound.
+ * The record uses compiler-derived sizeof/offsetof: host and MCU struct
+ * layouts differ. See platform/py32f071/DESIGN.md for the flash layout. */
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -94,17 +34,8 @@
 extern "C" {
 #endif
 
-/**
- * CONFIG_MAGIC -- ASCII 'R' 'U' 'R' 'P' ("RURP"), tying the record to the
- * shield name already used throughout the firmware. This is a
- * LOCAL CHOICE: the original design specifies the `magic` field but
- * supplies no value for it.
- *
- * It satisfies two hard constraints: it is neither `0xFFFFFFFF` -- what
- * erased NOR flash reads back as, which would make a blank slot look like a
- * valid record and collapse the blank test into a CRC-collision
- * inference -- nor `0x00000000`.
- */
+/** CONFIG_MAGIC is ASCII 'RURP', distinct from erased flash (0xFFFFFFFF)
+ * and zero, so an unwritten slot cannot masquerade as a valid record. */
 #define CONFIG_MAGIC ((uint32_t)0x52555250)
 
 /**
@@ -113,11 +44,7 @@ extern "C" {
  *   magic         -- separates "never written" and "garbage" from a real
  *                     record; validated first.
  *   version       -- written as the literal 1. No reader branches on this
- *                     field yet, and a version-dispatch branch must NOT be
- *                     added: it could never execute and could never be
- *                     tested. It exists so a future schema change has
- *                     somewhere to record its own generation -- a future
- *                     phase's problem, not this one's.
+ *                     field yet; it is reserved for future schema changes.
  *   length        -- the length, in bytes, of `configuration` as written.
  *                     Gives forward compatibility and makes a cross-width
  *                     read detectable rather than silently misparsed. This

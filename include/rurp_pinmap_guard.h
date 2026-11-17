@@ -16,11 +16,10 @@
  * the neutral name.
  *
  * The #ifndef default of 0 is load-bearing, not decorative: without it a build
- * that already defines the flag hits a macro-redefinition warning, which
- * check_build_warnings.py counts against a watermark with no headroom. On AVR,
+ * that already defines the flag hits a macro-redefinition warning. On AVR,
  * where the flag is never defined, the guard compiles to nothing.
  *
- * The predicate DELEGATES to is_memory_cmd() rather than re-listing its eight
+ * The predicate DELEGATES to is_memory_cmd() rather than re-listing its seven
  * commands, so the refused set cannot drift from the admitted set.
  *
  * Identity/config commands (CMD_FW_VERSION, CMD_CONFIG, CMD_HW_VERSION) stay
@@ -28,15 +27,10 @@
  * provisional. CMD_READ_VPP/CMD_READ_VPE stay allowed too: they are read-only
  * ADC monitor taps that do not route voltage to the socket.
  *
- * The `#if` MUST live here, never inside is_memory_cmd()'s body: a checker
- * forbids any preprocessor conditional in that predicate, so its two-env truth
- * table stays meaningful. static inline in a header for the same reason
+ * The `#if` MUST live here, never inside is_memory_cmd()'s body, so that
+ * predicate's truth table is the same in every env. static inline in a header for the same reason
  * is_memory_cmd() is -- [env:native]'s build_src_filter would not link a
  * definition placed anywhere else.
- *
- * The `#if` is also what makes this header a real CONSUMER of the flag for
- * check_orphan_provisional.py: a flag defined but never tested enforces
- * nothing.
  */
 #ifndef __RURP_PINMAP_GUARD_H__
 #define __RURP_PINMAP_GUARD_H__

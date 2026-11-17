@@ -20,8 +20,8 @@ extern "C" {
 #include "rurp_pinout.h"
 
 #ifdef HARDWARE_REVISION
-// Hardware-revision enum values (out of the alias-migration scope —
-// these are revision identifiers, not RURP-signal aliases).
+// Hardware-revision enum values. These are revision identifiers, not
+// RURP-signal aliases.
 #define REVISION_0 0
 #define REVISION_1 1
 #define REVISION_2_0 2
@@ -47,16 +47,9 @@ extern "C" {
 #define VALUE_R1 270000
 #define VALUE_R2 44000
 
-/*
- * Migration bands for rurp_validate_config. A stored value inside its band is
- * KEPT across a CONFIG_VERSION change; one outside it is replaced by the
- * default above.
- *
- * +/-25 % of each default, the same tolerance the host already applies to r1
- * (_R1_LO/_R1_HI in cli_handlers.py). This is what reaches a stale value the
- * version gate alone never could: a board carrying the pre-Phase-44 r1 of
- * 1000 passes every arithmetic guard, so only a range check corrects it.
- */
+/* rurp_validate_config preserves stored values within the permitted bands
+ * across CONFIG_VERSION changes and restores out-of-range defaults.
+ * The resistance bands allow +/-25%, matching the host tolerance. */
 #define VALUE_R1_MIN 202500L
 #define VALUE_R1_MAX 337500L
 #define VALUE_R2_MIN 33000L
@@ -145,6 +138,8 @@ extern "C" {
 
     void rurp_write_to_register(uint8_t reg, rurp_register_t data);
     rurp_register_t rurp_read_from_register(uint8_t reg);
+    // millis() at the last write that switched the VPP regulator off.
+    uint32_t rurp_get_regulator_off_ms();
 
     void rurp_write_data_buffer(uint8_t data);
     uint8_t rurp_read_data_buffer();

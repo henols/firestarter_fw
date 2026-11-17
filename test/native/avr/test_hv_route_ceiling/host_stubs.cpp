@@ -15,14 +15,26 @@ extern "C" {
 }
 
 #define HOST_STUBS_CUSTOM_VOLTAGE_MV
+#define HOST_STUBS_CUSTOM_HW_REVISION
 
 #include "../_shared/host_stubs_common.inc"
 
 static unsigned s_voltage_read_count = 0;
+static uint16_t s_voltage_mv = 0;
 
 extern "C" uint16_t rurp_read_voltage_mv() {
     s_voltage_read_count++;
-    return 0;
+    return s_voltage_mv;
+}
+
+extern "C" void hv_route_ceiling_set_voltage_mv(uint16_t mv) {
+    s_voltage_mv = mv;
+}
+
+/* Rev 1: Rev 0 cannot measure the rail, so eprom_check_vpp would skip the
+ * reading that the D-22 cases drive. */
+extern "C" uint8_t rurp_get_hardware_revision() {
+    return REVISION_1;
 }
 
 extern "C" unsigned hv_route_ceiling_voltage_read_count() {

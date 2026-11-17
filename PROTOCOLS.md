@@ -107,11 +107,14 @@ the correct socket pin. The
 [Shield Revisions](https://github.com/henols/firestarter/wiki/Shield-Revisions) wiki page gives the
 jumper settings.
 
-**VPP check.** Before a read, write, erase or chip-ID command, the firmware switches the route on, waits
+**VPP check.** Before a write, erase or chip-ID command, the firmware switches the route on, waits
 100 ms and reads the rail on A2. It does not connect the rail to the socket during this check. A
 value more than 500 mV above the requested VPP sends `MSG_ERR_VPP_HIGH` (`0xB8`). With `--force`
 it sends a warning. A value below 95 % of the requested VPP sends `MSG_WARN_VPP_LOW` (`0x81`). On
 Rev 0 hardware the firmware skips the check and sends a warning.
+
+A read does no VPP check and no chip-ID check. The host blank check is a read. A read never switches
+a high-voltage route on, so the state of the rail cannot make it fail.
 
 **Write.** The firmware writes one data block at a time:
 
@@ -125,13 +128,15 @@ Rev 0 hardware the firmware skips the check and sends a warning.
 The pulse width does not change between pulses. The route must be off for each read, because
 Program Verify needs OE/VPP low (Winbond W27C512 datasheet, operating-mode table). After
 `max_pulses` pulses the write fails with `MSG_ERR_MAX_PULSES` (`0xBD`). On `0x0B`, a pulse total
-that reaches `energy_cap_us` fails with `MSG_ERR_ENERGY_CAP` (`0xBE`). No row applies an
+that reaches `energy_cap_us` fails with `MSG_ERR_ENERGY_CAP` (`0xBE`). The firmware has no
 overprogram pulse. The limit of 25 pulses comes from the Winbond W27C512 "Smart Programming
 Algorithm 2" flowchart and ST M27C512 Rev. 3, Fig. 4. The 50 ms cap on `0x0B` is the
 per-location pulse `t_w(PR)` in the TI TMS 2516 datasheet (programming timing table).
 
 **Verify.** With `VERIFY_PER_PULSE_PLUS_FINAL` the firmware reads the full block one more time
-after the loop. A mismatch sends `MSG_ERR_VERIFY` (`0xAF`). `0x0B` does no final pass.
+after the loop. A mismatch sends `MSG_ERR_VERIFY` (`0xAF`). `0x0B` does no final pass. The host
+sets `FLAG_SKIP_FINAL_VERIFY` (`0x200`) for `write --verify`, which reads the region back itself,
+and the firmware then skips the final pass.
 
 **Erase.** The firmware erases only when the host sets `FLAG_CAN_ERASE`. A UV-EPROM has no
 electrical erase. For an electrically erasable part, the firmware puts VPE on A9 and on OE/VPP and
@@ -163,8 +168,7 @@ blank check before a write, because the chip erases each page when it writes it.
 
 > [!WARNING]
 > Do not add the datasheet hardware chip-erase mode. It puts 12 V on OE, pin 22 of a 28-pin part,
-> and that voltage can damage a 5 V EEPROM. `scripts/check_erase_no_vpp.py` fails when the erase
-> function writes a high-voltage control-register bit.
+> and that voltage can damage a 5 V EEPROM.
 
 **SDP commands.** `CMD_SDP_UNLOCK` sends the SDP disable. `CMD_SDP_LOCK` sends
 `5555<-AA, 2AAA<-55, 5555<-A0` and waits 10 ms.
@@ -201,8 +205,8 @@ There is no erase.
 ## Pulse-width override and program-VCC limit
 
 The host option `firestarter write --pulse-us N` accepts 1 to 65535 µs. That range copies the
-minipro `-o pulse=N` option, which is a `uint16`. It is not a wire limit. `json_parser.c` reads
-`pulse-delay` into a `uint32_t` with no clamp. `configure_eprom()` refuses a pulse wider than
+minipro `-o pulse=N` option, which is a `uint16`. It is not a wire limit. The command frame
+carries `pulse-delay` as a `uint32_t` with no clamp. `configure_eprom()` refuses a pulse wider than
 `energy_cap_us` with `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`), before any high voltage is on. Only `0x0B`
 has a cap, so only `0x0B` can refuse a pulse width.
 

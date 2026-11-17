@@ -6,15 +6,16 @@ description: >
   install + cmake configure + cmake build invocation. A composite action
   runs its steps in the calling job, on the same runner and in the same
   workspace as that job's own checkout -- which is exactly what keeps
-  REL-01's "same job, after the version bump" property intact: this action
+  the "same job, after the version is written" property intact: this action
   produces its image inside whichever job calls it, immediately after that
-  job's prior steps, with no second checkout to go stale. A `workflow_call`
-  reusable workflow would NOT have this property -- it runs as a separate
-  job with a separate checkout, and would break REL-01 outright. Do not
-  convert this file to `workflow_call`.
+  job's prior steps, with no second checkout to go stale. release.yml writes
+  the tag into include/version.h before it calls this action, and the image
+  must see that edit. A `workflow_call` reusable workflow runs as a separate
+  job with a separate checkout and would not. Do not convert this file to
+  `workflow_call`.
 
   D-05/T-128-11: `continue-on-error` must never appear anywhere in this
-  file. It belongs on the call site in `beta-build.yml` only. If it were
+  file. It belongs on the call site in `release.yml` only. If it were
   added here, the LOUD `py32f071.yml` gate would silently inherit the
   containment, and D-05's whole loud/soft split between the two workflows
   would collapse without warning.
@@ -31,11 +32,8 @@ outputs:
 runs:
   using: composite
   steps:
-    # D-06/Pitfall 5: `shell:` is REQUIRED on every composite `run:` step --
-    # unlike a workflow step, a composite step has no default shell, and
-    # omitting it is a hard error at action-load time that would break both
-    # calling workflows at once. No `.github/actions/` directory has existed
-    # in this repo before this file, so nobody here has hit this before.
+    # Composite action run steps require an explicit shell; unlike workflow
+    # steps, they have no default shell.
     - id: toolchain
       name: Install GNU Arm toolchain and build tools
       shell: bash
@@ -46,11 +44,8 @@ runs:
           ninja-build \
           gcc-arm-none-eabi \
           binutils-arm-none-eabi
-        # D-17: unpinned, verbatim from py32f071.yml:28-35. Toolchain version
-        # pinning is a real behaviour change, out of REL-01...REL-04 scope,
-        # and is recorded as a deliberate deferral, not an oversight.
-        # binutils-arm-none-eabi also supplies arm-none-eabi-objcopy, which
-        # is what the release job's REL-01 assertion (Plan 128-06) inspects.
+        # Retain the existing toolchain; binutils provides arm-none-eabi-objcopy
+        # for the release image.
 
     - id: versions
       name: Record tool versions
@@ -77,9 +72,7 @@ runs:
           -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
           2>&1 | tee configure.log
-        # Paths stay relative to the workspace: this composite runs with the
-        # calling job's working directory, which is the checkout root (D-06)
-        # -- no checkout step is added here; the calling job already did it.
+        # Composite steps inherit the caller's checked-out workspace.
 
     - id: build
       name: Build and resolve outputs
@@ -88,17 +81,8 @@ runs:
         set -o pipefail
         cmake --build build/py32f071 2>&1 | tee build.log
 
-        # REL-04: hex_path. nullglob makes an unmatched glob expand to zero
-        # words instead of the literal pattern string -- without it, bash
-        # would leave a single-element array containing the literal text
-        # "firestarter_*.hex" on a miss, and a naive count!=1 check below
-        # would never fire, silently propagating that literal string
-        # downstream as a confusing filename mismatch instead of a clear
-        # "no image" failure. With nullglob, a miss is count=0 and a
-        # collision (more than one stale hex) is count>1; both are caught
-        # by the same count guard. This also makes the LOUD py32f071.yml
-        # gate additionally enforce exactly-one-image-with-the-underscore-
-        # prefix, a bonus of centralising the build here (D-06).
+        # With nullglob, missing images produce zero matches instead of a literal
+        # glob. Reject zero or multiple images before publishing.
         shopt -s nullglob
         MATCHES=(build/py32f071/firestarter_*.hex)
         if [ "${#MATCHES[@]}" -ne 1 ]; then

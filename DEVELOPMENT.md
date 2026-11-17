@@ -10,9 +10,9 @@ Firestarter: the CLI installs the firmware. Refer to the
 
 | Board | PlatformIO env | MCU | Notes |
 |---|---|---|---|
-| `uno` | `uno` | ATmega328P | Arduino Uno R3 with the RURP shield |
-| `uno328pb` | `uno328pb` | ATmega328PB | Uno-shaped board with an ATmega328PB, pin-compatible with `uno` |
-| `leonardo` | `leonardo` | ATmega32U4 | Arduino Leonardo with the RURP shield, 1024-byte data buffer |
+| `uno` | `uno` | ATmega328P | Arduino Uno R3 with the RURP shield, 1024-byte data buffer |
+| `uno328pb` | `uno328pb` | ATmega328PB | Uno-shaped board with an ATmega328PB, pin-compatible with `uno`, 1024-byte data buffer |
+| `leonardo` | `leonardo` | ATmega32U4 | Arduino Leonardo with the RURP shield, 1536-byte data buffer |
 | `py32f071` | CMake | PY32F071 | Beta only. Refer to [platform/py32f071/README.md](platform/py32f071/README.md) |
 
 The firmware sends its board name when the CLI connects. The CLI uses that name to find the file
@@ -31,14 +31,15 @@ pio run -t upload -e uno       # flash a connected board
 pio run -t monitor -e uno      # serial monitor, 250000 baud
 ```
 
-Replace `uno` with `uno328pb` or `leonardo` for the other boards. The Python checks are in
-`tests/`:
+Replace `uno` with `uno328pb` or `leonardo` for the other boards. Additional Python
+regressions under `tests/` compile and execute production firmware code:
 
 ```bash
 python3 -m pytest tests/
 ```
 
-Some of these tests need a clean working tree. Commit your change before you run them.
+Tests assert observable results from compiled code, rather than the spelling of source
+comments, exact file hashes or Git history.
 
 ## Releases
 

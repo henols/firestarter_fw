@@ -155,13 +155,6 @@ extern "C" bool rurp_config_storage_save(const void *blob, size_t len)
     return rurp_dualslot_save(&primitives, blob, len);
 }
 
-/*
- * An already-satisfied prerequisite: RM §4.2.3 (p.35) requires the HSI to
- * be turned on for program and erase operations. platform/py32f071/src/main.cpp:25-27
- * already sets oscillator.HSIState = RCC_HSI_ON, HSIDiv = RCC_HSI_DIV1 and
- * HSICalibrationValue = RCC_HSICALIBRATION_24MHz, and makes HSI the PLL
- * source -- no change needed here. Recorded so a future clock refactor that
- * turns HSI off does not silently break config persistence: there would be
- * no compile or link error, only every save() and the write-back on a
- * virgin part failing on real silicon.
- */
+/* Flash erase/program operations require HSI enabled (PY32 RM §4.2.3).
+ * configure_system_clock() keeps HSI running as the PLL source; changing
+ * that clock configuration would also affect configuration persistence. */

@@ -9,15 +9,16 @@
 #define SERIAL_PORT Serial
 #endif
 
-// Board-agnostic ID-encoded frame emitter.
-// Defined in rurp_serial_utils.cpp; the Uno strong override of rurp_log_id
-// calls into this after applying the com_mode gate.
-void _firestarter_emit_frame(uint8_t id, const uint8_t* params, uint8_t param_count);
-
-// Wide variant for large payloads (e.g. MSG_DATA_CHUNK up to
-// 512 / 1024 bytes). param_count is uint16_t so 512-byte chunks don't overflow
-// the loop counter; the frame's u16 len field already supports this.
+// Board-agnostic ID-encoded frame emitter, defined in rurp_serial_utils.cpp.
+// param_count is uint16_t so a MSG_DATA_CHUNK payload (512 / 1024 bytes) fits;
+// the frame's u16 len field carries up to 65533 parameter bytes.
 void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t param_count);
+
+// Narrow form for rurp_log_id. The Uno strong override of rurp_log_id calls
+// it after applying the com_mode gate. A uint8_t count always fits the frame.
+static inline void _firestarter_emit_frame(uint8_t id, const uint8_t* params, uint8_t param_count) {
+    _firestarter_emit_frame_wide(id, params, param_count);
+}
 
 void rurp_serial_begin(unsigned long baud);
 

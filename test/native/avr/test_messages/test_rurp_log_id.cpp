@@ -40,6 +40,11 @@ extern "C" {
 #include "rurp_shield.h"
 #include "messages.h"
 }
+#include "deferred_log.h"
+// Table-free reference CRC8, independent of CRC8_TABLE in
+// rurp_serial_utils.cpp. If the production table drifts off-spec, the
+// reference disagrees with the frame's CRC byte and the test fails.
+#include "../_shared/frame_ref.h"
 
 using namespace fakeit;
 
@@ -64,21 +69,6 @@ void setUp(void) {
 }
 
 void tearDown(void) {
-}
-
-// --- Reference CRC8 (poly 0x07, seed 0x00, no refl, no XOR). Table-free
-// recomputation so the test is fully independent of CRC8_TABLE in
-// rurp_serial_utils.cpp. If the production table ever drifts off-spec, this
-// reference disagrees with the frame's CRC byte and the test fails. ---
-static uint8_t ref_crc8(const uint8_t* data, size_t n) {
-    uint8_t crc = 0;
-    for (size_t i = 0; i < n; i++) {
-        crc ^= data[i];
-        for (int k = 0; k < 8; k++) {
-            crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
-        }
-    }
-    return crc;
 }
 
 void test_zero_param_frame(void) {
@@ -232,15 +222,9 @@ void test_ok_ready_u16_param_frame(void) {
 }
 
 void test_oversize_param_count_rejected(void) {
-    // W-04: _firestarter_emit_frame guard raised from 253 to 65533.
-    // `len = 1 (id) + param_count + 1 (crc)` is now a u16, so no uint8_t
-    // param_count value (max 255) can exceed the new guard. The guard matters
-    // for future callers that pass > 255 via an internal wide path.
-    //
-    // Under the u16 len, param_count = 253 (previously the largest accepted)
-    // must still emit a well-formed frame.
-    // param_count = 254, 255 also EMIT now (they were rejected under u8 len
-    // because 254+2=256 wrapped; under u16 they are valid small values).
+    // `len = 1 (id) + param_count + 1 (crc)` is a u16, so every uint8_t
+    // param_count (max 255) gives a well-formed frame; 254 and 255 carry a
+    // length above 0xFF.
     //
     // Dummy params buffer — sized at 255 to cover the uint8_t maximum.
     uint8_t params[255];
@@ -279,6 +263,135 @@ void test_oversize_param_count_rejected(void) {
     TEST_ASSERT_EQUAL_HEX8(0x0A, captured[263]); // anchor
 }
 
+/* Narrow and wide emitters share one body (henols/firestarter#127). */
+
+static std::vector<uint8_t> capture_narrow(uint8_t id, const uint8_t* params, uint8_t n) {
+    captured.clear();
+    rurp_log_id(id, params, n);
+    return captured;
+}
+
+static std::vector<uint8_t> capture_wide(uint8_t id, const uint8_t* params, uint16_t n) {
+    captured.clear();
+    rurp_log_id_wide(id, params, n);
+    return captured;
+}
+
+static void assert_frame(const std::vector<uint8_t>& f, uint8_t id, const uint8_t* params,
+                         size_t n) {
+    TEST_ASSERT_EQUAL_size_t(n + 9, f.size());
+    TEST_ASSERT_EQUAL_HEX8(0xAA, f[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x55, f[1]);
+    TEST_ASSERT_EQUAL_HEX8(0xAA, f[2]);
+    TEST_ASSERT_EQUAL_HEX8(0x55, f[3]);
+    TEST_ASSERT_EQUAL_HEX8((uint8_t)((n + 2) >> 8), f[4]);
+    TEST_ASSERT_EQUAL_HEX8((uint8_t)((n + 2) & 0xFF), f[5]);
+    TEST_ASSERT_EQUAL_HEX8(id, f[6]);
+    std::vector<uint8_t> body(1, id);
+    body.insert(body.end(), params, params + n);
+    if (n > 0) {
+        TEST_ASSERT_EQUAL_MEMORY(params, f.data() + 7, n);
+    }
+    TEST_ASSERT_EQUAL_HEX8(ref_crc8(body.data(), body.size()), f[7 + n]);
+    TEST_ASSERT_EQUAL_HEX8(0x0A, f[8 + n]);
+}
+
+void test_narrow_and_wide_frames_are_byte_identical(void) {
+    static uint8_t params[255];
+    for (size_t i = 0; i < sizeof(params); i++) params[i] = (uint8_t)(i * 7 + 1);
+    const uint8_t counts[] = { 0, 1, 8, 253, 254, 255 };
+    for (uint8_t n : counts) {
+        std::vector<uint8_t> narrow = capture_narrow(MSG_ERR_VERIFY, params, n);
+        std::vector<uint8_t> wide = capture_wide(MSG_ERR_VERIFY, params, n);
+        assert_frame(narrow, MSG_ERR_VERIFY, params, n);
+        TEST_ASSERT_EQUAL_size_t(narrow.size(), wide.size());
+        TEST_ASSERT_EQUAL_MEMORY(narrow.data(), wide.data(), narrow.size());
+    }
+}
+
+void test_wide_frame_sizes_up_to_the_length_field_limit(void) {
+    static uint8_t params[65534];
+    for (size_t i = 0; i < sizeof(params); i++) params[i] = (uint8_t)(i ^ (i >> 8));
+    const uint16_t counts[] = { 256, 1024, 65533 };
+    for (uint16_t n : counts) {
+        assert_frame(capture_wide(MSG_DATA_CHUNK, params, n), MSG_DATA_CHUNK, params, n);
+    }
+    /* 65534 parameter bytes would wrap the u16 length: nothing is sent. */
+    TEST_ASSERT_EQUAL_size_t(0, capture_wide(MSG_DATA_CHUNK, params, 65534).size());
+}
+
+/* Uno deferred-log queue (henols/firestarter#125). */
+
+static void push_ids(deferred_log_t* log, const uint8_t* ids, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        uint8_t p = (uint8_t)i;
+        TEST_ASSERT_TRUE(deferred_log_push(log, ids[i], &p, 1));
+    }
+}
+
+static void assert_queue(const deferred_log_t* log, const uint8_t* ids, size_t n) {
+    TEST_ASSERT_EQUAL_UINT8(n, log->count);
+    for (size_t i = 0; i < n; i++) {
+        TEST_ASSERT_EQUAL_HEX8(ids[i], log->frames[i].id);
+    }
+}
+
+void test_deferred_error_replaces_the_newest_info_frame(void) {
+    deferred_log_t log = {};
+    const uint8_t first[] = { MSG_INFO_MAIN_START, MSG_WARN_VPP_LOW, MSG_INFO_RETRIES,
+                              MSG_INFO_ADDR };
+    push_ids(&log, first, 4);
+    const uint8_t err[2] = { 0x12, 0x34 };
+    TEST_ASSERT_TRUE(deferred_log_push(&log, MSG_ERR_MAX_PULSES, err, 2));
+    const uint8_t expected[] = { MSG_INFO_MAIN_START, MSG_WARN_VPP_LOW, MSG_INFO_RETRIES,
+                                 MSG_ERR_MAX_PULSES };
+    assert_queue(&log, expected, 4);
+    TEST_ASSERT_EQUAL_UINT8(2, log.frames[3].len);
+    TEST_ASSERT_EQUAL_HEX8(0x12, log.frames[3].params[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x34, log.frames[3].params[1]);
+}
+
+void test_deferred_error_keeps_the_order_of_protocol_frames(void) {
+    deferred_log_t log = {};
+    const uint8_t first[] = { MSG_DATA_PROTECTION_STATUS, MSG_WARN_VPP_HIGH,
+                              MSG_DATA_PROGRESS, MSG_ERR_VERIFY };
+    push_ids(&log, first, 4);
+    TEST_ASSERT_TRUE(deferred_log_push(&log, MSG_ERR_WRITE_FAILED, NULL, 0));
+    const uint8_t expected[] = { MSG_DATA_PROTECTION_STATUS, MSG_DATA_PROGRESS,
+                                 MSG_ERR_VERIFY, MSG_ERR_WRITE_FAILED };
+    assert_queue(&log, expected, 4);
+    /* The moved frames keep their own parameters. */
+    TEST_ASSERT_EQUAL_HEX8(2, log.frames[1].params[0]);
+    TEST_ASSERT_EQUAL_HEX8(3, log.frames[2].params[0]);
+}
+
+void test_deferred_full_queue_drops_a_new_info_frame(void) {
+    deferred_log_t log = {};
+    const uint8_t first[] = { MSG_INFO_MAIN_START, MSG_INFO_RETRIES, MSG_INFO_ADDR,
+                              MSG_WARN_VPP_LOW };
+    push_ids(&log, first, 4);
+    TEST_ASSERT_FALSE(deferred_log_push(&log, MSG_INFO_CMD, NULL, 0));
+    assert_queue(&log, first, 4);
+}
+
+void test_deferred_queue_without_droppable_frames_keeps_the_first_errors(void) {
+    deferred_log_t log = {};
+    const uint8_t first[] = { MSG_ERR_VERIFY, MSG_DATA_PROGRESS, MSG_ERR_TIMEOUT,
+                              MSG_MAIN_DONE };
+    push_ids(&log, first, 4);
+    TEST_ASSERT_FALSE(deferred_log_push(&log, MSG_ERR_MAX_PULSES, NULL, 0));
+    assert_queue(&log, first, 4);
+}
+
+void test_deferred_frame_longer_than_the_slot_is_truncated(void) {
+    deferred_log_t log = {};
+    uint8_t params[12];
+    for (uint8_t i = 0; i < sizeof(params); i++) params[i] = (uint8_t)(0xA0 + i);
+    TEST_ASSERT_TRUE(deferred_log_push(&log, MSG_ERR_CALIBRATION, params, sizeof(params)));
+    TEST_ASSERT_EQUAL_UINT8(DEFERRED_PARAM_MAX, log.frames[0].len);
+    TEST_ASSERT_EQUAL_MEMORY(params, log.frames[0].params, DEFERRED_PARAM_MAX);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -290,6 +403,13 @@ int main(int argc, char** argv) {
     RUN_TEST(test_crc_polynomial_smoke);
     RUN_TEST(test_oversize_param_count_rejected);
     RUN_TEST(test_ok_ready_u16_param_frame);
+    RUN_TEST(test_narrow_and_wide_frames_are_byte_identical);
+    RUN_TEST(test_wide_frame_sizes_up_to_the_length_field_limit);
+    RUN_TEST(test_deferred_error_replaces_the_newest_info_frame);
+    RUN_TEST(test_deferred_error_keeps_the_order_of_protocol_frames);
+    RUN_TEST(test_deferred_full_queue_drops_a_new_info_frame);
+    RUN_TEST(test_deferred_queue_without_droppable_frames_keeps_the_first_errors);
+    RUN_TEST(test_deferred_frame_longer_than_the_slot_is_truncated);
 
     return UNITY_END();
 }

@@ -41,10 +41,8 @@
  * RURP_PINMAP_PROVISIONAL that rurp_pinmap_guard.h's refusal predicate tests.
  * This block does two jobs:
  *
- *   1. Its `#if` is a real CONSUMER of RURP_PY32F071_PINMAP_PROVISIONAL, which
- *      is what check_orphan_provisional.py requires -- a flag with zero
- *      consumers enforces nothing. That checker does not scan tests/, so a
- *      pytest cannot serve as the consumer.
+ *   1. Its `#if` is a real CONSUMER of RURP_PY32F071_PINMAP_PROVISIONAL -- a
+ *      flag with zero consumers enforces nothing.
  *   2. It DEFINES the neutral flag, in its own #ifndef so a command-line
  *      definition still wins without a macro-redefinition warning.
  *

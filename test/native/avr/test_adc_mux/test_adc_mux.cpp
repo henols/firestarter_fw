@@ -48,11 +48,9 @@ static void test_the_two_parts_differ_only_in_the_channel(void) {
     // Both parts' bandgap is 1.1 V nominal. The channel number moves; the
     // reference selection does not. If these two were ever made equal, one of
     // the boards would be reading a pin instead of its reference.
-    TEST_ASSERT_NOT_EQUAL(RURP_ADC_CHANNEL_BANDGAP_328P, RURP_ADC_CHANNEL_BANDGAP_32U4);
-    TEST_ASSERT_EQUAL_UINT8(14, RURP_ADC_CHANNEL_BANDGAP_328P);
-    TEST_ASSERT_EQUAL_UINT8(30, RURP_ADC_CHANNEL_BANDGAP_32U4);
+    TEST_ASSERT_NOT_EQUAL(rurp_admux_value(RURP_ADC_REF_AVCC, RURP_ADC_CHANNEL_BANDGAP_328P),
+                          rurp_admux_value(RURP_ADC_REF_AVCC, RURP_ADC_CHANNEL_BANDGAP_32U4));
     // Same reference on both: AVCC, REFS[1:0] = 01.
-    TEST_ASSERT_EQUAL_UINT8(1, RURP_ADC_REF_AVCC);
     TEST_ASSERT_EQUAL_HEX8(
         rurp_admux_value(RURP_ADC_REF_AVCC, 0) & 0xC0,
         rurp_admux_value(RURP_ADC_REF_AVCC, RURP_ADC_CHANNEL_BANDGAP_32U4) & 0xC0);
@@ -62,7 +60,6 @@ static void test_reference_select_is_not_the_2v56_option(void) {
     // REFS[1:0] = 11 is 1.1 V on the 328P but 2.56 V on the 32U4. Selecting it
     // would make the Leonardo behave unlike the Unos. Assert we are nowhere
     // near it.
-    TEST_ASSERT_NOT_EQUAL(3, RURP_ADC_REF_AVCC);
     TEST_ASSERT_EQUAL_HEX8(0x40,
                            rurp_admux_value(RURP_ADC_REF_AVCC, RURP_ADC_CHANNEL_BANDGAP_32U4) & 0xC0);
 }

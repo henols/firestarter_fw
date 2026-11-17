@@ -18,6 +18,16 @@
 
 #define FLASH_5V_PAGE_SIZE_MAX 512
 
+// The page write cycle is 10 ms at most on the 0x05 parts (AT29C, W29C,
+// SST29EE). The bound leaves room for that and for the polling reads.
+#define FLASH_5V_PAGE_WRITE_TIMEOUT_MS 50U
+
+// The internal write starts only when the byte-load window (tBLC, 200 us at
+// most on these parts) closes with no new byte. Before that a read can return
+// the old array byte, whose DQ7 may already equal the new one, so the poll
+// starts after the window.
+#define FLASH_5V_PAGE_TBLC_US 300U
+
 static bool flash_5v_page_mask(uint16_t requested, uint32_t* out_mask) {
     if (requested == 0) {
         return false;
@@ -47,6 +57,16 @@ void configure_flash_5v_page(firestarter_handle_t* handle) {
             handle->firestarter_operation_init = NULL;
             handle->firestarter_operation_main = flash_5v_page_check_chip_id_execute;
             break;
+        // Software chip erase (#62): the W29C020C "Software Chip Erase"
+        // command, which the AT29C and SST29EE parts share, at the same
+        // 5555/2AAA unlock addresses as this protocol's page writes. Address 0
+        // must read 0xFF afterwards: a part whose boot-block lockout is set
+        // ignores the chip erase, and that check catches it when the locked
+        // block is at address 0.
+        case CMD_ERASE:
+            handle->firestarter_operation_init = flash_util_check_chip_id_init;
+            handle->firestarter_operation_main = flash_util_chip_erase;
+            break;
         // A second query arm, modelled on CMD_CHECK_CHIP_ID just above.
         // Unlike flash_nor_unlock.cpp, this
         // file assigns no firestarter_operation_init before the switch, so
@@ -68,11 +88,8 @@ void flash_5v_page_write_init(firestarter_handle_t* handle) {
             return;
         }
     }
-    // No pre-write blank check: flash4 auto-erases per page during the write loop,
-    // so it was a false precondition, not a safety net. As of release 3.1.0 the
-    // host owns this refusal instead -- do not restore a firmware-side
-    // conditional here; the control flag that used to gate it is retired and
-    // gone.
+    // Flash4 auto-erases each page, so requiring a blank chip before a
+    // write would reject valid operations.
 }
 
 void flash_5v_page_write_execute(firestarter_handle_t* handle) {
@@ -120,27 +137,22 @@ void flash_5v_page_write_execute(firestarter_handle_t* handle) {
     }
 }
 
+// Waits for the page write, by DQ7 polling the last byte loaded. Only DQ7
+// says the cycle is done; the other outputs may still be invalid when it
+// flips, so the byte itself is not compared -- the host verify does that.
 static bool flash_5v_page_wait_for_page_write(firestarter_handle_t* handle, uint32_t address, uint8_t expected) {
-    // poll the last byte written until it's correct.
-    uint8_t observed = 0;
-    for (uint16_t j = 0; j < 1024; j++) {
-        delayMicroseconds(10);
-        observed = handle->firestarter_get_data(handle, address);
-        if (observed == expected) {
-            return true;
-        }
+    delayMicroseconds(FLASH_5V_PAGE_TBLC_US);
+    if (flash_util_wait_ready(handle, address, expected, FLASH_5V_PAGE_WRITE_TIMEOUT_MS)) {
+        return true;
     }
-
-    {
-        uint8_t _b[5];
-        _b[0] = (uint8_t)expected;
-        _b[1] = (uint8_t)((address >> 16) & 0xFF);
-        _b[2] = (uint8_t)((address >> 8) & 0xFF);
-        _b[3] = (uint8_t)(address & 0xFF);
-        _b[4] = (uint8_t)observed;
-        LOG_ERROR_ID_BYTES(MSG_ERR_FL4_VERIFY_TIMEOUT, _b, 5);
-        handle->response_code = RESPONSE_CODE_ERROR;
-    }
+    uint8_t _b[5];
+    _b[0] = (uint8_t)expected;
+    _b[1] = (uint8_t)((address >> 16) & 0xFF);
+    _b[2] = (uint8_t)((address >> 8) & 0xFF);
+    _b[3] = (uint8_t)(address & 0xFF);
+    _b[4] = handle->firestarter_get_data(handle, address);
+    LOG_ERROR_ID_BYTES(MSG_ERR_FL4_VERIFY_TIMEOUT, _b, 5);
+    handle->response_code = RESPONSE_CODE_ERROR;
     return false;
 }
 

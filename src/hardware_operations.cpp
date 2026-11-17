@@ -10,20 +10,8 @@
 #include "rurp_serial_utils.h"
 #include "rurp_shield.h"
 #include "rurp_pinout.h"
+#include "rurp_voltage_math.h"
 #include "version.h"
-
-// Plausible internal-VCC band, in millivolts. USB VBUS is specified
-// 4.75-5.25 V (USB 2.0 section 7.2.2) and the board derives VCC from it
-// through a series switch, so a reported value outside this band is the
-// bandgap constant being wrong, not the supply.
-#define HW_VCC_PLAUSIBLE_MIN_MV 4400
-#define HW_VCC_PLAUSIBLE_MAX_MV 5250
-
-// The VCC warning is emitted ONCE per command, not once per reading. The
-// condition cannot change between samples of one command, and a frame
-// interleaved with every DATA frame is noise the host read loop has to step
-// around on every iteration.
-static bool s_vcc_warned = false;
 
 bool hw_read_voltage(firestarter_handle_t* handle) {
     // State 0: Initialization. This runs only once per command.
@@ -49,7 +37,6 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
         }
         delay(100);                     // Allow voltage to stabilize.
         rurp_set_communication_mode();  // Switch back to communication mode to send the ready signal.
-        s_vcc_warned = false;           // re-arm the once-per-command VCC warning
         handle->operation_state = 1;    // Transition to the reading state.
 
         // Send a ready signal to the client to prompt it for the first ACK.
@@ -68,8 +55,8 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
     op_message_type msg_type = op_get_message(handle);
     if (msg_type == OP_MSG_DONE) {
         // The host has signaled it is done sampling. Finish the command
-        // cleanly instead of leaving it dangling for the 1s watchdog to
-        // reap (mirrors eprom_write's OP_MSG_DONE handling, eprom_operations.cpp).
+        // cleanly instead of leaving it dangling for the 1 s watchdog to
+        // reap.
         return true;
     }
     if (msg_type != OP_MSG_ACK) {
@@ -83,33 +70,11 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
     uint16_t vcc_mv = rurp_read_vcc_mv();
     uint16_t voltage_mv = rurp_read_voltage_mv();
 
-    // An internal VCC outside what the board can physically run at is an
-    // INSTRUMENT fault, not a supply fault. rurp_scale_vcc_mv returns
-    // supply * RURP_BANDGAP_NOMINAL_MV / bandgap_true, so a figure the
-    // hardware cannot reach measures how far this chip's real bandgap is from
-    // the assumed 1100 mV -- and that same error scales every VPP/VPE reading
-    // this command prints. Bounds: USB VBUS is specified 4.75-5.25 V and the
-    // board takes a MOSFET drop off it, so anything outside the band below
-    // cannot be a real supply.
-    if (!s_vcc_warned &&
-        (vcc_mv < HW_VCC_PLAUSIBLE_MIN_MV || vcc_mv > HW_VCC_PLAUSIBLE_MAX_MV)) {
-        s_vcc_warned = true;
-        LOG_WARN_ID_U16(MSG_WARN_VCC_IMPLAUSIBLE, vcc_mv);
-        handle->response_code = RESPONSE_CODE_WARNING;
-    }
-
-    // Compute pre-rounded integer/decimal tenths for each voltage (catalog expects 4 x u16).
-    uint16_t v_int  = (uint16_t)((voltage_mv + 50) / 1000);
-    uint16_t v_dec  = (uint16_t)(((voltage_mv + 50) / 100) % 10);
-    uint16_t vc_int = (uint16_t)((vcc_mv + 50) / 1000);
-    uint16_t vc_dec = (uint16_t)(((vcc_mv + 50) / 100) % 10);
-
-    // Send the data back to the client as a structured ID frame.
-    if (handle->cmd == CMD_READ_VPE) {
-        LOG_DATA_ID_U16x4(MSG_DATA_VPE_VOLTAGE, v_int, v_dec, vc_int, vc_dec);
-    } else {
-        LOG_DATA_ID_U16x4(MSG_DATA_VPP_VOLTAGE, v_int, v_dec, vc_int, vc_dec);
-    }
+    // Millivolts, unformatted. The host formats them and checks the VCC band
+    // (an internal VCC the board cannot run at means the stored bandgap is
+    // wrong, and that error scales every VPP/VPE reading).
+    LOG_DATA_ID_U16_U16(handle->cmd == CMD_READ_VPE ? MSG_DATA_VPE_MV : MSG_DATA_VPP_MV,
+                        voltage_mv, vcc_mv);
 
     op_reset_timeout();  // Reset the command timeout since we're actively communicating.
 
@@ -120,9 +85,7 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
 
 bool fw_get_version(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_FW_VERSION);
-    // Lone surviving text-format emit. F("OK: FW: ") keeps the literal in
-    // PROGMEM with no named symbol -- same exemption class as MAGIC_PREAMBLE /
-    // CRC8_TABLE.
+    // The only text-format emit. F("OK: FW: ") keeps the literal in PROGMEM.
     SERIAL_PORT.print(F("OK: FW: "));
     SERIAL_PORT.println(FW_VERSION);
     SERIAL_PORT.flush();
@@ -136,7 +99,7 @@ bool hw_get_version(firestarter_handle_t* handle) {
     uint8_t physical  = (uint8_t)rurp_get_physical_hardware_revision();
     uint8_t effective = (rurp_config->hardware_revision < 0xFF)
                         ? (uint8_t)rurp_config->hardware_revision
-                        : 0xFF;  // P-02 sentinel: no override active
+                        : 0xFF;  // 0xFF: no override active
     LOG_OK_ID_U8_U8(MSG_OK_REV, physical, effective);
     return true;
 }
@@ -145,13 +108,24 @@ bool hw_get_version(firestarter_handle_t* handle) {
 bool hw_get_config(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_CONFIG);
     rurp_configuration_t* rurp_config = rurp_get_config();
-    // u32 r1 + u32 r2 + u8 override (0xFF = no override) + u16 bandgap_mv = 11 bytes.
-    // Widening a fixed-length frame: an older host rejects it on length rather
-    // than misreading it, and firmware ships before the host that needs it.
+    // u32 r1 + u32 r2 + u8 override (0xFF = no override) + u16 bandgap_mv
+    // + u16 bandgap_adc = 13 bytes. The host back-solves a calibration from
+    // the count: bandgap_mv = meter_mv * bandgap_adc / RURP_ADC_FULL_SCALE.
+    uint16_t bandgap_adc = 0;
+#if RURP_HAS_BANDGAP_CAL
+    // Sample in PROGRAMMER mode, because that is the mode every real
+    // measurement is taken in: hw_read_voltage and eprom_check_vpp both
+    // switch to it before reading. The I/O state differs between the two
+    // modes and moves the count by a whole count on a SERIAL_ON_IO board --
+    // about 0.5 %, stored permanently by a calibration.
+    rurp_set_programmer_mode();
+    bandgap_adc = (uint16_t)rurp_get_bandgap_adc_reading();
+    rurp_set_communication_mode();
+#endif
     uint8_t override_byte = (rurp_config->hardware_revision < 0xFF)
                             ? (uint8_t)rurp_config->hardware_revision
                             : 0xFF;
-    uint8_t _cfg[11];
+    uint8_t _cfg[13];
     _cfg[0] = (uint8_t)((rurp_config->r1 >> 24) & 0xFF);
     _cfg[1] = (uint8_t)((rurp_config->r1 >> 16) & 0xFF);
     _cfg[2] = (uint8_t)((rurp_config->r1 >>  8) & 0xFF);
@@ -163,7 +137,9 @@ bool hw_get_config(firestarter_handle_t* handle) {
     _cfg[8] = override_byte;
     _cfg[9] = (uint8_t)((rurp_config->bandgap_mv >> 8) & 0xFF);
     _cfg[10] = (uint8_t)((rurp_config->bandgap_mv) & 0xFF);
-    LOG_ID_BYTES(MSG_OK_CFG, _cfg, 11);
+    _cfg[11] = (uint8_t)(bandgap_adc >> 8);
+    _cfg[12] = (uint8_t)bandgap_adc;
+    LOG_ID_BYTES(MSG_OK_CFG, _cfg, 13);
     return true;
 }
 

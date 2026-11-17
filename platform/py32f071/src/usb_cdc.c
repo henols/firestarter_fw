@@ -24,25 +24,10 @@
 #define FIRESTARTER_USB_PID 0x0001U
 #endif
 
-/*
- * FIRESTARTER_USB_VID/FIRESTARTER_USB_PID present pid.codes' documented
- * private-testing pair 1209:0001 under pid.codes' community VID 0x1209.
- * This is NOT an allocated PID.
- *
- * pid.codes' terms ask that any source referencing this id carry a warning
- * that the PID is not universally unique and must not be relied on outside
- * a test environment -- this firmware carries that warning here.
- *
- * This replaces the previous pair 0x36B7/0xFFFF, which is registered to
- * Puya Semiconductor and was copied verbatim from the pinned SDK's own USB
- * CDC example. Before this change, this board presented another company's
- * registered vendor identity on a product they did not make.
- *
- * The decision this pair implements lives in
- * platform/py32f071/DESIGN.md §"USB identity". Its ship gate stands
- * unchanged: no board ships and no release advertises a USB identity until
- * a PID allocated under VID 0x1209 exists.
- */
+/* 1209:0001 is a pid.codes private-testing pair, NOT an allocated PID.
+ * It is not universally unique and must not be used outside a test
+ * environment. Do not ship a board under this identity until a PID is
+ * allocated under VID 0x1209 (see DESIGN.md, "USB identity"). */
 
 #define FIRESTARTER_USB_CONFIG_SIZE (9U + CDC_ACM_DESCRIPTOR_LEN)
 

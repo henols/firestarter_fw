@@ -25,8 +25,15 @@ extern "C" {
 /* Suite-local mockable VPP voltage — TU-private state; test TU calls
  * set_mock_vpp_mv() to inject a value before calling into flash_intel_write_init. */
 static uint16_t s_mock_vpp_mv = 0;
+static void (*s_on_measure)(void) = NULL;
 extern "C" void set_mock_vpp_mv(uint16_t mv) { s_mock_vpp_mv = mv; }
-extern "C" uint16_t rurp_read_voltage_mv() { return s_mock_vpp_mv; }
+extern "C" void set_on_measure(void (*fn)(void)) { s_on_measure = fn; }
+extern "C" uint16_t rurp_read_voltage_mv() {
+    if (s_on_measure != NULL) {
+        s_on_measure();
+    }
+    return s_mock_vpp_mv;
+}
 
 #ifdef HARDWARE_REVISION
 /* Suite-local mockable hardware revision — TU-private state; test TU calls

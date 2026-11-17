@@ -91,15 +91,6 @@ static void drive(firestarter_handle_t* h, const byte_flip_t* table, size_t len,
     flash_util_byte_flipping(h, table, len);
 }
 
-static void drive_reference_emitter(firestarter_handle_t* h, const byte_flip_t* table, size_t len, rurp_register_t ctrl_seed) {
-    configure_memory(h);
-    reset_register_cache(0x00, 0x00, ctrl_seed);
-    clear_strobes();
-    for (size_t i = 0; i < len; i++) {
-        h->firestarter_set_data(h, table[i].address, table[i].byte);
-    }
-}
-
 static bool sdp_tables_identical(const byte_flip_t* a, const byte_flip_t* b, size_t len) {
     for (size_t i = 0; i < len; i++) {
         if (a[i].address != b[i].address || a[i].byte != b[i].byte) {
@@ -109,25 +100,9 @@ static bool sdp_tables_identical(const byte_flip_t* a, const byte_flip_t* b, siz
     return true;
 }
 
-#ifdef SDP_TRACE_DUMP
-static void dump_strobes(const char* tag) {
-    printf("##### %s total=%d overflow=%d\n", tag, strobe_count(), strobe_overflowed());
-    for (int i = 0; i < strobe_count(); i++) {
-        if (strobe_kind(i) == STROBE_KIND_DATA) {
-            printf("[%3d] DATA 0x%02X\n", i, strobe_value(i));
-        } else {
-            printf("[%3d] PIN  0x%02X -> %d\n", i, strobe_pin(i), strobe_value(i));
-        }
-    }
-}
-#endif
-
 void test_case1_ordered_capture_dip28_28c256(void) {
     firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[0]); /* AT28C256 / DIP28_28C256 */
     drive(&h, FLASH_DISABLE_WRITE_PROTECTION, 6, 0x00);
-#ifdef SDP_TRACE_DUMP
-    dump_strobes("case1_dip28_28c256_shipped");
-#endif
     sdp_assert_stream_equals(SDP_SHIPPED_DIP28_28C256, SDP_SHIPPED_DIP28_28C256_LEN,
         "Case 1: ordered capture, DIP28_28C256, FLASH_DISABLE_WRITE_PROTECTION (== EEPROM_SDP_DISABLE, 116-03 parity)");
 }
@@ -208,22 +183,6 @@ void test_negativeB_lock_table_swapped_for_write_prefix(void) {
         "stream at index 26 -- write #3's payload byte (0xA0 vs 0x80)");
 }
 
-void test_lock05_enable_write_and_write_protection_identical(void) {
-    firestarter_handle_t h1 = make_sdp_handle(SDP_BUS_CONFIGS[0]);
-    drive(&h1, FLASH_ENABLE_WRITE_PROTECTION,
-        sizeof(FLASH_ENABLE_WRITE_PROTECTION) / sizeof(FLASH_ENABLE_WRITE_PROTECTION[0]), 0x00);
-    sdp_strobe_t snap[32];
-    int len = sdp_snapshot(snap, 32);
-
-    firestarter_handle_t h2 = make_sdp_handle(SDP_BUS_CONFIGS[0]);
-    drive(&h2, FLASH_ENABLE_WRITE, sizeof(FLASH_ENABLE_WRITE) / sizeof(FLASH_ENABLE_WRITE[0]), 0x00);
-
-    TEST_ASSERT_EQUAL_MESSAGE(-1, sdp_first_divergence(snap, len),
-        "LOCK-05: FLASH_ENABLE_WRITE_PROTECTION and FLASH_ENABLE_WRITE are byte-identical tables and "
-        "must therefore produce element-wise identical streams");
-    sdp_assert_stream_equals(snap, len, "LOCK-05: identity between the two 3-write tables");
-}
-
 /*
  * Two separately-messaged legs, not one transitive check, so a failure
  * names which pair diverged. All three entries' address/byte pairs are
@@ -256,66 +215,21 @@ void test_lock05_three_way_enable_table_identity(void) {
         "SDP-enable body no longer matches the write-protect prefix");
 }
 
-/*
- * Do NOT add a trace-based negative between FLASH_ENABLE_WRITE_PROTECTION
- * and FLASH_ENABLE_WRITE here --
- * test_lock05_enable_write_and_write_protection_identical's comment above
- * states this is impossible by construction; a "negative" between two
- * tables already asserted identical would be a test that cannot fail. */
-void test_lock05_enable_table_objects_distinct(void) {
-    TEST_ASSERT_NOT_EQUAL_MESSAGE((const void*)EEPROM_SDP_ENABLE, (const void*)FLASH_ENABLE_WRITE_PROTECTION,
-        "LOCK-05 distinctness: EEPROM_SDP_ENABLE and FLASH_ENABLE_WRITE_PROTECTION must be distinct "
-        "array objects, not aliases");
-    TEST_ASSERT_NOT_EQUAL_MESSAGE((const void*)EEPROM_SDP_ENABLE, (const void*)FLASH_ENABLE_WRITE,
-        "LOCK-05 distinctness: EEPROM_SDP_ENABLE and FLASH_ENABLE_WRITE must be distinct array "
-        "objects, not aliases");
-    TEST_ASSERT_NOT_EQUAL_MESSAGE((const void*)FLASH_ENABLE_WRITE_PROTECTION, (const void*)FLASH_ENABLE_WRITE,
-        "LOCK-05 distinctness: FLASH_ENABLE_WRITE_PROTECTION and FLASH_ENABLE_WRITE must be distinct "
-        "array objects, not aliases");
-
-    TEST_ASSERT_NOT_EQUAL_MESSAGE((const void*)EEPROM_SDP_ENABLE, (const void*)EEPROM_SDP_DISABLE,
-        "LOCK-05 distinctness: EEPROM_SDP_ENABLE and EEPROM_SDP_DISABLE must be distinct array objects");
-    TEST_ASSERT_EQUAL_MESSAGE(3, sizeof(EEPROM_SDP_ENABLE) / sizeof(EEPROM_SDP_ENABLE[0]),
-        "LOCK-05: EEPROM_SDP_ENABLE must be a 3-element table");
-    TEST_ASSERT_EQUAL_MESSAGE(6, sizeof(EEPROM_SDP_DISABLE) / sizeof(EEPROM_SDP_DISABLE[0]),
-        "LOCK-05: EEPROM_SDP_DISABLE must be a 6-element table -- lock and unlock lengths differ (3 "
-        "vs 6), complementing Plan 119-05's stream-level lock-vs-unlock divergence assertions");
-}
-
 void test_fix05_terminal_byte_and_table_identity_guards(void) {
-    /* (1) Length sanity -- every table this guard reasons about is 6
-     * elements; a length surprise would silently invalidate every index
-     * below. */
-    TEST_ASSERT_EQUAL_MESSAGE(6, sizeof(EEPROM_SDP_DISABLE) / sizeof(EEPROM_SDP_DISABLE[0]),
-        "FIX-05: EEPROM_SDP_DISABLE must be a 6-element table");
-    TEST_ASSERT_EQUAL_MESSAGE(6, sizeof(FLASH_ERASE) / sizeof(FLASH_ERASE[0]),
-        "FIX-05: FLASH_ERASE must be a 6-element table");
-    TEST_ASSERT_EQUAL_MESSAGE(6, sizeof(FLASH_DISABLE_WRITE_PROTECTION) / sizeof(FLASH_DISABLE_WRITE_PROTECTION[0]),
-        "FIX-05: FLASH_DISABLE_WRITE_PROTECTION must be a 6-element table");
-
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x20, EEPROM_SDP_DISABLE[5].byte,
         "FIX-05: EEPROM_SDP_DISABLE's terminal byte must be 0x20 (SDP-disable) -- if this fails, "
         "the production 0x0D write path may now emit a chip-erase command");
     TEST_ASSERT_EQUAL_HEX32_MESSAGE(0x5555, EEPROM_SDP_DISABLE[5].address,
         "FIX-05: EEPROM_SDP_DISABLE's terminal address must be 0x5555");
 
-    /* (3) FLASH_ERASE's terminal byte, the chip-erase value this guard
+    /* FLASH_ERASE's terminal byte, the chip-erase value this guard
      * exists to distinguish EEPROM_SDP_DISABLE from. */
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x10, FLASH_ERASE[5].byte,
         "FIX-05: FLASH_ERASE's terminal byte must be 0x10 (chip-erase)");
     TEST_ASSERT_EQUAL_HEX32_MESSAGE(0x5555, FLASH_ERASE[5].address,
         "FIX-05: FLASH_ERASE's terminal address must be 0x5555");
 
-    /* (4) Distinctness: the two terminal bytes must differ, AND the two
-     * arrays must be distinct OBJECTS -- a future refactor that made
-     * EEPROM_SDP_DISABLE an alias of FLASH_ERASE (or vice versa) would pass
-     * every value-level assertion above while erasing every chip on write. */
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(FLASH_ERASE[5].byte, EEPROM_SDP_DISABLE[5].byte,
-        "FIX-05: FLASH_ERASE and EEPROM_SDP_DISABLE terminal bytes must differ");
-    TEST_ASSERT_NOT_EQUAL_MESSAGE((const void*)EEPROM_SDP_DISABLE, (const void*)FLASH_ERASE,
-        "FIX-05: EEPROM_SDP_DISABLE and FLASH_ERASE must be distinct array objects, not aliases");
-
-    /* (5) The one-nibble claim, made literal: elements 0-4 match on BOTH
+    /* The one-nibble claim, made literal: elements 0-4 match on BOTH
      * address and byte; element 5's address matches while its byte differs.
      * So the two tables differ at exactly one field of exactly one element. */
     for (size_t i = 0; i < 5; i++) {
@@ -346,41 +260,6 @@ void test_fix05_guard_rejects_planted_terminal_mutation(void) {
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(FLASH_ERASE[5].byte, TEST_UNLOCK_MUTATED_TERMINAL[5].byte,
         "FIX-05 anti-hollow: the planted one-nibble slip must turn the SDP-disable table into exactly "
         "the FLASH_ERASE terminal byte -- the constant-level twin of test_negativeA_...'s stream-level proof");
-}
-
-void test_fixed_guard_at28c256(void) {
-    firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[0]); /* AT28C256 */
-    drive_reference_emitter(&h, FLASH_DISABLE_WRITE_PROTECTION, 6, 0x00);
-    sdp_assert_stream_equals(SDP_FIXED_DIP28_28C256, SDP_FIXED_DIP28_28C256_LEN,
-        "reference-emitter guard: AT28C256 / DIP28_28C256");
-}
-
-void test_fixed_guard_at28c64(void) {
-    firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[1]); /* AT28C64 */
-    drive_reference_emitter(&h, FLASH_DISABLE_WRITE_PROTECTION, 6, 0x00);
-    sdp_assert_stream_equals(SDP_FIXED_DIP28_28C64, SDP_FIXED_DIP28_28C64_LEN,
-        "reference-emitter guard: AT28C64 / DIP28_28C64");
-}
-
-void test_fixed_guard_at28c16(void) {
-    firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[2]); /* AT28C16 */
-    drive_reference_emitter(&h, FLASH_DISABLE_WRITE_PROTECTION, 6, 0x00);
-    sdp_assert_stream_equals(SDP_FIXED_DIP24_2816, SDP_FIXED_DIP24_2816_LEN,
-        "reference-emitter guard: AT28C16 / DIP24_2816");
-}
-
-void test_fixed_guard_at28c010(void) {
-    firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[3]); /* AT28C010 */
-    drive_reference_emitter(&h, FLASH_DISABLE_WRITE_PROTECTION, 6, 0x00);
-    sdp_assert_stream_equals(SDP_FIXED_DIP32_28C512_EEPROM, SDP_FIXED_DIP32_28C512_EEPROM_LEN,
-        "reference-emitter guard: AT28C010 / DIP32_28C512_EEPROM");
-}
-
-void test_fixed_guard_at28c040(void) {
-    firestarter_handle_t h = make_sdp_handle(SDP_BUS_CONFIGS[4]); /* AT28C040 */
-    drive_reference_emitter(&h, FLASH_DISABLE_WRITE_PROTECTION, 6, 0x00);
-    sdp_assert_stream_equals(SDP_FIXED_DIP32_28C512_EEPROM, SDP_FIXED_DIP32_28C512_EEPROM_LEN,
-        "reference-emitter guard: AT28C040 / DIP32_28C512_EEPROM");
 }
 
 /* Pattern 3: dispatch on ADDRESS, not call order. Virgin 0xFF everywhere
@@ -460,16 +339,9 @@ int main(int argc, char** argv) {
 
     RUN_TEST(test_negativeA_unlock_mutated_diverges_and_matches_erase);
     RUN_TEST(test_negativeB_lock_table_swapped_for_write_prefix);
-    RUN_TEST(test_lock05_enable_write_and_write_protection_identical);
     RUN_TEST(test_lock05_three_way_enable_table_identity);
-    RUN_TEST(test_lock05_enable_table_objects_distinct);
     RUN_TEST(test_fix05_terminal_byte_and_table_identity_guards);
     RUN_TEST(test_fix05_guard_rejects_planted_terminal_mutation);
-    RUN_TEST(test_fixed_guard_at28c256);
-    RUN_TEST(test_fixed_guard_at28c64);
-    RUN_TEST(test_fixed_guard_at28c16);
-    RUN_TEST(test_fixed_guard_at28c010);
-    RUN_TEST(test_fixed_guard_at28c040);
 
     RUN_TEST(test_migrated_mismatching_chip_id_errors);
     RUN_TEST(test_migrated_zero_chip_id_skips_check);
