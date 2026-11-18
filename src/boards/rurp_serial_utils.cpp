@@ -14,12 +14,11 @@ void rurp_serial_begin(unsigned long baud) {
     while (!SERIAL_PORT) {
         delayMicroseconds(1);
     }
-    delay(50);
 }
 
+// end() waits for the transmit buffer to drain, so nothing is lost.
 void rurp_serial_end() {
     SERIAL_PORT.end();
-    delay(5);
 }
 
 int rurp_communication_available() {
