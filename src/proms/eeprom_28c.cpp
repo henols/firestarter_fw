@@ -200,8 +200,7 @@ static void eeprom28c_check_chip_id(firestarter_handle_t* handle) {
     handle->firestarter_set_control_register(handle, CTRL_VPP_A9_ENABLE, 1);
     delay(100);
     uint32_t mfr_addr = handle->mem_size - 64;  // 0x7FC0 (AT28C256) / 0x1FC0 (AT28C64) / ...
-    uint16_t chip_id = handle->firestarter_get_data(handle, mfr_addr) << 8;
-    chip_id |= handle->firestarter_get_data(handle, mfr_addr + 1);
+    uint16_t chip_id = mem_util_read_u16_be(handle, mfr_addr);
     handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_A9_ENABLE, 0);
     mem_util_report_chip_id(handle, chip_id, is_flag_set(FLAG_FORCE));
 }
@@ -531,10 +530,9 @@ static bool eeprom28c_wait_for_page_write(firestarter_handle_t* handle, uint32_t
 }
 
 // Data-landed proof ONLY -- a per-byte read-back over the current flush
-// window, reusing memory_verify_execute's mismatch payload order: expected,
-// observed, addr>>16, addr>>8, addr, where addr is the FAILING address. Says
-// nothing about whether the internal cycle finished -- that is
-// wait_for_page_write's job, and keeping the two separate is what stops a
+// window, reporting a mismatch the way memory_verify_execute does, with the
+// FAILING address. Says nothing about whether the internal cycle finished --
+// that is wait_for_page_write's job, and keeping the two separate is what stops a
 // whole-byte compare from passing spuriously on unchanged bytes.
 static bool eeprom28c_verify_page_readback(firestarter_handle_t* handle, uint32_t first_index, uint32_t last_index) {
     for (uint32_t k = first_index; k <= last_index; k++) {
@@ -542,16 +540,7 @@ static bool eeprom28c_verify_page_readback(firestarter_handle_t* handle, uint32_
         uint32_t addr = handle->address + k;
         uint8_t observed = handle->firestarter_get_data(handle, addr);
         if (observed != expected) {
-            {
-                uint8_t _b[5];
-                _b[0] = expected;
-                _b[1] = observed;
-                _b[2] = (uint8_t)((addr >> 16) & 0xFF);
-                _b[3] = (uint8_t)((addr >> 8) & 0xFF);
-                _b[4] = (uint8_t)(addr & 0xFF);
-                LOG_ERROR_ID_BYTES(MSG_ERR_VERIFY, _b, 5);
-            }
-            handle->response_code = RESPONSE_CODE_ERROR;
+            mem_util_report_verify_mismatch(handle, addr, expected, observed);
             return false;
         }
     }
