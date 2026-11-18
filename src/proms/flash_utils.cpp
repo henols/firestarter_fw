@@ -87,6 +87,7 @@ bool flash_util_wait_ready(firestarter_handle_t* handle, uint32_t address, uint8
     const uint32_t started_ms = (uint32_t)millis();
     uint8_t matches = 0;
     do {
+        rurp_watchdog_reset();  // A chip erase can poll for longer than the period.
         if (((handle->firestarter_get_data(handle, address) ^ expected) & FLASH_DQ7) == 0) {
             if (++matches == 2) {
                 return true;

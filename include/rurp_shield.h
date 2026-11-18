@@ -160,6 +160,16 @@ extern "C" {
     uint16_t rurp_read_divider_adc();
     uint8_t rurp_user_button_pressed();
 
+    /*
+     * Hardware watchdog (issue #160). setup() starts it after board setup.
+     * loop() and each wait that can run longer than the period reset it. A
+     * step that stalls resets the board, and rurp_board_setup() then turns
+     * every high-voltage route off. Targets without a watchdog driver
+     * implement both as no-ops.
+     */
+    void rurp_watchdog_start();
+    void rurp_watchdog_reset();
+
     rurp_configuration_t* rurp_get_config();
     void rurp_save_config(rurp_configuration_t* config);
     void rurp_validate_config(rurp_configuration_t* config);

@@ -385,6 +385,9 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
             handle->firestarter_set_control_register(handle, CTRL_VPE_ENABLE, 1);
             delayMicroseconds(EPROM_VPP_SETUP_US);
             for (uint16_t i = 0; i < group_len; i++) {
+                // A pass over a full group at a wide pulse runs far past the
+                // watchdog period.
+                rurp_watchdog_reset();
                 if (pending[i >> 3] & (uint8_t)(1u << (i & 7))) {
                     handle->firestarter_set_data(handle, handle->address + base + i,
                                                  (uint8_t)handle->data_buffer[base + i]);

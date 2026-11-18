@@ -270,6 +270,16 @@ extern "C" uint8_t rurp_user_button_pressed(void)
 #endif
 }
 
+/* No IWDG driver yet (issue #160 follow-up), so the watchdog calls do
+ * nothing on this port. */
+extern "C" void rurp_watchdog_start(void)
+{
+}
+
+extern "C" void rurp_watchdog_reset(void)
+{
+}
+
 extern "C" long rurp_get_bandgap_adc_reading(void)
 {
     return static_cast<long>(read_adc_average(ADC_CHANNEL_VREFINT, 16U));

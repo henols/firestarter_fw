@@ -54,6 +54,9 @@ void setup() {
     LOG_DEBUG_ID_SUB(DBG_FIRESTARTER_STARTED);
     LOG_DEBUG_ID_SUB_ASTR(DBG_FIRMWARE_VERSION, FW_VERSION);
     LOG_DEBUG_ID_SUB_U8(DBG_HARDWARE_REVISION, (uint8_t)rurp_get_physical_hardware_revision());
+    // Last: the Leonardo serial wait in board setup can block until a host
+    // opens the port, and every route is off until a command arrives.
+    rurp_watchdog_start();
 }
 
 bool parse_command(firestarter_handle_t* handle) {
@@ -183,6 +186,7 @@ void command_done(firestarter_handle_t* handle) {
 }
 
 void loop() {
+    rurp_watchdog_reset();
     if (handle.cmd != CMD_IDLE && fs_timeout_expired(timeout_started_ms, TIMEOUT_MS, (uint32_t)millis())) {
         LOG_ERROR_ID_U8(MSG_ERR_CMD_TIMEOUT, handle.cmd);
         command_done(&handle);

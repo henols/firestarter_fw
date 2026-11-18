@@ -6,12 +6,43 @@
  */
 
 #include <Arduino.h>
+#include <avr/wdt.h>
 #include "rurp_shield.h"
 #include "rurp_pinout.h"
+#include "rurp_serial_utils.h"
 #include "rurp_voltage_math.h"
 #include "rurp_adc_mux.h"
 
 #if defined(ARDUINO_AVR_UNO) || defined(ARDUINO_AVR_ATmega328PB) || defined(ARDUINO_AVR_LEONARDO)
+
+/*
+ * After a watchdog reset the watchdog stays on at its shortest period (about
+ * 15 ms) until WDRF is cleared. A bootloader usually turns it off, but an
+ * image flashed without one must not reset again before setup(). .init3 runs
+ * before the C runtime init and main().
+ */
+extern "C" void rurp_watchdog_early_off(void) __attribute__((naked, used, section(".init3")));
+extern "C" void rurp_watchdog_early_off(void) {
+    MCUSR = 0;
+    wdt_disable();
+}
+
+// 4 s is longer than any single wait that does not reset the watchdog.
+void rurp_watchdog_start() {
+    wdt_enable(WDTO_4S);
+}
+
+void rurp_watchdog_reset() {
+#if defined(ARDUINO_AVR_LEONARDO)
+    // The USB core asks for the bootloader (fw --install) by arming a 120 ms
+    // watchdog when the host closes the port at 1200 baud. A reset here would
+    // cancel that request, so let the watchdog expire.
+    if (SERIAL_PORT.baud() == 1200 && !SERIAL_PORT.dtr()) {
+        return;
+    }
+#endif
+    wdt_reset();
+}
 
 /*
  * This file owns the ADC register access only. The count-to-millivolt

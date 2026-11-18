@@ -238,6 +238,9 @@ extern "C" uint8_t rurp_user_button_pressed() {
     return 0;
 }
 
+extern "C" void rurp_watchdog_start() {}
+extern "C" void rurp_watchdog_reset() {}
+
 /* Hardware revision / config — referenced by some proms; return safe defaults. */
 #if defined(HARDWARE_REVISION) && !defined(HOST_STUBS_CUSTOM_HW_REVISION_BLOCK)
 extern "C" void rurp_detect_hardware_revision() {}
