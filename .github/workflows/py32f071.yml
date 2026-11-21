@@ -31,6 +31,9 @@ concurrency:
 
 jobs:
   build:
+    strategy:
+      matrix:
+        board: [py32f071, micropetal_uno]
     runs-on: ubuntu-latest
 
     steps:
@@ -41,12 +44,21 @@ jobs:
       - name: Build PY32F071 firmware
         id: arm
         uses: ./.github/actions/build-py32f071
+        with:
+          board: ${{ matrix.board }}
+
+      - name: Test ARM command refusal and MicroPetal GPIO isolation
+        env:
+          FIRESTARTER_PY32_COMPILE_COMMANDS: build/py32f071/compile_commands.json
+        run: |
+          python3 -m pip install pytest
+          python3 -m pytest tests/test_py32_command_gate.py tests/test_micropetal_gpio.py -v
 
       - name: Upload failed build diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: firestarter_py32f071_build_diagnostics
+          name: firestarter_${{ matrix.board }}_build_diagnostics
           if-no-files-found: warn
           path: |
             configure.log
@@ -61,20 +73,22 @@ jobs:
         run: |
           set -o pipefail
           arm-none-eabi-size \
-            build/py32f071/firestarter_py32f071.elf
+            build/py32f071/firestarter_${{ matrix.board }}.elf
 
       # Require the install image to exist and be nonempty.
       - name: Verify the install image exists and is non-empty
         working-directory: build/py32f071
         run: |
           set -euxo pipefail
-          test -s firestarter_py32f071.hex
+          test -s firestarter_${{ matrix.board }}.hex
 
       # Upload the install image for PR board bring-up even without a release;
       # release assets are published by release.yml.
       - name: Upload firmware install image
         uses: actions/upload-artifact@v4
         with:
-          name: firestarter_py32f071
+          name: firestarter_${{ matrix.board }}
           if-no-files-found: error
-          path: build/py32f071/firestarter_py32f071.hex
+          path: |
+            build/py32f071/firestarter_${{ matrix.board }}.hex
+            build/py32f071/firestarter_${{ matrix.board }}.bin

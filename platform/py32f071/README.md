@@ -7,6 +7,9 @@ PY32F071 microcontroller. It replaces the Arduino with a native hardware backend
 record for the flash map, the configuration storage, the flash path and the PCB is in
 [DESIGN.md](DESIGN.md).
 
+For the MicroPetal Uno R1 board, see [MICROPETAL.md](MICROPETAL.md). It is a separate,
+experimental target; do not install the placeholder `py32f071` image on that board.
+
 ## Status
 
 - The target is beta only. A stable CLI does not offer the `py32f071` board.

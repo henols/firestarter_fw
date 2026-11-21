@@ -22,6 +22,11 @@ description: >
 
   S-5: every comment in this file names the decision or requirement that
   produced the line it sits on.
+inputs:
+  board:
+    description: PY32F071 board target
+    default: py32f071
+    required: false
 outputs:
   hex_path:
     description: Path to the emitted Intel HEX image
@@ -71,6 +76,8 @@ runs:
           -B build/py32f071 \
           -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+          -DRURP_BOARD="${{ inputs.board }}" \
           2>&1 | tee configure.log
         # Composite steps inherit the caller's checked-out workspace.
 

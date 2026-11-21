@@ -29,6 +29,7 @@ constexpr uint32_t data_mode_mask()
     return 0xFFFFUL << (RURP_PY32F071_DATA_SHIFT * 2U);
 }
 
+#if !RURP_PY32F071_SOCKET_GPIO_DISABLED
 PhysicalControlPin control_pin_to_gpio(uint8_t control_pin)
 {
     switch (control_pin)
@@ -67,6 +68,8 @@ void configure_output(
     configuration.Speed = GPIO_SPEED_FREQ_HIGH;
     HAL_GPIO_Init(port, &configuration);
 }
+
+#endif
 
 void configure_adc()
 {
@@ -159,6 +162,7 @@ extern "C" void rurp_board_setup(void)
 {
     RURP_PY32F071_ENABLE_GPIO_CLOCKS();
 
+#if !RURP_PY32F071_SOCKET_GPIO_DISABLED
     /* Preload active-low controls HIGH before enabling their output drivers. */
     configure_output(
         RURP_PY32F071_CE_PORT,
@@ -183,6 +187,7 @@ extern "C" void rurp_board_setup(void)
         RURP_PY32F071_CONTROL_PIN,
         GPIO_PIN_RESET);
 
+#endif
     rurp_set_data_input();
 
 #if RURP_PY32F071_HAS_USER_BUTTON
@@ -207,6 +212,10 @@ extern "C" void rurp_board_setup(void)
 
 extern "C" void rurp_set_control_pin(uint8_t control_pin, uint8_t state)
 {
+#if RURP_PY32F071_SOCKET_GPIO_DISABLED
+    (void)control_pin;
+    (void)state;
+#else
     const PhysicalControlPin gpio = control_pin_to_gpio(control_pin);
     if (gpio.port == nullptr)
     {
@@ -216,10 +225,12 @@ extern "C" void rurp_set_control_pin(uint8_t control_pin, uint8_t state)
     gpio.port->BSRR = state != 0U
         ? static_cast<uint32_t>(gpio.pin)
         : static_cast<uint32_t>(gpio.pin) << 16U;
+#endif
 }
 
 extern "C" void rurp_set_data_output(void)
 {
+#if !RURP_PY32F071_SOCKET_GPIO_DISABLED
     GPIO_TypeDef *const port = RURP_PY32F071_DATA_PORT;
     const uint32_t mode_mask = data_mode_mask();
     const uint32_t output_modes =
@@ -228,6 +239,7 @@ extern "C" void rurp_set_data_output(void)
     port->MODER = (port->MODER & ~mode_mask) | output_modes;
     port->OTYPER &= ~data_pin_mask();
     port->PUPDR &= ~mode_mask;
+#endif
 }
 
 extern "C" void rurp_set_data_input(void)
@@ -241,6 +253,9 @@ extern "C" void rurp_set_data_input(void)
 
 extern "C" void rurp_write_data_buffer(uint8_t data)
 {
+#if RURP_PY32F071_SOCKET_GPIO_DISABLED
+    (void)data;
+#else
     rurp_set_data_output();
 
     const uint32_t set_mask =
@@ -250,6 +265,7 @@ extern "C" void rurp_write_data_buffer(uint8_t data)
         (RURP_PY32F071_DATA_SHIFT + 16U);
 
     RURP_PY32F071_DATA_PORT->BSRR = set_mask | clear_mask;
+#endif
 }
 
 extern "C" uint8_t rurp_read_data_buffer(void)
