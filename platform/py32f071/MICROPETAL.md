@@ -30,20 +30,23 @@ use the board's non-Uno-compatible UART pin pair for host communication.
 
 ## Why socket operations remain disabled
 
-A header match is not electrical compatibility. In particular:
+The owner confirms that **U4 SN65HVD230 is DNP on the F071 assembly**. Its
+schematic connections to PB8/PB9 do not create a conflict when the part is not
+mounted: D8/D9 are available for the RURP address latches. CAN is an F072 option,
+not a populated peripheral on this F071 target.
 
-- U4 SN65HVD230 RXD/TXD are connected to PB8/PB9. RXD is an output and conflicts
-  with a latch strobe. Isolate the transceiver signals before using these pins.
-  F071 has no CAN controller; the populated transceiver is for the F072 option.
-- JP3 defaults to 5 V VCC, but SN65HVD230 is specified for 3.0–3.6 V operation.
-  With power disconnected, open JP3 1–2 and bridge 2–3 for 3.3 V. Verify the
-  modification and supply voltage before USB connection; JP7 1–2 makes VCCA
-  follow VCC. Do not treat the assembled board as a 5 V Uno replacement.
-- A stock RURP shield is a 5 V design. Establish data/control level compatibility
-  and protect PA2 from the shield's VPP-divider maximum voltage at 3.3 V VCCA.
-  The existing divider constants do not prove that its output is safe.
-- The ARM backend does not yet detect the shield revision on A3. The revision
-  controls physical high-voltage routing. It must be resolved before socket use.
+The non-E PY32F071 datasheet specifies **1.7–5.5 V for VCC and VCCA**, with VCCA
+required to match VCC (supply architecture and Table 5-4). The F071/DNP assembly
+does not need conversion to 3.3 V for an absent CAN transceiver. Default JP3 1–2
+(5 V VCC) and JP7 1–2 (VCCA follows VCC) are not, by themselves, a 5 V shield
+compatibility blocker. The earlier populated-CAN and mandatory-3.3-V claims were
+incorrect for this assembly. A board with U4 fitted is a different configuration
+and must respect that part's supply and signal requirements.
+
+The remaining firmware gap is that the ARM backend does not detect the shield
+revision on A3 or apply the revision-specific control-register mapping. That
+mapping controls physical high-voltage routing and must be implemented before
+socket operations are enabled. Physical backend/timing validation is also pending.
 
 This target retains `RURP_PINMAP_PROVISIONAL`. In addition it suppresses **all
 socket GPIO output writes**, including startup, voltage-monitor setup and command
@@ -52,6 +55,8 @@ analog input and PB14 is the button input. USB/configuration are available for
 bring-up; voltage monitoring is passive only and cannot enable the regulator.
 An attached shield can retain old latch state: do not attach it for this phase.
 No read, program, erase or chip-ID capability is claimed.
+
+Supply reference: [Puya PY32F071 datasheet V1.4](https://www.puyasemi.com/download_path/%E6%95%B0%E6%8D%AE%E6%89%8B%E5%86%8C/MCU%20%E5%BE%AE%E5%A4%84%E7%90%86%E5%99%A8/PY32F071%E7%B3%BB%E5%88%97%E6%95%B0%E6%8D%AE%E6%89%8B%E5%86%8C_V1.4.pdf).
 
 ## Build and install
 
@@ -84,8 +89,9 @@ Use a PY32F071-aware tool and do not feed debugger power into a USB-powered boar
 
 ## Acceptance before enabling the socket
 
-Resolve transceiver isolation, shield levels, ADC range and revision mapping in a
-reviewed adapter/wiring plan. Then measure startup/reset states, every data value,
+Implement and test the ARM shield-revision detection and physical control-register
+mapping. Confirm the assembled F071 board has U4 DNP and VCCA follows VCC; verify
+the shield divider voltage against VCCA. Then measure startup/reset states, every data value,
 bus direction changes, latch/CE/OE sequencing, ADC calibration, USB transport and
 PROM timing on an empty socket. Only after this evidence should a separate change
 remove the provisional and GPIO-output blocks. Recheck every shield revision's
