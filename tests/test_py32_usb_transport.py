@@ -58,6 +58,10 @@ static inline void USBD_IRQHandler(void) {}
 #pragma once
 #define SERIAL_PORT Serial
 #define TIMEOUT_MS 1000
+void _firestarter_emit_frame_wide(uint8_t id, const uint8_t *params, uint16_t param_count);
+static inline void _firestarter_emit_frame(uint8_t id, const uint8_t *params, uint8_t param_count) {
+    _firestarter_emit_frame_wide(id, params, param_count);
+}
 ''')
     (tmp_path / 'rurp_shield.h').write_text('#pragma once\n')
 
