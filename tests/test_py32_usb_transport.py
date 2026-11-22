@@ -135,6 +135,8 @@ const uint8_t *test_tx_bytes(void) { return received; }
 #include <cstring>
 #include <vector>
 
+#include "messages.h"
+
 extern "C" {
 void test_usb_begin(void);
 void test_feed_rx(const uint8_t *, size_t);
@@ -245,7 +247,7 @@ int main() {
     assert(memcmp(decoded.data(), good.data(), good.size()) == 0);
 
     // Real shared MSG_DATA_CHUNK emitter -> USB backend -> fake host.
-    const uint8_t id = 0x42;
+    const uint8_t id = MSG_DATA_CHUNK;
     test_prepare_tx(0);
     rurp_log_id_wide(id, mixed.data(), (uint16_t)mixed.size());
     assert(!rurp_communication_tx_failed());
@@ -284,6 +286,7 @@ int main() {
     compile_ok([host_cxx(), '-std=c++17',
                 *arm_defines('src/boards/rurp_serial_utils.cpp'),
                 '-UNDEBUG', '-I', tmp_path, '-I', REPO_ROOT,
+                '-I', REPO_ROOT / 'include',
                 driver, backend_obj, '-o', binary])
     result = run_binary(binary)
     assert result.returncode == 0, result.stderr
