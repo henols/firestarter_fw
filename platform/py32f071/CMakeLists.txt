@@ -125,7 +125,8 @@ target_compile_definitions(
         RURP_PLATFORM_PY32F071=1
         RURP_BOARD_NAME="${RURP_BOARD}"
         MONITOR_SPEED=250000
-        DATA_BUFFER_SIZE=512
+        # Host accepts advertised blocks up to 4096 bytes. Keep AVR sizes unchanged.
+        DATA_BUFFER_SIZE=4096
         RURP_PY32F071_PINMAP_CONFIGURED=1
         # Shared handlers do not include the board header. Apply the refusal
         # to every translation unit, not only the hardware backend.

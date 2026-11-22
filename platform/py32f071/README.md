@@ -88,9 +88,20 @@ that reaches past the application region.
 
 ## Flash path
 
-The design has three ways to write the flash. [DESIGN.md](DESIGN.md) has the detail.
+**Current decision:** use the chip's factory bootloader for installation and
+updates. A custom USB CDC self-flash bootloader is deferred, not part of this PR.
+For MicroPetal Uno, follow [MICROPETAL.md](MICROPETAL.md): its documented route is
+USB-HID ISP, not the generic DFU client above. Physical installation is unverified.
+Both provisional targets now suppress socket GPIO output writes, including those
+requested by voltage-monitor commands. This does not control factory-bootloader
+pin states: keep the shield disconnected during installation.
 
-1. A self-flash bootloader over the USB CDC link. This is the intended main path. It does not
+The ARM transfer buffer is 4096 bytes (the host's accepted maximum); the USB RX
+ring includes room for the full encoded block. AVR sizes are unchanged.
+
+The longer-term design has three ways to write the flash. [DESIGN.md](DESIGN.md) has the detail.
+
+1. A self-flash bootloader over the USB CDC link. This is a deferred option. It does not
    exist yet.
 2. The factory USB DFU bootloader. This is the recovery path, and the only path that the CLI
    supports now.

@@ -1,8 +1,10 @@
 """Exercise the actual ARM board backend without a connected shield."""
+from ._py32_build import arm_defines
 from ._host_build import INCLUDE, REPO_ROOT, host_cxx, compile_ok, run_binary
 
 
-def test_micropetal_never_drives_socket_gpio(tmp_path):
+def test_provisional_arm_never_drives_socket_gpio(tmp_path):
+    defines = arm_defines("platform/py32f071/src/py32f071_rurp_shield.cpp")
     # Only the HAL and serial transport are fake; the mapping, setup and bus
     # functions under test are the production translation unit.
     hal = r'''
@@ -22,9 +24,15 @@ enum GPIO_PinState { GPIO_PIN_RESET, GPIO_PIN_SET };
 #define GPIO_NOPULL 0
 #define GPIO_PULLUP 1
 inline void HAL_GPIO_Init(GPIO_TypeDef *p, GPIO_InitTypeDef *c) {
-    // Diagnostic setup may only select PA2 as analog and PB14 as input.
+    // Only the selected diagnostic ADC and optional button may be configured.
     extern unsigned adc_pins, button_pins;
-    if (p == GPIOA && c->Pin == (1U << 2) && c->Mode == GPIO_MODE_ANALOG) ++adc_pins;
+    if (p == GPIOA && c->Pin ==
+#ifdef RURP_BOARD_MICROPETAL_UNO
+        (1U << 2)
+#else
+        (1U << 4)
+#endif
+         && c->Mode == GPIO_MODE_ANALOG) ++adc_pins;
     else if (p == GPIOB && c->Pin == (1U << 14) && c->Mode == GPIO_MODE_INPUT) ++button_pins;
     else __builtin_trap();
 }
@@ -45,6 +53,7 @@ struct ADC_ChannelConfTypeDef { uint32_t Channel, Rank, SamplingTime; };
 #define ADC_SAMPLETIME_239CYCLES_5 0
 #define ADC_CHANNEL_VREFINT 17
 #define ADC_CHANNEL_2 2
+#define ADC_CHANNEL_4 4
 #define HAL_OK 0
 inline int HAL_ADC_Init(ADC_HandleTypeDef*) { return HAL_OK; }
 inline int HAL_ADCEx_Calibration_Start(ADC_HandleTypeDef*) { return HAL_OK; }
@@ -71,14 +80,18 @@ extern "C" rurp_configuration_t *rurp_get_config() {
     static rurp_configuration_t c = {}; return &c;
 }
 int main() {
+    static_assert(RURP_PY32F071_SOCKET_GPIO_DISABLED == 1);
+    static_assert(DATA_BUFFER_SIZE == 4096);
+#ifdef RURP_BOARD_MICROPETAL_UNO
     static_assert(RURP_PY32F071_LSB_PIN == (1U << 8));
     static_assert(RURP_PY32F071_MSB_PIN == (1U << 9));
     static_assert(RURP_PY32F071_OE_PIN == (1U << 12));
     static_assert(RURP_PY32F071_CONTROL_PIN == (1U << 15));
     static_assert(RURP_PY32F071_CE_PIN == (1U << 13));
     static_assert(RURP_PY32F071_VPP_ADC_CHANNEL == 2);
+#endif
     rurp_board_setup();
-    assert(adc_pins == 1 && button_pins == 1);
+    assert(adc_pins == 1 && button_pins == RURP_PY32F071_HAS_USER_BUTTON);
     for (unsigned n = 0; n < 256; ++n) {
         rurp_write_data_buffer(n);
         rurp_set_control_pin(n, 0);
@@ -91,16 +104,18 @@ int main() {
     }
     rurp_set_data_output();
     assert(b.MODER == 0);
+#if RURP_PY32F071_HAS_USER_BUTTON
     b.IDR = 1U << 14;
     assert(!rurp_user_button_pressed());
     b.IDR = 0;
     assert(rurp_user_button_pressed());
+#else
+    assert(!rurp_user_button_pressed());
+#endif
 }
 ''')
     binary = tmp_path / 'test'
-    compile_ok([host_cxx(), '-std=c++17', '-DRURP_PLATFORM_PY32F071=1',
-                '-DRURP_BOARD_MICROPETAL_UNO=1', '-DRURP_PY32F071_PINMAP_CONFIGURED=1',
-                '-DMONITOR_SPEED=250000', '-ffunction-sections', '-fdata-sections',
+    compile_ok([host_cxx(), '-std=c++17', *defines, '-UNDEBUG', '-ffunction-sections', '-fdata-sections',
                 '-I', tmp_path, '-I', INCLUDE,
                 driver, REPO_ROOT / 'platform/py32f071/src/py32f071_rurp_shield.cpp',
                 '-o', binary])

@@ -20,6 +20,8 @@ on:
       - "include/**"
       - "src/**"
       - ".github/workflows/py32f071.yml"
+      - ".github/actions/build-py32f071/**"
+      - "tests/**"
   workflow_dispatch:
 
 # A same-repo PR branch now matches both `push` and the path-filtered
@@ -47,12 +49,13 @@ jobs:
         with:
           board: ${{ matrix.board }}
 
-      - name: Test ARM command refusal and MicroPetal GPIO isolation
+      - name: Test ARM command refusal, GPIO isolation and USB RX capacity
         env:
           FIRESTARTER_PY32_COMPILE_COMMANDS: build/py32f071/compile_commands.json
+          FIRESTARTER_PY32_BOARD: ${{ matrix.board }}
         run: |
           python3 -m pip install pytest
-          python3 -m pytest tests/test_py32_command_gate.py tests/test_micropetal_gpio.py -v
+          python3 -m pytest tests/test_py32_command_gate.py tests/test_micropetal_gpio.py tests/test_py32_usb_rx.py -v
 
       - name: Upload failed build diagnostics
         if: failure()

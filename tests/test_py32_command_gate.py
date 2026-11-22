@@ -1,22 +1,10 @@
 """Check refusal with the real ARM command-handler compile definitions."""
-import json
-import os
-import shlex
-from pathlib import Path
-
-import pytest
-
+from ._py32_build import arm_defines
 from ._host_build import INCLUDE, compile_ok, host_cxx, run_binary
 
 
 def test_real_arm_command_handler_refuses_socket_commands(tmp_path):
-    path = os.environ.get('FIRESTARTER_PY32_COMPILE_COMMANDS')
-    if not path:
-        pytest.skip('requires compile_commands.json from an ARM CMake build')
-    entries = json.loads(Path(path).read_text())
-    entry = next(e for e in entries if e['file'].endswith('/src/proms/memory.cpp'))
-    tokens = entry.get('arguments') or shlex.split(entry['command'])
-    defines = [t for t in tokens if t.startswith('-D')]
+    defines = arm_defines('src/proms/memory.cpp')
     driver = tmp_path / 'gate.cpp'
     # No board header: shared command handlers must receive the flag from
     # their build configuration, not accidentally from hardware includes.

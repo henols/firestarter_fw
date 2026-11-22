@@ -73,6 +73,12 @@ The default `RURP_BOARD=py32f071` retains the original placeholder target.
 CI builds both targets and attaches HEX/BIN files to each run. This change does
 not publish releases or add a CLI auto-installer/board choice.
 
+The ARM transfer buffer is **4096 bytes**, the host's current advertised-buffer
+limit. The USB RX ring holds a complete worst-case COBS block including CRC and
+framing overhead. AVR buffer sizes are unchanged.
+
+Use the chip's factory bootloader for now; a custom CDC self-flash bootloader is
+deferred. The application still starts at `0x08000000` (no flash-map migration).
 Use the factory **USB-HID ISP** path on this board, not the generic target's DFU
 instructions. A possible external uploader is
 [puyaisp](https://github.com/wagiminator/MCU-Flash-Tools/blob/main/puyaisp.py).

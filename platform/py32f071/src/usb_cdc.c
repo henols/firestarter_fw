@@ -12,7 +12,13 @@
 #define FIRESTARTER_CDC_OUT_EP 0x02U
 #define FIRESTARTER_CDC_INT_EP 0x83U
 #define FIRESTARTER_CDC_MAX_PACKET_SIZE 64U
-#define FIRESTARTER_USB_RX_CAPACITY 1024U
+/* Queue one complete worst-case COBS block even if main has not drained USB
+ * yet: payload + CRC, COBS code bytes, delimiter, command marker and one
+ * sentinel slot for the ring's full/empty distinction. */
+#define FIRESTARTER_USB_RX_CAPACITY \
+    (DATA_BUFFER_SIZE + (DATA_BUFFER_SIZE / 254U) + 8U)
+_Static_assert(FIRESTARTER_USB_RX_CAPACITY <= UINT16_MAX,
+               "USB RX ring indices must fit uint16_t");
 #define FIRESTARTER_USB_TX_CAPACITY 1024U
 #define FIRESTARTER_USB_TIMEOUT_MS 100U
 

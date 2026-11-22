@@ -127,7 +127,16 @@ uses an erase size of 2048 bytes. That size matches neither the page nor the sec
 
 ## Flash path
 
-This design has three ways to write the flash, in order of priority.
+**Current bring-up decision:** use the chip's built-in bootloader for now.
+Custom USB CDC self-flashing is deferred. `BOOTLOADER` remains zero-length and the
+application origin stays `0x08000000`; no bootloader or flash-map migration is
+introduced. MicroPetal uses the factory **USB-HID ISP** procedure in
+[MICROPETAL.md](MICROPETAL.md), not the generic DFU client. A compatible external
+uploader is acceptable for current bring-up; physical installation is unverified.
+
+The following is the earlier long-term design, not a requirement for this PR.
+Its custom bootloader priority and external-tool rejection are deferred.
+This design considered three ways to write the flash, in order of priority.
 
 1. **Self-flash bootloader over USB CDC and COBS: the intended primary path.** The host sends the
    image over the serial port that it already uses, with the same COBS framing. A small bootloader
