@@ -22,7 +22,7 @@ record of a tested assembly. No firmware was flashed during development.
 | User button | D12 | PB14, active low |
 | /CE | D13 | PB13 |
 | VPP divider | A2 | PA2 / ADC channel 2 |
-| Shield revision detect | A3 | PA3 (not implemented by the ARM backend) |
+| Shield revision detect | A3 | PA3 / ADC channel 3 |
 
 The onboard LED is active low on PB13. BTN is on PB14. Leave JP4 and JP5 open:
 they otherwise join A4/A5 to D12/D13. USB is native, not a UART bridge; do not
@@ -43,10 +43,19 @@ compatibility blocker. The earlier populated-CAN and mandatory-3.3-V claims were
 incorrect for this assembly. A board with U4 fitted is a different configuration
 and must respect that part's supply and signal requirements.
 
-The remaining firmware gap is that the ARM backend does not detect the shield
-revision on A3 or apply the revision-specific control-register mapping. That
-mapping controls physical high-voltage routing and must be implemented before
-socket operations are enabled. Physical backend/timing validation is also pending.
+The MicroPetal target now enables the existing shared revision-specific
+control-register mapping and revision reporting/override. It samples A3 at 12 bits,
+averages eight readings and scales to the existing 10-bit detection bands; ADC
+errors report UNKNOWN rather than selecting a route. A2 supplies the legacy
+Rev 0/1 discriminator. The generic placeholder target remains unchanged.
+
+This is software preparation, not validated hardware detection. With no shield,
+floating ADC inputs can report a meaningless revision. Stock Rev 2.0–2.3 shields
+all detect as the Rev 2.0 class; confirm the physical revision and use the existing
+configuration override when needed. UNKNOWN and invalid revisions map to zero.
+On Rev 2.x, logical A18 aliases the physical pin-1 VPP switch, A16 moves to bit 5,
+and the drop bit maps to bit 0; Rev 0/1 keep their original mapping. These routes
+are covered by host regressions, but physical backend/timing validation is pending.
 
 This target retains `RURP_PINMAP_PROVISIONAL`. In addition it suppresses **all
 socket GPIO output writes**, including startup, voltage-monitor setup and command
@@ -95,10 +104,12 @@ Use a PY32F071-aware tool and do not feed debugger power into a USB-powered boar
 
 ## Acceptance before enabling the socket
 
-Implement and test the ARM shield-revision detection and physical control-register
+Bench-validate the ARM shield-revision detection and physical control-register
 mapping. Confirm the assembled F071 board has U4 DNP and VCCA follows VCC; verify
 the shield divider voltage against VCCA. Then measure startup/reset states, every data value,
 bus direction changes, latch/CE/OE sequencing, ADC calibration, USB transport and
 PROM timing on an empty socket. Only after this evidence should a separate change
 remove the provisional and GPIO-output blocks. Recheck every shield revision's
 physical high-voltage routes; a successful compile is not a hardware test.
+
+Use the staged [board-arrival checklist](MICROPETAL_BRINGUP.md) to record evidence.

@@ -33,6 +33,9 @@ inline void HAL_GPIO_Init(GPIO_TypeDef *p, GPIO_InitTypeDef *c) {
         (1U << 4)
 #endif
          && c->Mode == GPIO_MODE_ANALOG) ++adc_pins;
+#ifdef RURP_BOARD_MICROPETAL_UNO
+    else if (p == GPIOA && c->Pin == (1U << 3) && c->Mode == GPIO_MODE_ANALOG) ++adc_pins;
+#endif
     else if (p == GPIOB && c->Pin == (1U << 14) && c->Mode == GPIO_MODE_INPUT) ++button_pins;
     else __builtin_trap();
 }
@@ -53,15 +56,18 @@ struct ADC_ChannelConfTypeDef { uint32_t Channel, Rank, SamplingTime; };
 #define ADC_SAMPLETIME_239CYCLES_5 0
 #define ADC_CHANNEL_VREFINT 17
 #define ADC_CHANNEL_2 2
+#define ADC_CHANNEL_3 3
 #define ADC_CHANNEL_4 4
 #define HAL_OK 0
 inline int HAL_ADC_Init(ADC_HandleTypeDef*) { return HAL_OK; }
 inline int HAL_ADCEx_Calibration_Start(ADC_HandleTypeDef*) { return HAL_OK; }
-inline int HAL_ADC_ConfigChannel(ADC_HandleTypeDef*, ADC_ChannelConfTypeDef*) { return HAL_OK; }
+extern unsigned adc_channel, adc_a2, adc_a3;
+extern bool adc_error;
+inline int HAL_ADC_ConfigChannel(ADC_HandleTypeDef*, ADC_ChannelConfTypeDef* c) { adc_channel = c->Channel; return HAL_OK; }
 inline int HAL_ADC_Start(ADC_HandleTypeDef*) { return HAL_OK; }
 inline int HAL_ADC_Stop(ADC_HandleTypeDef*) { return HAL_OK; }
-inline int HAL_ADC_PollForConversion(ADC_HandleTypeDef*, unsigned) { return HAL_OK; }
-inline unsigned HAL_ADC_GetValue(ADC_HandleTypeDef*) { return 2048; }
+inline int HAL_ADC_PollForConversion(ADC_HandleTypeDef*, unsigned) { return adc_error ? 1 : HAL_OK; }
+inline unsigned HAL_ADC_GetValue(ADC_HandleTypeDef*) { return adc_channel == 3 ? adc_a3 : adc_a2; }
 '''
     for pin in range(16):
         hal += f'\n#define GPIO_PIN_{pin} (1U << {pin})\n'
@@ -75,6 +81,9 @@ inline unsigned HAL_ADC_GetValue(ADC_HandleTypeDef*) { return 2048; }
 #include "rurp_pinmap_guard.h"
 GPIO_TypeDef a = {}, b = {};
 unsigned adc_pins, button_pins;
+unsigned adc_channel, adc_a2 = 2048, adc_a3;
+bool adc_error;
+extern "C" void rurp_log_id_u8(uint8_t, uint8_t) {}
 void rurp_serial_begin(unsigned long) {}
 extern "C" rurp_configuration_t *rurp_get_config() {
     static rurp_configuration_t c = {}; return &c;
@@ -91,7 +100,43 @@ int main() {
     static_assert(RURP_PY32F071_VPP_ADC_CHANNEL == 2);
 #endif
     rurp_board_setup();
-    assert(adc_pins == 1 && button_pins == RURP_PY32F071_HAS_USER_BUTTON);
+    assert(adc_pins == 1 + RURP_PY32F071_HAS_USER_BUTTON && button_pins == RURP_PY32F071_HAS_USER_BUTTON);
+#ifdef RURP_BOARD_MICROPETAL_UNO
+    rurp_get_config()->hardware_revision = 0xFF;
+    for (unsigned n = 0; n < 1024; ++n) {
+        adc_a3 = n << 2;
+        rurp_detect_hardware_revision();
+        const unsigned expected = n < 200 ? REVISION_2_0
+            : n < 220 ? REVISION_UNKNOWN : n < 600 ? REVISION_2_3 : REVISION_1;
+        assert(rurp_get_physical_hardware_revision() == expected);
+    }
+    adc_a2 = 4000;
+    rurp_detect_hardware_revision();
+    assert(rurp_get_physical_hardware_revision() == REVISION_0);
+    adc_error = true;
+    rurp_detect_hardware_revision();
+    assert(rurp_get_physical_hardware_revision() == REVISION_UNKNOWN);
+    adc_error = false;
+    // Exhaust every logical register value on all supported revisions, plus
+    // unknown/invalid overrides. A18 becomes the physical P1 switch on Rev2;
+    // A16 moves to physical bit 5 and the logical drop bit moves to bit 0.
+    const uint8_t revs[] = {REVISION_0, REVISION_1, REVISION_2_0, REVISION_2_1,
+        REVISION_2_2, REVISION_2_3, REVISION_UNKNOWN, 0x7F};
+    for (uint8_t rev : revs) {
+        rurp_get_config()->hardware_revision = rev;
+        for (unsigned n = 0; n < 512; ++n) {
+            unsigned expected = 0;
+            if (rev == REVISION_0 || rev == REVISION_1)
+                expected = (n & 255) | ((n & 256) ? 1 : 0);
+            else if (rev != REVISION_UNKNOWN && rev != 0x7F)
+                expected = (n & 0xDE) | ((n & 256) ? 1 : 0)
+                    | ((n & 1) ? 32 : 0) | ((n & 32) ? 8 : 0);
+            assert(rurp_map_ctrl_reg_for_hardware_revision(n) == expected);
+            rurp_write_to_register(CONTROL_REGISTER, n);
+            assert(a.BSRR == 0 && b.BSRR == 0);
+        }
+    }
+#endif
     for (unsigned n = 0; n < 256; ++n) {
         rurp_write_data_buffer(n);
         rurp_set_control_pin(n, 0);

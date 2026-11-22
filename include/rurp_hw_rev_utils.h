@@ -49,6 +49,11 @@ uint8_t rurp_get_physical_hardware_revision() {
 // RURP shield's AVcc plane carries data-buffer + control-register switching
 // loads — not a quiet ADC reference). ~104 µs added boot latency,
 // ~30 B added Flash — well within the [20, 300] B delta band.
+#if defined(RURP_BOARD_MICROPETAL_UNO)
+// ARM samples are normalized to the AVR detector's 10-bit scale. 0xFFFF
+// denotes an ADC error, never a valid revision band.
+extern uint16_t rurp_py32_revision_adc(bool divider);
+#else
 static uint16_t analog_read_avg8(uint8_t pin) {
     uint16_t sum = 0;
     for (uint8_t i = 0; i < 8; i++) {
@@ -57,7 +62,12 @@ static uint16_t analog_read_avg8(uint8_t pin) {
     return (uint16_t)(sum >> 3);  // average over 8 samples
 }
 
+#endif
+
 void rurp_detect_hardware_revision() {
+#if defined(RURP_BOARD_MICROPETAL_UNO)
+    const uint16_t adc_a3 = rurp_py32_revision_adc(false);
+#else
     // Both ADC pins INPUT (high-Z); let the R41+R_top divider drive A3.
     pinMode(PIN_HW_REVISION_DETECT_ADC, INPUT);
     pinMode(PIN_VPP_VOLTAGE_ADC, INPUT);
@@ -65,8 +75,11 @@ void rurp_detect_hardware_revision() {
     // 8-sample averaging on the A3 detect divider to robustify against AVcc
     // switching noise.
     uint16_t adc_a3 = analog_read_avg8(PIN_HW_REVISION_DETECT_ADC);
+#endif
 
-    if (adc_a3 < ADC_BAND_R41_4K7_HIGH) {
+    if (adc_a3 > 1023U) {
+        revision = REVISION_UNKNOWN;
+    } else if (adc_a3 < ADC_BAND_R41_4K7_HIGH) {
         // Low band: R41 to GND only. Stock Rev 2.0, 2.1, 2.2 AND 2.3 all
         // read here, because A3 is INPUT (high-Z) and R41's value no longer
         // sets the level. All report REVISION_2_0. The operator sets the
@@ -81,7 +94,13 @@ void rurp_detect_hardware_revision() {
         // High band — no R41 (pre-detect-resistor era). Disambiguate Rev 0 vs
         // Rev 1 via the legacy A2 divider check (preserved from prior code —
         // already correct, already shipped).
+#if defined(RURP_BOARD_MICROPETAL_UNO)
+        const uint16_t adc_a2 = rurp_py32_revision_adc(true);
+        revision = adc_a2 > 1023U ? REVISION_UNKNOWN
+            : (adc_a2 < 1000U ? REVISION_1 : REVISION_0);
+#else
         revision = analogRead(PIN_VPP_VOLTAGE_ADC) < 1000 ? REVISION_1 : REVISION_0;
+#endif
     } else {
         // adc_a3 in the [ADC_BAND_R41_4K7_HIGH, ADC_BAND_R41_10K_LOW) guard gap —
         // physical detect inconclusive. EEPROM hw_revision override is the

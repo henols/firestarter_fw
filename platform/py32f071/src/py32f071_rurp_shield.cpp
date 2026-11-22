@@ -81,6 +81,11 @@ void configure_adc()
     analog_input.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(RURP_PY32F071_VPP_ADC_PORT, &analog_input);
 
+#if defined(RURP_BOARD_MICROPETAL_UNO)
+    analog_input.Pin = GPIO_PIN_3;
+    HAL_GPIO_Init(GPIOA, &analog_input);
+#endif
+
     adc_handle.Instance = ADC1;
     adc_handle.Init.Resolution = ADC_RESOLUTION_12B;
     adc_handle.Init.DataAlign = ADC_DATAALIGN_RIGHT;
@@ -157,6 +162,38 @@ uint16_t read_adc_average(uint32_t channel, uint8_t sample_count)
     return static_cast<uint16_t>(sum / sample_count);
 }
 }
+
+#if defined(RURP_BOARD_MICROPETAL_UNO)
+uint16_t rurp_py32_revision_adc(bool divider)
+{
+    // The common revision detector uses 10-bit AVR thresholds. Discard a
+    // conversion after switching channels, then average at 12 bits before
+    // scaling. A3 has no internal pull-up; never drive the shield detect net.
+    const uint32_t channel = divider ? ADC_CHANNEL_2 : ADC_CHANNEL_3;
+    (void)read_adc_channel(channel);
+    uint32_t sum = 0U;
+    for (uint8_t i = 0; i < 8U; ++i)
+    {
+        // Use HAL directly here: unlike the voltage helper, zero is a valid
+        // low-band reading and must not be confused with an ADC failure.
+        ADC_ChannelConfTypeDef c = {};
+        c.Channel = channel;
+        c.Rank = ADC_REGULAR_RANK_1;
+        c.SamplingTime = ADC_SAMPLETIME_239CYCLES_5;
+        if (HAL_ADC_ConfigChannel(&adc_handle, &c) != HAL_OK ||
+            HAL_ADC_Start(&adc_handle) != HAL_OK)
+            return 0xFFFFU;
+        if (HAL_ADC_PollForConversion(&adc_handle, 10U) != HAL_OK)
+        {
+            HAL_ADC_Stop(&adc_handle);
+            return 0xFFFFU;
+        }
+        sum += HAL_ADC_GetValue(&adc_handle) & 0x0FFFU;
+        HAL_ADC_Stop(&adc_handle);
+    }
+    return static_cast<uint16_t>((sum / 8U) >> 2U);
+}
+#endif
 
 extern "C" void rurp_board_setup(void)
 {

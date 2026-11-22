@@ -85,6 +85,13 @@ jobs:
           set -euxo pipefail
           test -s firestarter_${{ matrix.board }}.hex
 
+      - name: Record firmware provenance and image checksums
+        working-directory: build/py32f071
+        run: |
+          git rev-parse HEAD > BUILD_COMMIT.txt
+          printf '%s\n' '${{ matrix.board }}' > BUILD_BOARD.txt
+          sha256sum firestarter_${{ matrix.board }}.{bin,hex,elf,map} > SHA256SUMS
+
       # Upload the install image for PR board bring-up even without a release;
       # release assets are published by release.yml.
       - name: Upload firmware install image
@@ -95,3 +102,8 @@ jobs:
           path: |
             build/py32f071/firestarter_${{ matrix.board }}.hex
             build/py32f071/firestarter_${{ matrix.board }}.bin
+            build/py32f071/firestarter_${{ matrix.board }}.elf
+            build/py32f071/firestarter_${{ matrix.board }}.map
+            build/py32f071/BUILD_COMMIT.txt
+            build/py32f071/BUILD_BOARD.txt
+            build/py32f071/SHA256SUMS

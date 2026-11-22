@@ -135,7 +135,7 @@ target_compile_definitions(
 )
 
 if(RURP_BOARD STREQUAL "micropetal_uno")
-    target_compile_definitions(${TARGET_NAME} PRIVATE RURP_BOARD_MICROPETAL_UNO=1)
+    target_compile_definitions(${TARGET_NAME} PRIVATE RURP_BOARD_MICROPETAL_UNO=1 HARDWARE_REVISION=1)
 endif()
 
 target_compile_features(${TARGET_NAME} PRIVATE c_std_11 cxx_std_17)

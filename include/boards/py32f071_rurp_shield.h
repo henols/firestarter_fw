@@ -87,8 +87,8 @@
 #if defined(RURP_BOARD_MICROPETAL_UNO)
 /* MicroPetal Uno R1, non-E PY32F071C1BU6. See platform/py32f071/MICROPETAL.md.
  * U4 CAN transceiver is DNP on the F071 assembly: D8/D9 are available.
- * Keep socket outputs disabled until ARM shield-revision routing is implemented
- * and the board backend is validated. This is not a CAN or 5 V GPIO conflict.
+ * Keep socket outputs disabled until ARM shield-revision routing
+ * and the board backend are validated on hardware. This is not a CAN or 5 V GPIO conflict.
  */
 #define RURP_PY32F071_LSB_PORT GPIOB
 #define RURP_PY32F071_LSB_PIN GPIO_PIN_8
