@@ -22,3 +22,8 @@ fail if the expected target/provisional flags are missing. Without an ARM databa
 these tests skip; the ARM CI matrix always supplies both variables. The USB test
 queues a full worst-case encoded block before draining it and repeats across ring
 wraparound. Hardware USB enumeration and throughput still require a real board.
+
+The PY32 USB transport integration regression compiles the production USB backend
+and shared frame encoder/decoder with host fakes and the **actual ARM CMake flags**.
+It checks complete 4096-byte COBS/CRC frames, invalid-frame resynchronization,
+and outgoing MSG_DATA_CHUNK framing during normal and stalled USB IN transfers.

@@ -88,6 +88,8 @@ static volatile uint16_t rx_tail;
 static volatile uint16_t tx_head;
 static volatile uint16_t tx_tail;
 static volatile bool tx_busy;
+/* Latch partial writes until a fresh USB configuration; never resume a broken frame. */
+static volatile bool tx_failed;
 static bool usb_initialized;
 
 static struct usbd_interface cdc_control_interface;
@@ -130,6 +132,13 @@ static void usb_start_next_transmit_safe(void)
 
 void usbd_configure_done_callback(void)
 {
+    /* A reconfigured USB link starts a new session, not a continuation of an
+     * interrupted data frame. Discard its old receive and transmit queues. */
+    rx_head = rx_tail = 0U;
+    tx_head = tx_tail = 0U;
+    tx_busy = false;
+    tx_failed = false;
+
     usbd_ep_start_read(
         FIRESTARTER_CDC_OUT_EP,
         cdc_out_packet,
@@ -208,6 +217,7 @@ void rurp_communication_begin(void)
     tx_head = 0U;
     tx_tail = 0U;
     tx_busy = false;
+    tx_failed = false;
 
     __HAL_RCC_SYSCFG_CLK_ENABLE();
     __HAL_RCC_USB_CLK_ENABLE();
@@ -270,8 +280,9 @@ size_t py32_usb_read_bytes(char *buffer, size_t length)
 
 size_t py32_usb_write(const uint8_t *buffer, size_t length)
 {
-    if (!usb_initialized || !usb_device_is_configured())
+    if (tx_failed || !usb_initialized || !usb_device_is_configured())
     {
+        tx_failed = true;
         return 0U;
     }
 
@@ -297,6 +308,10 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
     }
 
     usb_start_next_transmit_safe();
+    if (count != length)
+    {
+        tx_failed = true;
+    }
     return count;
 }
 
@@ -309,6 +324,15 @@ void py32_usb_flush(void)
            (int32_t)(RURP_MILLIS() - deadline) < 0)
     {
     }
+    if (tx_head != tx_tail || tx_busy)
+    {
+        tx_failed = true;
+    }
+}
+
+int rurp_communication_tx_failed(void)
+{
+    return tx_failed;
 }
 
 void USB_IRQHandler(void)
