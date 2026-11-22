@@ -29,7 +29,7 @@ struct usbd_interface { int unused; };
 struct usbd_endpoint { unsigned ep_addr; void (*ep_cb)(uint8_t, uint32_t); };
 static inline bool usb_device_is_configured(void) { return true; }
 static inline void usbd_ep_start_read(uint8_t ep, uint8_t *buf, size_t n) {}
-static inline void usbd_ep_start_write(uint8_t ep, const uint8_t *buf, size_t n) {}
+static inline int usbd_ep_start_write(uint8_t ep, const uint8_t *buf, size_t n) { return 0; }
 static inline void usbd_desc_register(const uint8_t *desc) {}
 static inline struct usbd_interface *usbd_cdc_acm_init_intf(struct usbd_interface *p) { return p; }
 static inline void usbd_add_interface(struct usbd_interface *p) {}

@@ -98,6 +98,8 @@ int main() {
     static_assert(RURP_PY32F071_CONTROL_PIN == (1U << 15));
     static_assert(RURP_PY32F071_CE_PIN == (1U << 13));
     static_assert(RURP_PY32F071_VPP_ADC_CHANNEL == 2);
+    static_assert(RURP_PY32F071_REV_ADC_CHANNEL == 3);
+    static_assert(RURP_PY32F071_REV_ADC_PIN == (1U << 3));
 #endif
     rurp_board_setup();
     assert(adc_pins == 1 + RURP_PY32F071_HAS_USER_BUTTON && button_pins == RURP_PY32F071_HAS_USER_BUTTON);

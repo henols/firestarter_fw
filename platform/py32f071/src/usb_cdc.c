@@ -88,7 +88,17 @@ static volatile uint16_t rx_tail;
 static volatile uint16_t tx_head;
 static volatile uint16_t tx_tail;
 static volatile bool tx_busy;
-/* Latch partial writes until a fresh USB configuration; never resume a broken frame. */
+/* ISR publishes session changes, main owns all ring resets. A frame keeps
+ * its generation across every single-byte Serial.write call. */
+static volatile uint32_t usb_generation;
+static uint32_t applied_generation;
+static uint32_t frame_generation;
+static uint32_t packet_generation;
+static volatile bool reset_pending;
+static volatile bool endpoint_reset_pending;
+static volatile bool dtr_enabled;
+static bool frame_active;
+static bool frame_failed;
 static volatile bool tx_failed;
 static bool usb_initialized;
 
@@ -101,9 +111,33 @@ static uint16_t ring_next(uint16_t value, uint16_t capacity)
     return value == capacity ? 0U : value;
 }
 
+/* Called with IRQs disabled. Do not re-arm OUT in the ISR: no new-session
+ * bytes may be accepted before the old RX queue has been discarded. */
+static void usb_apply_session_reset(void)
+{
+    if (!reset_pending) return;
+    rx_head = rx_tail = 0U;
+    tx_head = tx_tail = 0U;
+    /* SET_CONFIGURATION cancels hardware transfers. DTR does not: retain the
+     * in-flight packet/buffer until its completion (and never append a ZLP). */
+    if (endpoint_reset_pending) tx_busy = false;
+    endpoint_reset_pending = false;
+    reset_pending = false;
+    applied_generation = usb_generation;
+    tx_failed = false;
+    if (usb_device_is_configured())
+        usbd_ep_start_read(FIRESTARTER_CDC_OUT_EP, cdc_out_packet, sizeof(cdc_out_packet));
+}
+
+static void usb_restore_irq(uint32_t state)
+{
+    if (state == 0U) __enable_irq();
+}
+
 static void usb_start_next_transmit(void)
 {
-    if (tx_busy || tx_head == tx_tail || !usb_device_is_configured())
+    if (reset_pending || tx_failed || tx_busy || tx_head == tx_tail ||
+        !usb_device_is_configured())
     {
         return;
     }
@@ -116,7 +150,12 @@ static void usb_start_next_transmit(void)
     }
 
     tx_busy = true;
-    usbd_ep_start_write(FIRESTARTER_CDC_IN_EP, cdc_in_packet, count);
+    packet_generation = usb_generation;
+    if (usbd_ep_start_write(FIRESTARTER_CDC_IN_EP, cdc_in_packet, count) != 0)
+    {
+        tx_busy = false;
+        tx_failed = true;
+    }
 }
 
 static void usb_start_next_transmit_safe(void)
@@ -132,23 +171,15 @@ static void usb_start_next_transmit_safe(void)
 
 void usbd_configure_done_callback(void)
 {
-    /* A reconfigured USB link starts a new session, not a continuation of an
-     * interrupted data frame. Discard its old receive and transmit queues. */
-    rx_head = rx_tail = 0U;
-    tx_head = tx_tail = 0U;
-    tx_busy = false;
-    tx_failed = false;
-
-    usbd_ep_start_read(
-        FIRESTARTER_CDC_OUT_EP,
-        cdc_out_packet,
-        sizeof(cdc_out_packet));
-    usb_start_next_transmit();
+    ++usb_generation;
+    reset_pending = true;
+    endpoint_reset_pending = true;
 }
 
 static void firestarter_cdc_bulk_out(uint8_t endpoint, uint32_t byte_count)
 {
     (void)endpoint;
+    if (reset_pending) return;
 
     for (uint32_t index = 0U; index < byte_count; ++index)
     {
@@ -172,6 +203,11 @@ static void firestarter_cdc_bulk_in(uint8_t endpoint, uint32_t byte_count)
 {
     (void)endpoint;
 
+    if (reset_pending || packet_generation != usb_generation)
+    {
+        tx_busy = false;
+        return;
+    }
     if (byte_count != 0U &&
         (byte_count % FIRESTARTER_CDC_MAX_PACKET_SIZE) == 0U)
     {
@@ -195,8 +231,10 @@ static struct usbd_endpoint cdc_in_endpoint = {
 
 void usbd_cdc_acm_set_dtr(uint8_t interface_number, bool enabled)
 {
-    (void)interface_number;
-    (void)enabled;
+    if (interface_number != 0U || dtr_enabled == enabled) return;
+    dtr_enabled = enabled;
+    ++usb_generation;
+    reset_pending = true;
 }
 
 void usbd_cdc_acm_set_rts(uint8_t interface_number, bool enabled)
@@ -233,31 +271,64 @@ void rurp_communication_begin(void)
     usb_initialized = true;
 }
 
+uint32_t py32_usb_generation(void)
+{
+    return usb_generation;
+}
+
 int py32_usb_available(void)
 {
-    const uint16_t head = rx_head;
-    const uint16_t tail = rx_tail;
-
-    return head >= tail
-        ? (int)(head - tail)
+    const uint32_t state = __get_PRIMASK();
+    __disable_irq();
+    usb_apply_session_reset();
+    const uint16_t head = rx_head, tail = rx_tail;
+    const int count = head >= tail ? (int)(head - tail)
         : (int)(FIRESTARTER_USB_RX_CAPACITY - tail + head);
+    usb_restore_irq(state);
+    return count;
 }
 
 int py32_usb_peek(void)
 {
-    return rx_tail == rx_head ? -1 : (int)rx_buffer[rx_tail];
+    const uint32_t state = __get_PRIMASK();
+    __disable_irq();
+    usb_apply_session_reset();
+    const int value = rx_tail == rx_head ? -1 : (int)rx_buffer[rx_tail];
+    usb_restore_irq(state);
+    return value;
 }
 
 int py32_usb_read(void)
 {
-    if (rx_tail == rx_head)
+    const uint32_t state = __get_PRIMASK();
+    __disable_irq();
+    usb_apply_session_reset();
+    int value = -1;
+    if (rx_tail != rx_head)
     {
-        return -1;
+        value = rx_buffer[rx_tail];
+        rx_tail = ring_next(rx_tail, FIRESTARTER_USB_RX_CAPACITY);
     }
-
-    const uint8_t value = rx_buffer[rx_tail];
-    rx_tail = ring_next(rx_tail, FIRESTARTER_USB_RX_CAPACITY);
+    usb_restore_irq(state);
     return value;
+}
+
+/* Each log frame owns one generation; a reconnect cannot resume its tail. */
+void py32_usb_frame_begin(void)
+{
+    const uint32_t state = __get_PRIMASK();
+    __disable_irq();
+    usb_apply_session_reset();
+    frame_active = true;
+    frame_generation = applied_generation;
+    frame_failed = tx_failed || !usb_device_is_configured();
+    usb_restore_irq(state);
+}
+
+void py32_usb_frame_end(void)
+{
+    frame_failed = frame_failed || tx_failed || frame_generation != usb_generation;
+    frame_active = false;
 }
 
 size_t py32_usb_read_bytes(char *buffer, size_t length)
@@ -280,59 +351,71 @@ size_t py32_usb_read_bytes(char *buffer, size_t length)
 
 size_t py32_usb_write(const uint8_t *buffer, size_t length)
 {
-    if (tx_failed || !usb_initialized || !usb_device_is_configured())
-    {
-        tx_failed = true;
-        return 0U;
-    }
-
+    const uint32_t generation = frame_active ? frame_generation : usb_generation;
     size_t count = 0U;
     uint32_t deadline = RURP_MILLIS() + FIRESTARTER_USB_TIMEOUT_MS;
-
     while (count < length)
     {
-        const uint16_t next = ring_next(tx_head, FIRESTARTER_USB_TX_CAPACITY);
-        if (next == tx_tail)
+        const uint32_t state = __get_PRIMASK();
+        __disable_irq();
+        usb_apply_session_reset();
+        if (generation != usb_generation)
         {
-            usb_start_next_transmit_safe();
-            if ((int32_t)(RURP_MILLIS() - deadline) >= 0)
-            {
-                break;
-            }
-            continue;
+            frame_failed = true;
+            usb_restore_irq(state);
+            break;
         }
-
-        tx_buffer[tx_head] = buffer[count++];
-        tx_head = next;
-        deadline = RURP_MILLIS() + FIRESTARTER_USB_TIMEOUT_MS;
-    }
-
-    usb_start_next_transmit_safe();
-    if (count != length)
-    {
-        tx_failed = true;
+        if (tx_failed || !usb_initialized || !usb_device_is_configured())
+        {
+            frame_failed = tx_failed = true;
+            usb_restore_irq(state);
+            break;
+        }
+        const uint16_t next = ring_next(tx_head, FIRESTARTER_USB_TX_CAPACITY);
+        const bool full = next == tx_tail;
+        if (!full)
+        {
+            tx_buffer[tx_head] = buffer[count++];
+            tx_head = next;
+        }
+        usb_start_next_transmit();
+        usb_restore_irq(state);
+        const uint32_t now = RURP_MILLIS();
+        if (!full) deadline = now + FIRESTARTER_USB_TIMEOUT_MS;
+        else if ((int32_t)(now - deadline) >= 0)
+        {
+            frame_failed = tx_failed = true;
+            break;
+        }
     }
     return count;
 }
 
 void py32_usb_flush(void)
 {
+    const uint32_t generation = frame_active ? frame_generation : usb_generation;
     const uint32_t deadline = RURP_MILLIS() + FIRESTARTER_USB_TIMEOUT_MS;
-
     usb_start_next_transmit_safe();
-    while ((tx_head != tx_tail || tx_busy) &&
-           (int32_t)(RURP_MILLIS() - deadline) < 0)
+    while (tx_head != tx_tail || tx_busy)
     {
+        if (generation != usb_generation)
+        {
+            frame_failed = true;
+            return;
+        }
+        if (tx_failed || (int32_t)(RURP_MILLIS() - deadline) >= 0)
+        {
+            frame_failed = tx_failed = true;
+            return;
+        }
     }
-    if (tx_head != tx_tail || tx_busy)
-    {
-        tx_failed = true;
-    }
+    if (generation != usb_generation) frame_failed = true;
 }
 
 int rurp_communication_tx_failed(void)
 {
-    return tx_failed;
+    /* Result of this frame, not an earlier frame's error cleared by a reconnect. */
+    return frame_failed;
 }
 
 void USB_IRQHandler(void)

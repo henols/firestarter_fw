@@ -82,8 +82,8 @@ void configure_adc()
     HAL_GPIO_Init(RURP_PY32F071_VPP_ADC_PORT, &analog_input);
 
 #if defined(RURP_BOARD_MICROPETAL_UNO)
-    analog_input.Pin = GPIO_PIN_3;
-    HAL_GPIO_Init(GPIOA, &analog_input);
+    analog_input.Pin = RURP_PY32F071_REV_ADC_PIN;
+    HAL_GPIO_Init(RURP_PY32F071_REV_ADC_PORT, &analog_input);
 #endif
 
     adc_handle.Instance = ADC1;
@@ -169,7 +169,7 @@ uint16_t rurp_py32_revision_adc(bool divider)
     // The common revision detector uses 10-bit AVR thresholds. Discard a
     // conversion after switching channels, then average at 12 bits before
     // scaling. A3 has no internal pull-up; never drive the shield detect net.
-    const uint32_t channel = divider ? ADC_CHANNEL_2 : ADC_CHANNEL_3;
+    const uint32_t channel = divider ? RURP_PY32F071_VPP_ADC_CHANNEL : RURP_PY32F071_REV_ADC_CHANNEL;
     (void)read_adc_channel(channel);
     uint32_t sum = 0U;
     for (uint8_t i = 0; i < 8U; ++i)

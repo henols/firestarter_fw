@@ -34,6 +34,7 @@ concurrency:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         board: [py32f071, micropetal_uno]
     runs-on: ubuntu-latest

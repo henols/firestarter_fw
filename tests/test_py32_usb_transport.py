@@ -12,9 +12,12 @@ def test_large_usb_frames_and_stalled_host(tmp_path):
     (tmp_path / 'avr').mkdir()
     (tmp_path / 'boards/py32f071_rurp_shield.h').write_text('''
 #pragma once
-#define __get_PRIMASK() 0
-#define __disable_irq() ((void)0)
-#define __enable_irq() ((void)0)
+unsigned test_irq_state(void);
+void test_disable_irq(void);
+void test_enable_irq(void);
+#define __get_PRIMASK() test_irq_state()
+#define __disable_irq() test_disable_irq()
+#define __enable_irq() test_enable_irq()
 #define __HAL_RCC_SYSCFG_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_USB_CLK_ENABLE() ((void)0)
 #define NVIC_EnableIRQ(x) ((void)0)
@@ -38,8 +41,9 @@ struct usbd_endpoint { unsigned ep_addr; void (*ep_cb)(uint8_t, uint32_t); };
 void fake_ep_write(uint8_t, const uint8_t *, size_t);
 static inline bool usb_device_is_configured(void) { return true; }
 static inline void usbd_ep_start_read(uint8_t ep, uint8_t *buf, size_t n) {}
-static inline void usbd_ep_start_write(uint8_t ep, const uint8_t *buf, size_t n) {
+static inline int usbd_ep_start_write(uint8_t ep, const uint8_t *buf, size_t n) {
     fake_ep_write(ep, buf, n);
+    return 0;
 }
 static inline void usbd_desc_register(const uint8_t *desc) {}
 static inline struct usbd_interface *usbd_cdc_acm_init_intf(struct usbd_interface *p) { return p; }
@@ -78,6 +82,42 @@ static size_t pending_size;
 static bool pending;
 static bool paused;
 static uint32_t now_ms;
+static unsigned irq_state, unlock_event, timer_event, event_at;
+static bool event_fired;
+static void fire_event(unsigned kind) {
+    event_fired = true;
+    if (kind == 1) {
+        pending = false; /* SET_CONFIGURATION cancels the endpoint transfer. */
+        usbd_configure_done_callback();
+    } else {
+        usbd_cdc_acm_set_dtr(0, false);
+        usbd_cdc_acm_set_dtr(0, true);
+    }
+}
+unsigned test_irq_state(void) { return irq_state; }
+void test_disable_irq(void) { assert(!irq_state); irq_state = 1; }
+void test_enable_irq(void) {
+    assert(irq_state); irq_state = 0;
+    if (unlock_event) { unsigned kind = unlock_event; unlock_event = 0; fire_event(kind); }
+}
+void test_event_during_frame(unsigned kind) {
+    timer_event = kind; event_at = now_ms + 1000; event_fired = false;
+}
+void test_assert_event_fired(void) { assert(event_fired && !irq_state); }
+void test_ring_reset_ownership(void) {
+    assert(!pending);
+    rx_head = 70; rx_tail = 65; tx_head = 30; tx_tail = 25;
+    usbd_configure_done_callback();
+    /* The ISR must not mutate either ring while main might hold an index. */
+    assert(rx_head == 70 && rx_tail == 65 && tx_head == 30 && tx_tail == 25);
+    assert(py32_usb_available() == 0);
+    assert(rx_head == 0 && rx_tail == 0 && tx_head == 0 && tx_tail == 0);
+    rx_head = 2; rx_tail = 0; rx_buffer[0] = 12;
+    unlock_event = 1; /* interrupt immediately after a protected RX consume */
+    assert(py32_usb_read() == 12);
+    assert(py32_usb_available() == 0 && py32_usb_read() == -1);
+}
+void test_arm_rx_interrupt(void) { unlock_event = 1; event_fired = false; }
 
 void fake_ep_write(uint8_t ep, const uint8_t *data, size_t count) {
     assert(ep == FIRESTARTER_CDC_IN_EP && count <= sizeof(pending_packet));
@@ -89,6 +129,9 @@ void fake_ep_write(uint8_t ep, const uint8_t *data, size_t count) {
 
 uint32_t test_millis(void) {
     ++now_ms;
+    if (timer_event && now_ms >= event_at) {
+        unsigned kind = timer_event; timer_event = 0; fire_event(kind);
+    }
     if (pending && !paused) {
         const size_t sent = pending_size;
         pending = false;
@@ -103,9 +146,11 @@ uint32_t test_millis(void) {
 void test_usb_begin(void) {
     rurp_communication_begin();
     usbd_configure_done_callback();
+    (void)py32_usb_available();
 }
 
 void test_feed_rx(const uint8_t *data, size_t count) {
+    (void)py32_usb_available(); /* main services reset before OUT is re-armed */
     for (size_t offset = 0; offset < count;) {
         size_t n = count - offset;
         if (n > sizeof(cdc_out_packet)) n = sizeof(cdc_out_packet);
@@ -121,8 +166,18 @@ void test_prepare_tx(int hold) {
     paused = hold != 0;
     now_ms = 0U;
     usbd_configure_done_callback();
+    (void)py32_usb_available();
 }
 
+void test_reopen(void) {
+    paused = false;
+    /* DTR does not cancel an in-flight USB packet. Let its completion occur;
+     * the new frame must then follow it, with no old queued frame tail. */
+    fire_event(2);
+    (void)py32_usb_available();
+    (void)test_millis();
+    received_count = 0;
+}
 size_t test_tx_length(void) { return received_count; }
 const uint8_t *test_tx_bytes(void) { return received; }
 ''')
@@ -150,6 +205,14 @@ int py32_usb_read(void);
 size_t py32_usb_read_bytes(char *, size_t);
 size_t py32_usb_write(const uint8_t *, size_t);
 void py32_usb_flush(void);
+void py32_usb_frame_begin(void);
+void py32_usb_frame_end(void);
+uint32_t py32_usb_generation(void);
+void test_reopen(void);
+void test_event_during_frame(unsigned);
+void test_assert_event_fired(void);
+void test_ring_reset_ownership(void);
+void test_arm_rx_interrupt(void);
 int rurp_communication_tx_failed(void);
 }
 
@@ -270,9 +333,45 @@ int main() {
     assert(rurp_communication_tx_failed());
     assert(py32_usb_write(mixed.data(), 1) == 0);
 
-    // Only a new USB configuration clears the latched error.
-    test_prepare_tx(0);
+    // Reopening the port, without SET_CONFIGURATION, recovers a stalled link.
+    test_reopen();
+    const std::vector<uint8_t> small = {3, 0, 5};
+    rurp_log_id_wide(id, small.data(), (uint16_t)small.size());
     assert(!rurp_communication_tx_failed());
+    assert(test_tx_length() == small.size() + 9);
+    assert(test_tx_bytes()[6] == id);
+
+    // Reconfiguration and DTR reopen in the middle of the real frame emitter:
+    // no remainder of the old frame may enter the new session's TX queue.
+    for (unsigned event : {1U, 2U}) {
+        test_prepare_tx(0);
+        test_event_during_frame(event);
+        rurp_log_id_wide(id, mixed.data(), (uint16_t)mixed.size());
+        test_assert_event_fired();
+        assert(rurp_communication_tx_failed());
+        const size_t before = test_tx_length();
+        assert(before <= 1064); // at most pre-event bytes + one hardware packet
+        rurp_log_id_wide(id, small.data(), (uint16_t)small.size());
+        assert(!rurp_communication_tx_failed());
+        // DTR may deliver one packet already handed to the USB controller.
+        // It must not deliver any further old-frame software-queue bytes.
+        const size_t after = test_tx_length();
+        assert(after >= before + small.size() + 9);
+        const uint8_t *tail = test_tx_bytes() + after - small.size() - 9;
+        assert(tail[0] == 0xAA && tail[1] == 0x55 && tail[6] == id);
+        assert(memcmp(tail + 7, small.data(), small.size()) == 0);
+    }
+    test_prepare_tx(0);
+    test_ring_reset_ownership();
+
+    // A reconnect while decoding must abort the old COBS frame without
+    // draining/stitching a new session's input into it.
+    const auto encoded = frame(good);
+    test_feed_rx(encoded.data(), encoded.size());
+    test_arm_rx_interrupt();
+    assert(rurp_communication_read_data(decoded.data(), DATA_BUFFER_SIZE) < 0);
+    test_assert_event_fired();
+    assert(decode_from_usb(frame(good), decoded) == (int)good.size());
     return 0;
 }
 ''')

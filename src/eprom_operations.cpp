@@ -166,7 +166,9 @@ static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
 
 #if defined(RURP_PLATFORM_PY32F071)
     /* The shared frame emitter has a void API. On USB, fail this operation
-     * explicitly if the transport could not deliver a complete frame. */
+     * explicitly if this chunk frame could not be delivered. The frame-scoped
+     * result cannot be cleared by a reconnect mid-emit. An error reply on a
+     * broken link is not reliable; the host must treat its timeout as failure. */
     if (rurp_communication_tx_failed()) {
         handle->response_code = RESPONSE_CODE_ERROR;
         return false;

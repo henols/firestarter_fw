@@ -7,8 +7,9 @@ PY32F071 microcontroller. It replaces the Arduino with a native hardware backend
 record for the flash map, the configuration storage, the flash path and the PCB is in
 [DESIGN.md](DESIGN.md).
 
-For the MicroPetal Uno R1 board, see [MICROPETAL.md](MICROPETAL.md). It is a separate,
+For the MicroPetal Uno R1 board, see [MicroPetal installation](https://github.com/henols/firestarter/wiki/MicroPetal-Uno). It is a separate,
 experimental target; do not install the placeholder `py32f071` image on that board.
+Its pin map and design decisions are in [DESIGN.md](DESIGN.md#micropetal-uno-r1-target).
 
 ## Status
 
@@ -29,7 +30,8 @@ experimental target; do not install the placeholder `py32f071` image on that boa
 - A 48 MHz system clock from the internal HSI oscillator and the PLL. USB needs this clock.
 - USB CDC serial through CherryUSB. The target does not define `SERIAL_ON_IO`.
 - Millisecond timing from SysTick, and microsecond delays from TIM3.
-- Inactive (high) `/CE` and `/OE` levels at startup.
+- Both provisional targets keep socket GPIOs high impedance, including `/CE` and `/OE`.
+  The inactive-output implementation remains behind the GPIO-output guard.
 - An eight-bit data bus on one GPIO port. A read takes one `IDR` snapshot. A write is one `BSRR`
   store.
 - A 12-bit ADC voltage reading, corrected with the internal VREFINT reference.
@@ -90,7 +92,7 @@ that reaches past the application region.
 
 **Current decision:** use the chip's factory bootloader for installation and
 updates. A custom USB CDC self-flash bootloader is deferred, not part of this PR.
-For MicroPetal Uno, follow [MICROPETAL.md](MICROPETAL.md): its documented route is
+For MicroPetal Uno, follow [MicroPetal installation](https://github.com/henols/firestarter/wiki/MicroPetal-Uno): its documented route is
 USB-HID ISP, not the generic DFU client above. Physical installation is unverified.
 Both provisional targets now suppress socket GPIO output writes, including those
 requested by voltage-monitor commands. This does not control factory-bootloader
