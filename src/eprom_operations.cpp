@@ -164,6 +164,15 @@ static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
                      (const uint8_t*)handle->data_buffer,
                      (uint16_t)handle->data_size);
 
+#if defined(RURP_PLATFORM_PY32F071)
+    /* The shared frame emitter has a void API. On USB, fail this operation
+     * explicitly if the transport could not deliver a complete frame. */
+    if (rurp_communication_tx_failed()) {
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return false;
+    }
+#endif
+
     if (!op_wait_for_ack(handle)) {
         return false;
     }

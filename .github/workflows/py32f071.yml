@@ -55,7 +55,7 @@ jobs:
           FIRESTARTER_PY32_BOARD: ${{ matrix.board }}
         run: |
           python3 -m pip install pytest
-          python3 -m pytest tests/test_py32_command_gate.py tests/test_micropetal_gpio.py tests/test_py32_usb_rx.py -v
+          python3 -m pytest tests/test_py32_command_gate.py tests/test_micropetal_gpio.py tests/test_py32_usb_rx.py tests/test_py32_usb_transport.py -v
 
       - name: Upload failed build diagnostics
         if: failure()
