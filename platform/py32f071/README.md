@@ -7,6 +7,10 @@ PY32F071 microcontroller. It replaces the Arduino with a native hardware backend
 record for the flash map, the configuration storage, the flash path and the PCB is in
 [DESIGN.md](DESIGN.md).
 
+For the MicroPetal Uno R1 board, see [MicroPetal installation](https://github.com/henols/firestarter/wiki/MicroPetal-Uno). It is a separate,
+experimental target; do not install the placeholder `py32f071` image on that board.
+Its pin map and design decisions are in [DESIGN.md](DESIGN.md#micropetal-uno-r1-target).
+
 ## Status
 
 - The target is beta only. A stable CLI does not offer the `py32f071` board.
@@ -26,7 +30,8 @@ record for the flash map, the configuration storage, the flash path and the PCB 
 - A 48 MHz system clock from the internal HSI oscillator and the PLL. USB needs this clock.
 - USB CDC serial through CherryUSB. The target does not define `SERIAL_ON_IO`.
 - Millisecond timing from SysTick, and microsecond delays from TIM3.
-- Inactive (high) `/CE` and `/OE` levels at startup.
+- Both provisional targets keep socket GPIOs high impedance, including `/CE` and `/OE`.
+  The inactive-output implementation remains behind the GPIO-output guard.
 - An eight-bit data bus on one GPIO port. A read takes one `IDR` snapshot. A write is one `BSRR`
   store.
 - A 12-bit ADC voltage reading, corrected with the internal VREFINT reference.
@@ -48,9 +53,10 @@ record for the flash map, the configuration storage, the flash path and the PCB 
 PA4 with ADC channel 4 follows the Puya ADC example. The other pins are placeholders that give a
 simple bus. Do not use them as PCB wiring.
 
-The only place that sets the pins is `include/boards/py32f071_rurp_shield.h`. That header defines
-`RURP_PY32F071_PINMAP_PROVISIONAL 1`. The flag makes `configure_memory()` refuse the socket
-commands. When a final schematic exists, change the pin definitions and clear the flag.
+Pin assignments live in `include/boards/py32f071_pinmap.h`; MicroPetal has its own
+`micropetal_uno_pinmap.h`. CMake selects the header and the per-board
+`RURP_PINMAP_PROVISIONAL` flag. See [the design record](DESIGN.md#bring-up-safety-and-buffers)
+for the guards, RAM budget and conditions for enabling socket operations.
 
 ## Build
 
@@ -85,9 +91,13 @@ that reaches past the application region.
 
 ## Flash path
 
-The design has three ways to write the flash. [DESIGN.md](DESIGN.md) has the detail.
+See [the design record](DESIGN.md#flash-path) for the current factory-bootloader
+decision, and [the MicroPetal wiki](https://github.com/henols/firestarter/wiki/MicroPetal-Uno)
+for its board-specific installation procedure. Physical installation is unverified.
 
-1. A self-flash bootloader over the USB CDC link. This is the intended main path. It does not
+The longer-term design has three ways to write the flash. [DESIGN.md](DESIGN.md) has the detail.
+
+1. A self-flash bootloader over the USB CDC link. This is a deferred option. It does not
    exist yet.
 2. The factory USB DFU bootloader. This is the recovery path, and the only path that the CLI
    supports now.

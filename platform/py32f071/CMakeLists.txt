@@ -24,7 +24,15 @@ endif()
 
 # Host release assets must be named firestarter_<board>.hex using the
 # RURP_BOARD_NAME reported by firmware.
-set(TARGET_NAME firestarter_py32f071.elf)
+set(RURP_BOARD "py32f071" CACHE STRING "PY32F071 board: py32f071 or micropetal_uno")
+set(RURP_BOARDS py32f071 micropetal_uno)
+set_property(CACHE RURP_BOARD PROPERTY STRINGS ${RURP_BOARDS})
+if(NOT RURP_BOARD IN_LIST RURP_BOARDS)
+    message(FATAL_ERROR "Unknown RURP_BOARD: ${RURP_BOARD}")
+endif()
+set(RURP_PROVISIONAL_py32f071 1)
+set(RURP_PROVISIONAL_micropetal_uno 1)
+set(TARGET_NAME firestarter_${RURP_BOARD}.elf)
 set(REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 set(PY32_SDK_ROOT "${py32f071_sdk_SOURCE_DIR}")
 set(LINKER_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/linker/PY32F071xB_FLASH.ld")
@@ -118,12 +126,21 @@ target_compile_definitions(
         USE_HAL_DRIVER
         PY32F071xB
         RURP_PLATFORM_PY32F071=1
-        RURP_BOARD_NAME="py32f071"
+        RURP_BOARD_NAME="${RURP_BOARD}"
         MONITOR_SPEED=250000
+        # Keep bring-up RAM small until socket operations are validated.
         DATA_BUFFER_SIZE=512
+        RURP_PY32_PINMAP_HEADER="boards/${RURP_BOARD}_pinmap.h"
         RURP_PY32F071_PINMAP_CONFIGURED=1
+        # Shared handlers do not include the board header. Apply the refusal
+        # to every translation unit, not only the hardware backend.
+        RURP_PINMAP_PROVISIONAL=${RURP_PROVISIONAL_${RURP_BOARD}}
         RURP_HAS_VPP_DAC=0
 )
+
+if(RURP_BOARD STREQUAL "micropetal_uno")
+    target_compile_definitions(${TARGET_NAME} PRIVATE RURP_BOARD_MICROPETAL_UNO=1 HARDWARE_REVISION=1)
+endif()
 
 target_compile_features(${TARGET_NAME} PRIVATE c_std_11 cxx_std_17)
 
@@ -152,7 +169,7 @@ target_link_options(
         --specs=nano.specs
         --specs=nosys.specs
         -Wl,--gc-sections
-        "-Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/firestarter_py32f071.map,--cref"
+        "-Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/firestarter_${RURP_BOARD}.map,--cref"
 )
 
 target_link_libraries(${TARGET_NAME} PRIVATE m)
@@ -163,8 +180,8 @@ set_target_properties(
         LINK_DEPENDS "${LINKER_SCRIPT}"
 )
 
-set(BIN_FILE "${CMAKE_CURRENT_BINARY_DIR}/firestarter_py32f071.bin")
-set(HEX_FILE "${CMAKE_CURRENT_BINARY_DIR}/firestarter_py32f071.hex")
+set(BIN_FILE "${CMAKE_CURRENT_BINARY_DIR}/firestarter_${RURP_BOARD}.bin")
+set(HEX_FILE "${CMAKE_CURRENT_BINARY_DIR}/firestarter_${RURP_BOARD}.hex")
 
 add_custom_command(
     TARGET ${TARGET_NAME}

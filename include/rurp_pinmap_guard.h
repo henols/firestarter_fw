@@ -24,8 +24,9 @@
  *
  * Identity/config commands (CMD_FW_VERSION, CMD_CONFIG, CMD_HW_VERSION) stay
  * allowed -- the board must remain discoverable while its pin map is
- * provisional. CMD_READ_VPP/CMD_READ_VPE stay allowed too: they are read-only
- * ADC monitor taps that do not route voltage to the socket.
+ * provisional. CMD_READ_VPP/CMD_READ_VPE stay allowed too, but their handlers request
+ * regulator control writes. Provisional PY32 backends therefore suppress ALL
+ * socket GPIO output writes, independently of this memory-command gate.
  *
  * The `#if` MUST live here, never inside is_memory_cmd()'s body, so that
  * predicate's truth table is the same in every env. static inline in a header for the same reason

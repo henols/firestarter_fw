@@ -88,6 +88,13 @@ extern "C" {
     size_t rurp_communication_read_bytes(char* buffer, size_t length);
     int rurp_communication_read_data(char* buffer, size_t cap);
 
+#if defined(RURP_PLATFORM_PY32F071)
+    /* Result of the latest USB frame; cleared by a new session/frame. */
+    int rurp_communication_tx_failed(void);
+#else
+    static inline int rurp_communication_tx_failed(void) { return 0; }
+#endif
+
 
     // ID-encoded wire frame emit -- the sole log surface.
     void rurp_log_id(uint8_t id, const uint8_t* params, uint8_t param_count);

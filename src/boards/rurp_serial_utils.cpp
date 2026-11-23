@@ -70,7 +70,11 @@ size_t rurp_communication_read_bytes(char* buffer, size_t size) {
 /* Forward declaration: crc8_ccitt is defined below with the PROGMEM table. */
 static uint8_t crc8_ccitt(uint8_t crc, uint8_t b);
 
+#if defined(RURP_PLATFORM_PY32F071)
+static void _drain_to_delimiter(bool wait_on_silence, uint32_t generation) {
+#else
 static void _drain_to_delimiter(bool wait_on_silence) {
+#endif
     /* Consume bytes up to and including the next 0x00 to re-anchor the RX cursor
      * on a frame boundary. This must never hang.
      *
@@ -84,17 +88,26 @@ static void _drain_to_delimiter(bool wait_on_silence) {
      * This is a MID-FRAME INTER-BYTE guard, not an idle timer: loop() gates entry
      * into the decoder on available() > 0, so it is never entered when idle. */
     while (1) {
+#if defined(RURP_PLATFORM_PY32F071)
+        if (generation != py32_usb_generation()) return;
+#endif
         if (rurp_communication_available() <= 0) {
             if (!wait_on_silence) {
                 return;  /* caller already proved silence; nothing buffered to drain */
             }
             unsigned long start = millis();
             while (rurp_communication_available() <= 0) {
+#if defined(RURP_PLATFORM_PY32F071)
+                if (generation != py32_usb_generation()) return;
+#endif
                 if (millis() - start >= TIMEOUT_MS) {
                     return;  /* deadline: stop draining, return bounded */
                 }
             }
         }
+#if defined(RURP_PLATFORM_PY32F071)
+        if (generation != py32_usb_generation()) return;
+#endif
         int d = rurp_communication_read();
         if (d < 0 || (uint8_t)d == 0x00) {
             break;
@@ -103,6 +116,9 @@ static void _drain_to_delimiter(bool wait_on_silence) {
 }
 
 int rurp_communication_read_data(char* buffer, size_t cap) {
+#if defined(RURP_PLATFORM_PY32F071)
+    const uint32_t generation = py32_usb_generation();
+#endif
     size_t out = 0;                   /* committed payload bytes in buffer[]         */
     uint8_t block_remaining = 0;      /* data bytes remaining in current COBS run    */
     bool was_254_run = false;         /* current run started with 0xFF (no impl zero) */
@@ -121,11 +137,16 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
      *       no NUL write follows; consumers use data_buffer[i] index only).
      * The cap is a compile-time constant at both call sites — no runtime
      * user input controls the bound.  The overflow/drain path is unchanged. */
+#if defined(RURP_PLATFORM_PY32F071)
+#define DRAIN(wait_) _drain_to_delimiter(wait_, generation)
+#else
+#define DRAIN(wait_) _drain_to_delimiter(wait_)
+#endif
 #define PUSH(b_)                                \
     do {                                        \
         if (has_last) {                         \
             if (out >= cap) {                   \
-                _drain_to_delimiter(true);      \
+                DRAIN(true);                    \
                 return -2;                      \
             }                                   \
             buffer[out++] = (char)last_byte;    \
@@ -135,6 +156,9 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
     } while (0)
 
     while (1) {
+#if defined(RURP_PLATFORM_PY32F071)
+        if (generation != py32_usb_generation()) return -1;
+#endif
         /* Delimiter-driven: wait until a byte is available.
          * Bounded mid-frame inter-byte deadline — armed only once
          * decoding is underway (loop() gated entry on available()>0, so we
@@ -147,19 +171,28 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
         if (rurp_communication_available() <= 0) {
             unsigned long start = millis();
             while (rurp_communication_available() <= 0) {
+#if defined(RURP_PLATFORM_PY32F071)
+                if (generation != py32_usb_generation()) return -1;
+#endif
                 if (millis() - start >= TIMEOUT_MS) {
                     /* 53-04: silence already proven + buffer empty -> drain without a
                      * second redundant TIMEOUT_MS wait (brings a dropped-delimiter
                      * frame error from ~2 s to ~1 s). */
-                    _drain_to_delimiter(false);
+                    DRAIN(false);
                     return -1;             /* mid-frame inter-byte deadline exceeded */
                 }
             }
         }
 
+#if defined(RURP_PLATFORM_PY32F071)
+        if (generation != py32_usb_generation()) return -1;
+#endif
         int b = rurp_communication_read();
+#if defined(RURP_PLATFORM_PY32F071)
+        if (generation != py32_usb_generation()) return -1;
+#endif
         if (b < 0) {
-            _drain_to_delimiter(true);
+            DRAIN(true);
             return -1; /* read() underrun */
         }
         uint8_t byte = (uint8_t)b;
@@ -201,6 +234,7 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
     }
 
 #undef PUSH
+#undef DRAIN
 
     /* --- Normal frame end --- */
     if (!has_last) {
@@ -358,6 +392,9 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
         return;
     }
 
+#if defined(RURP_PLATFORM_PY32F071)
+    py32_usb_frame_begin();
+#endif
     // Magic preamble (4 bytes from PROGMEM).
     SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[0]));
     SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[1]));
@@ -391,6 +428,9 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
     SERIAL_PORT.write((uint8_t)0x0A);
 
     SERIAL_PORT.flush();
+#if defined(RURP_PLATFORM_PY32F071)
+    py32_usb_frame_end();
+#endif
 }
 
 // Weak default for rurp_log_id — no com_mode gate (Leonardo path). Uno

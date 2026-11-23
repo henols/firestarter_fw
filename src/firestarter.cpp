@@ -44,8 +44,9 @@ void setup() {
     rurp_load_config();
 #ifdef HARDWARE_REVISION
     // Detect after rurp_board_setup and rurp_load_config: serial is then up,
-    // so the detection's REVISION_UNKNOWN warning reaches the host, every
-    // rail is off, and the EEPROM revision override is loaded.
+    // so the EEPROM revision override is loaded and every rail is off.
+    // ARM USB is not enumerated yet: its boot warning is lost; the ready
+    // reply reports the effective revision, including UNKNOWN.
     // rurp_board_setup does not touch the two analog detect pins.
     rurp_detect_hardware_revision();
 #endif

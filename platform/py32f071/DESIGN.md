@@ -127,7 +127,16 @@ uses an erase size of 2048 bytes. That size matches neither the page nor the sec
 
 ## Flash path
 
-This design has three ways to write the flash, in order of priority.
+**Current bring-up decision:** use the chip's built-in bootloader for now.
+Custom USB CDC self-flashing is deferred. `BOOTLOADER` remains zero-length and the
+application origin stays `0x08000000`; no bootloader or flash-map migration is
+introduced. MicroPetal uses the factory **USB-HID ISP** procedure in
+[the MicroPetal wiki](https://github.com/henols/firestarter/wiki/MicroPetal-Uno), not the generic DFU client. A compatible external
+uploader is acceptable for current bring-up; physical installation is unverified.
+
+The following is a deferred long-term design, not a current implementation requirement.
+Its custom bootloader priority and external-tool rejection are deferred.
+This design considered three ways to write the flash, in order of priority.
 
 1. **Self-flash bootloader over USB CDC and COBS: the intended primary path.** The host sends the
    image over the serial port that it already uses, with the same COBS framing. A small bootloader
@@ -240,14 +249,14 @@ You fix R3 already when you select the part.
 
 This rule is stricter than on the AVR boards, for these reasons:
 
-1. **The pin map is provisional.** `include/boards/py32f071_rurp_shield.h` defines
-   `RURP_PY32F071_PINMAP_PROVISIONAL`. All pins except the ADC input are placeholders.
+1. **The pin maps are provisional.** CMake sets `RURP_PINMAP_PROVISIONAL` per board.
+   The generic example is not PCB wiring; the MicroPetal map is source-backed but unmeasured.
 2. **A pin can have the wrong direction.** If the firmware drives a pin as an output and the real
    board connects that pin to a PROM output, the two outputs fight. That can damage the chip on
    the first power-up. The AVR pin map has measurements from three board revisions. This map has
    none.
-3. **Nobody measured the startup levels.** The code sets `/CE` and `/OE` high at startup, but
-   no measurement confirms it.
+3. **Nobody measured the startup levels.** The provisional images leave socket outputs
+   disabled. Reset and bootloader pin states still require physical measurements.
 4. **A DFU install is the worst case.** The board starts with `BOOT0` high. The application GPIO
    setup does not run. The factory bootloader sets the pins, and no Firestarter code controls
    them.
@@ -265,3 +274,99 @@ This rule is stricter than on the AVR boards, for these reasons:
 5. **What the factory bootloader enumerates as.** One USB listing on real silicon can answer it.
 6. **The release asset for self-flash.** The host looks for `firestarter_<board>.hex`. A
    self-flash protocol can need a raw binary file.
+
+
+## MicroPetal Uno R1 target
+
+This target reuses the native PY32F071 backend, not an Arduino core. It targets the
+**non-E PY32F071C1BU6**, with 128 KiB flash and 16 KiB SRAM. It does not target F072.
+It uses the existing 48 MHz USB clock, USB CDC on PA11/PA12, flash configuration
+storage and ADC backend. Firmware identity and output names are `micropetal_uno`.
+
+Hardware source: [MicroPetal](https://github.com/AndersBNielsen/MicroPetal),
+`MicroPetal_Uno.kicad_sch` and matching PCB at commit
+`0c21572f2c54b36d6858e2456d5876b644cc742c`. This is a source-level mapping, not a
+record of a tested assembly. No firmware was flashed during development.
+
+## RURP shield mapping
+
+| Shield signal | Uno header | MicroPetal MCU |
+|---|---|---|
+| Data D0–D7 | D0–D7 | PB0–PB7 |
+| Low address latch | D8 | PB8 |
+| High address latch | D9 | PB9 |
+| /OE | D10 | PB12 |
+| Control latch | D11 | PB15 |
+| User button | D12 | PB14, active low |
+| /CE | D13 | PB13 |
+| VPP divider | A2 | PA2 / ADC channel 2 |
+| Shield revision detect | A3 | PA3 / ADC channel 3 |
+
+The onboard LED is active low on PB13. BTN is on PB14. Leave JP4 and JP5 open:
+they otherwise join A4/A5 to D12/D13. USB is native, not a UART bridge; do not
+use the board's non-Uno-compatible UART pin pair for host communication.
+
+## Why socket operations remain disabled
+
+The owner confirms that **U4 SN65HVD230 is DNP on the F071 assembly**. Its
+schematic connections to PB8/PB9 do not create a conflict when the part is not
+mounted: D8/D9 are available for the RURP address latches. CAN is an F072 option,
+not a populated peripheral on this F071 target.
+
+The non-E PY32F071 datasheet specifies **1.7–5.5 V for VCC and VCCA**, with VCCA
+required to match VCC (supply architecture and Table 5-4). The F071/DNP assembly
+does not need conversion to 3.3 V for an absent CAN transceiver. Default JP3 1–2
+(5 V VCC) and JP7 1–2 (VCCA follows VCC) are not, by themselves, a 5 V shield
+compatibility blocker. The earlier populated-CAN and mandatory-3.3-V claims were
+incorrect for this assembly. A board with U4 fitted is a different configuration
+and must respect that part's supply and signal requirements.
+
+The MicroPetal target now enables the existing shared revision-specific
+control-register mapping and revision reporting/override. It samples A3 at 12 bits,
+averages eight readings and scales to the existing 10-bit detection bands; ADC
+errors report UNKNOWN rather than selecting a route. A2 supplies the legacy
+Rev 0/1 discriminator. The generic placeholder target remains unchanged.
+
+This is software preparation, not validated hardware detection. With no shield,
+floating ADC inputs can report a meaningless revision. Stock Rev 2.0–2.3 shields
+all detect as the Rev 2.0 class; confirm the physical revision and use the existing
+configuration override when needed. UNKNOWN and invalid revisions map to zero.
+On Rev 2.x, logical A18 aliases the physical pin-1 VPP switch, A16 moves to bit 5,
+and the drop bit maps to bit 0; Rev 0/1 keep their original mapping. These routes
+are covered by host regressions, but physical backend/timing validation is pending.
+
+### Bring-up safety and buffers
+
+Both targets use one CMake-selected `RURP_PINMAP_PROVISIONAL` flag for memory-command
+refusal and the backend output gate. The backend suppresses **all
+socket GPIO output writes**, including startup, voltage-monitor setup and command
+cleanup. D0–D7 stay inputs; control pins stay at their reset input state. On MicroPetal,
+PA2/PA3 are analog inputs and PB14 is the button input. USB/configuration are available for
+bring-up; voltage monitoring is passive only and cannot enable the regulator.
+An attached shield can retain old latch state: do not attach it for this phase.
+No read, program, erase or chip-ID capability is claimed. Do not clear the flag
+until the physical routes, startup/reset sequence, ADC accuracy and timing pass
+bench validation; builds and host simulation cannot authorize socket operation.
+
+The bring-up transfer buffer is 512 bytes, with a fixed 1024-byte USB RX ring.
+OUT is armed only when a complete 64-byte packet fits. When the ring fills, the
+endpoint NAKs until main drains enough space; no full-frame ring allocation is
+needed. Host regressions cover production-sized frames and a test-only 4096-byte
+stress configuration. Any larger production buffer requires a measured RAM/stack
+budget and belongs with socket-operation enablement. AVR sizes are unchanged.
+
+Supply reference: [Puya PY32F071 datasheet V1.4](https://www.puyasemi.com/download_path/%E6%95%B0%E6%8D%AE%E6%89%8B%E5%86%8C/MCU%20%E5%BE%AE%E5%A4%84%E7%90%86%E5%99%A8/PY32F071%E7%B3%BB%E5%88%97%E6%95%B0%E6%8D%AE%E6%89%8B%E5%86%8C_V1.4.pdf).
+
+
+
+### USB session ownership and recovery
+
+The USB ISR publishes a monotonically increasing session generation on configuration and DTR transitions. It does not reset ring indices. Main applies pending resets with IRQs masked and re-arms OUT when endpoint ownership and ring space permit. TX byte enqueue and RX peek/read/snapshot are IRQ-protected. The frame emitter pins one generation across all byte writes; a session change fails the frame and prevents its remaining bytes from entering the new queue. The COBS decoder and its resynchronization drain also stop at a generation change.
+
+A stalled IN endpoint latches TX failure for the session. Reopening the CDC port (DTR transition) clears the software queues and permits a fresh frame without USB re-enumeration. A DTR change does not cancel the hardware packet already submitted: its buffer remains owned until completion, and no old-frame ZLP or further queued bytes are submitted. The host can still receive that one already-submitted packet and must resynchronize on a new valid frame. SET_CONFIGURATION resets endpoint ownership. Peak IRQ latency and actual close/reopen/reset behavior remain hardware-validation items.
+
+The read-operation TX check is the result of the current MSG_DATA_CHUNK frame, not a stale session-wide success/failure snapshot. A failed frame aborts the operation; a diagnostic cannot reliably traverse that same failed link. The host must treat a timeout as a failed operation and reconnect, not accept partial data.
+
+MicroPetal revision detection runs before USB enumeration, so its boot-time UNKNOWN warning is not delivered on ARM. The normal ready reply reports the effective hardware revision, including UNKNOWN when no override is set. This is not proof of physical shield identification.
+
+Operator build/install and board-arrival procedures live in the [MicroPetal wiki](https://github.com/henols/firestarter/wiki/MicroPetal-Uno) and [bring-up checklist](https://github.com/henols/firestarter/wiki/MicroPetal-Bring-up), not a second per-board design record.

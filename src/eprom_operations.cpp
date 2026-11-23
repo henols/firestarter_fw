@@ -164,6 +164,15 @@ static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
                      (const uint8_t*)handle->data_buffer,
                      (uint16_t)handle->data_size);
 
+    /* The shared frame emitter has a void API. On USB, fail this operation
+     * explicitly if this chunk frame could not be delivered. The frame-scoped
+     * result cannot be cleared by a reconnect mid-emit. An error reply on a
+     * broken link is not reliable; the host must treat its timeout as failure. */
+    if (rurp_communication_tx_failed()) {
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return false;
+    }
+
     if (!op_wait_for_ack(handle)) {
         return false;
     }

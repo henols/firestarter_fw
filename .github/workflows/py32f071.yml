@@ -20,17 +20,31 @@ on:
       - "include/**"
       - "src/**"
       - ".github/workflows/py32f071.yml"
+      - ".github/actions/build-py32f071/**"
+      - "tests/_py32_build.py"
+      - "tests/_host_build.py"
+      - "tests/test_py32_*.py"
+      - "tests/test_micropetal_*.py"
+      - "test/native/avr/_shared/frame_ref.h"
   workflow_dispatch:
 
-# A same-repo PR branch now matches both `push` and the path-filtered
-# `pull_request`, so supersede stale runs per ref rather than queueing both to
-# completion. Never cancel on main.
+# Supersede stale runs per ref. Same-repo PRs use their push run below;
+# fork PRs use pull_request. Never cancel main.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - board: py32f071
+            tests: 'tests/test_py32_*.py tests/test_micropetal_*.py'
+          - board: micropetal_uno
+            tests: 'tests/test_micropetal_*.py'
     runs-on: ubuntu-latest
 
     steps:
@@ -41,12 +55,21 @@ jobs:
       - name: Build PY32F071 firmware
         id: arm
         uses: ./.github/actions/build-py32f071
+        with:
+          board: ${{ matrix.board }}
+
+      - name: Test ARM behavior with actual build definitions
+        env:
+          FIRESTARTER_PY32_COMPILE_COMMANDS: build/py32f071/compile_commands.json
+        run: |
+          python3 -m pip install pytest
+          python3 -m pytest ${{ matrix.tests }} -v
 
       - name: Upload failed build diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: firestarter_py32f071_build_diagnostics
+          name: firestarter_${{ matrix.board }}_build_diagnostics
           if-no-files-found: warn
           path: |
             configure.log
@@ -61,20 +84,29 @@ jobs:
         run: |
           set -o pipefail
           arm-none-eabi-size \
-            build/py32f071/firestarter_py32f071.elf
+            build/py32f071/firestarter_${{ matrix.board }}.elf
 
       # Require the install image to exist and be nonempty.
       - name: Verify the install image exists and is non-empty
         working-directory: build/py32f071
         run: |
           set -euxo pipefail
-          test -s firestarter_py32f071.hex
+          test -s firestarter_${{ matrix.board }}.hex
+
+      - name: Record firmware provenance and image checksums
+        working-directory: build/py32f071
+        run: |
+          git rev-parse HEAD > BUILD_COMMIT.txt
+          sha256sum firestarter_${{ matrix.board }}.{bin,hex,elf,map} > SHA256SUMS
 
       # Upload the install image for PR board bring-up even without a release;
       # release assets are published by release.yml.
       - name: Upload firmware install image
         uses: actions/upload-artifact@v4
         with:
-          name: firestarter_py32f071
+          name: firestarter_${{ matrix.board }}
           if-no-files-found: error
-          path: build/py32f071/firestarter_py32f071.hex
+          path: |
+            build/py32f071/firestarter_${{ matrix.board }}.*
+            build/py32f071/BUILD_COMMIT.txt
+            build/py32f071/SHA256SUMS
