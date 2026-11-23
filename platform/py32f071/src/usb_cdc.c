@@ -12,13 +12,9 @@
 #define FIRESTARTER_CDC_OUT_EP 0x02U
 #define FIRESTARTER_CDC_INT_EP 0x83U
 #define FIRESTARTER_CDC_MAX_PACKET_SIZE 64U
-/* Queue one complete worst-case COBS block even if main has not drained USB
- * yet: payload + CRC, COBS code bytes, delimiter, command marker and one
- * sentinel slot for the ring's full/empty distinction. */
-#define FIRESTARTER_USB_RX_CAPACITY \
-    (DATA_BUFFER_SIZE + (DATA_BUFFER_SIZE / 254U) + 8U)
-_Static_assert(FIRESTARTER_USB_RX_CAPACITY <= UINT16_MAX,
-               "USB RX ring indices must fit uint16_t");
+/* OUT is armed only when a complete USB packet fits. The host receives NAK
+ * backpressure instead of losing bytes while main drains the fixed-size ring. */
+#define FIRESTARTER_USB_RX_CAPACITY 1024U
 #define FIRESTARTER_USB_TX_CAPACITY 1024U
 #define FIRESTARTER_USB_TIMEOUT_MS 100U
 
@@ -88,6 +84,7 @@ static volatile uint16_t rx_tail;
 static volatile uint16_t tx_head;
 static volatile uint16_t tx_tail;
 static volatile bool tx_busy;
+static volatile bool rx_armed;
 /* ISR publishes session changes, main owns all ring resets. A frame keeps
  * its generation across every single-byte Serial.write call. */
 static volatile uint32_t usb_generation;
@@ -111,6 +108,20 @@ static uint16_t ring_next(uint16_t value, uint16_t capacity)
     return value == capacity ? 0U : value;
 }
 
+/* Called in the USB ISR or with IRQs disabled in main. */
+static void usb_arm_receive(void)
+{
+    const uint16_t used = rx_head >= rx_tail ? rx_head - rx_tail
+        : FIRESTARTER_USB_RX_CAPACITY - rx_tail + rx_head;
+    if (!reset_pending && !rx_armed && usb_device_is_configured() &&
+        FIRESTARTER_USB_RX_CAPACITY - 1U - used >= sizeof(cdc_out_packet))
+    {
+        rx_armed = true;
+        if (usbd_ep_start_read(FIRESTARTER_CDC_OUT_EP, cdc_out_packet, sizeof(cdc_out_packet)) != 0)
+            rx_armed = false;
+    }
+}
+
 /* Called with IRQs disabled. Do not re-arm OUT in the ISR: no new-session
  * bytes may be accepted before the old RX queue has been discarded. */
 static void usb_apply_session_reset(void)
@@ -120,13 +131,15 @@ static void usb_apply_session_reset(void)
     tx_head = tx_tail = 0U;
     /* SET_CONFIGURATION cancels hardware transfers. DTR does not: retain the
      * in-flight packet/buffer until its completion (and never append a ZLP). */
-    if (endpoint_reset_pending) tx_busy = false;
+    if (endpoint_reset_pending) {
+        tx_busy = false;
+        rx_armed = false;
+    }
     endpoint_reset_pending = false;
     reset_pending = false;
     applied_generation = usb_generation;
     tx_failed = false;
-    if (usb_device_is_configured())
-        usbd_ep_start_read(FIRESTARTER_CDC_OUT_EP, cdc_out_packet, sizeof(cdc_out_packet));
+    usb_arm_receive();
 }
 
 static void usb_restore_irq(uint32_t state)
@@ -179,6 +192,7 @@ void usbd_configure_done_callback(void)
 static void firestarter_cdc_bulk_out(uint8_t endpoint, uint32_t byte_count)
 {
     (void)endpoint;
+    rx_armed = false;
     if (reset_pending) return;
 
     for (uint32_t index = 0U; index < byte_count; ++index)
@@ -193,10 +207,7 @@ static void firestarter_cdc_bulk_out(uint8_t endpoint, uint32_t byte_count)
         rx_head = next;
     }
 
-    usbd_ep_start_read(
-        FIRESTARTER_CDC_OUT_EP,
-        cdc_out_packet,
-        sizeof(cdc_out_packet));
+    usb_arm_receive();
 }
 
 static void firestarter_cdc_bulk_in(uint8_t endpoint, uint32_t byte_count)
@@ -250,12 +261,8 @@ void rurp_communication_begin(void)
         return;
     }
 
-    rx_head = 0U;
-    rx_tail = 0U;
-    tx_head = 0U;
-    tx_tail = 0U;
-    tx_busy = false;
-    tx_failed = false;
+    /* Static state starts empty. All later queue resets use
+     * usb_apply_session_reset(), never a second initialization list. */
 
     __HAL_RCC_SYSCFG_CLK_ENABLE();
     __HAL_RCC_USB_CLK_ENABLE();
@@ -281,6 +288,7 @@ int py32_usb_available(void)
     const uint32_t state = __get_PRIMASK();
     __disable_irq();
     usb_apply_session_reset();
+    usb_arm_receive();
     const uint16_t head = rx_head, tail = rx_tail;
     const int count = head >= tail ? (int)(head - tail)
         : (int)(FIRESTARTER_USB_RX_CAPACITY - tail + head);
@@ -294,6 +302,7 @@ int py32_usb_peek(void)
     __disable_irq();
     usb_apply_session_reset();
     const int value = rx_tail == rx_head ? -1 : (int)rx_buffer[rx_tail];
+    usb_arm_receive();
     usb_restore_irq(state);
     return value;
 }
@@ -309,6 +318,7 @@ int py32_usb_read(void)
         value = rx_buffer[rx_tail];
         rx_tail = ring_next(rx_tail, FIRESTARTER_USB_RX_CAPACITY);
     }
+    usb_arm_receive();
     usb_restore_irq(state);
     return value;
 }

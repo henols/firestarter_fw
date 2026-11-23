@@ -25,10 +25,13 @@ endif()
 # Host release assets must be named firestarter_<board>.hex using the
 # RURP_BOARD_NAME reported by firmware.
 set(RURP_BOARD "py32f071" CACHE STRING "PY32F071 board: py32f071 or micropetal_uno")
-set_property(CACHE RURP_BOARD PROPERTY STRINGS py32f071 micropetal_uno)
-if(NOT RURP_BOARD STREQUAL "py32f071" AND NOT RURP_BOARD STREQUAL "micropetal_uno")
+set(RURP_BOARDS py32f071 micropetal_uno)
+set_property(CACHE RURP_BOARD PROPERTY STRINGS ${RURP_BOARDS})
+if(NOT RURP_BOARD IN_LIST RURP_BOARDS)
     message(FATAL_ERROR "Unknown RURP_BOARD: ${RURP_BOARD}")
 endif()
+set(RURP_PROVISIONAL_py32f071 1)
+set(RURP_PROVISIONAL_micropetal_uno 1)
 set(TARGET_NAME firestarter_${RURP_BOARD}.elf)
 set(REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 set(PY32_SDK_ROOT "${py32f071_sdk_SOURCE_DIR}")
@@ -125,12 +128,13 @@ target_compile_definitions(
         RURP_PLATFORM_PY32F071=1
         RURP_BOARD_NAME="${RURP_BOARD}"
         MONITOR_SPEED=250000
-        # Host accepts advertised blocks up to 4096 bytes. Keep AVR sizes unchanged.
-        DATA_BUFFER_SIZE=4096
+        # Keep bring-up RAM small until socket operations are validated.
+        DATA_BUFFER_SIZE=512
+        RURP_PY32_PINMAP_HEADER="boards/${RURP_BOARD}_pinmap.h"
         RURP_PY32F071_PINMAP_CONFIGURED=1
         # Shared handlers do not include the board header. Apply the refusal
         # to every translation unit, not only the hardware backend.
-        RURP_PINMAP_PROVISIONAL=1
+        RURP_PINMAP_PROVISIONAL=${RURP_PROVISIONAL_${RURP_BOARD}}
         RURP_HAS_VPP_DAC=0
 )
 

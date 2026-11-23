@@ -89,8 +89,10 @@ extern "C" {
     int rurp_communication_read_data(char* buffer, size_t cap);
 
 #if defined(RURP_PLATFORM_PY32F071)
-    /* USB CDC latches incomplete transmissions until reconfiguration. */
+    /* Result of the latest USB frame; cleared by a new session/frame. */
     int rurp_communication_tx_failed(void);
+#else
+    static inline int rurp_communication_tx_failed(void) { return 0; }
 #endif
 
 

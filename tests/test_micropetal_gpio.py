@@ -1,6 +1,6 @@
 """Exercise the actual ARM board backend without a connected shield."""
 from ._py32_build import arm_defines
-from ._host_build import INCLUDE, REPO_ROOT, host_cxx, compile_ok, run_binary
+from ._host_build import FAKE_ARDUINO_H, INCLUDE, REPO_ROOT, host_cxx, compile_ok, run_binary
 
 
 def test_provisional_arm_never_drives_socket_gpio(tmp_path):
@@ -19,6 +19,9 @@ extern GPIO_TypeDef a, b;
 #define __HAL_RCC_ADC_CLK_ENABLE() ((void)0)
 struct GPIO_InitTypeDef { uint32_t Pin, Mode, Pull, Speed; };
 enum GPIO_PinState { GPIO_PIN_RESET, GPIO_PIN_SET };
+#define GPIO_MODE_OUTPUT_PP 1
+#define GPIO_SPEED_FREQ_HIGH 3
+inline void HAL_GPIO_WritePin(GPIO_TypeDef*, uint16_t, GPIO_PinState) { __builtin_trap(); }
 #define GPIO_MODE_ANALOG 3
 #define GPIO_MODE_INPUT 0
 #define GPIO_NOPULL 0
@@ -62,45 +65,37 @@ struct ADC_ChannelConfTypeDef { uint32_t Channel, Rank, SamplingTime; };
 inline int HAL_ADC_Init(ADC_HandleTypeDef*) { return HAL_OK; }
 inline int HAL_ADCEx_Calibration_Start(ADC_HandleTypeDef*) { return HAL_OK; }
 extern unsigned adc_channel, adc_a2, adc_a3;
-extern bool adc_error;
-inline int HAL_ADC_ConfigChannel(ADC_HandleTypeDef*, ADC_ChannelConfTypeDef* c) { adc_channel = c->Channel; return HAL_OK; }
-inline int HAL_ADC_Start(ADC_HandleTypeDef*) { return HAL_OK; }
+extern unsigned adc_error, adc_samples;
+extern bool adc_mix_zero;
+inline int HAL_ADC_ConfigChannel(ADC_HandleTypeDef*, ADC_ChannelConfTypeDef* c) { adc_channel = c->Channel; return adc_error == 1 ? 1 : HAL_OK; }
+inline int HAL_ADC_Start(ADC_HandleTypeDef*) { return adc_error == 2 ? 1 : HAL_OK; }
 inline int HAL_ADC_Stop(ADC_HandleTypeDef*) { return HAL_OK; }
-inline int HAL_ADC_PollForConversion(ADC_HandleTypeDef*, unsigned) { return adc_error ? 1 : HAL_OK; }
-inline unsigned HAL_ADC_GetValue(ADC_HandleTypeDef*) { return adc_channel == 3 ? adc_a3 : adc_a2; }
+inline int HAL_ADC_PollForConversion(ADC_HandleTypeDef*, unsigned) { return adc_error == 3 ? 1 : HAL_OK; }
+inline unsigned HAL_ADC_GetValue(ADC_HandleTypeDef*) { if (adc_mix_zero) return (++adc_samples % 2) ? 0 : 2048;
+    return adc_channel == 3 ? adc_a3 : adc_a2; }
 '''
     for pin in range(16):
         hal += f'\n#define GPIO_PIN_{pin} (1U << {pin})\n'
     (tmp_path / 'py32f0xx_hal.h').write_text(hal)
-    (tmp_path / 'Arduino.h').write_text('#pragma once\n#include <stdint.h>\ninline unsigned long millis() { return 0; }\ninline void delayMicroseconds(unsigned) {}\n')
+    (tmp_path / 'Arduino.h').write_text(FAKE_ARDUINO_H + 'void delayMicroseconds(unsigned long);\n')
     driver = tmp_path / 'driver.cpp'
     driver.write_text(r'''
 #include <cassert>
 #include "boards/py32f071_rurp_shield.h"
 #include "rurp_shield.h"
-#include "rurp_pinmap_guard.h"
+unsigned long millis() { return 0; }
+void delayMicroseconds(unsigned long) {}
 GPIO_TypeDef a = {}, b = {};
 unsigned adc_pins, button_pins;
 unsigned adc_channel, adc_a2 = 2048, adc_a3;
-bool adc_error;
+unsigned adc_error, adc_samples;
+bool adc_mix_zero;
 extern "C" void rurp_log_id_u8(uint8_t, uint8_t) {}
 void rurp_serial_begin(unsigned long) {}
 extern "C" rurp_configuration_t *rurp_get_config() {
     static rurp_configuration_t c = {}; return &c;
 }
 int main() {
-    static_assert(RURP_PY32F071_SOCKET_GPIO_DISABLED == 1);
-    static_assert(DATA_BUFFER_SIZE == 4096);
-#ifdef RURP_BOARD_MICROPETAL_UNO
-    static_assert(RURP_PY32F071_LSB_PIN == (1U << 8));
-    static_assert(RURP_PY32F071_MSB_PIN == (1U << 9));
-    static_assert(RURP_PY32F071_OE_PIN == (1U << 12));
-    static_assert(RURP_PY32F071_CONTROL_PIN == (1U << 15));
-    static_assert(RURP_PY32F071_CE_PIN == (1U << 13));
-    static_assert(RURP_PY32F071_VPP_ADC_CHANNEL == 2);
-    static_assert(RURP_PY32F071_REV_ADC_CHANNEL == 3);
-    static_assert(RURP_PY32F071_REV_ADC_PIN == (1U << 3));
-#endif
     rurp_board_setup();
     assert(adc_pins == 1 + RURP_PY32F071_HAS_USER_BUTTON && button_pins == RURP_PY32F071_HAS_USER_BUTTON);
 #ifdef RURP_BOARD_MICROPETAL_UNO
@@ -115,10 +110,12 @@ int main() {
     adc_a2 = 4000;
     rurp_detect_hardware_revision();
     assert(rurp_get_physical_hardware_revision() == REVISION_0);
-    adc_error = true;
-    rurp_detect_hardware_revision();
-    assert(rurp_get_physical_hardware_revision() == REVISION_UNKNOWN);
-    adc_error = false;
+    for (unsigned stage = 1; stage <= 3; ++stage) {
+        adc_error = stage;
+        rurp_detect_hardware_revision();
+        assert(rurp_get_physical_hardware_revision() == REVISION_UNKNOWN);
+    }
+    adc_error = 0;
     // Exhaust every logical register value on all supported revisions, plus
     // unknown/invalid overrides. A18 becomes the physical P1 switch on Rev2;
     // A16 moves to physical bit 5 and the logical drop bit moves to bit 0.
@@ -145,10 +142,19 @@ int main() {
         rurp_set_control_pin(n, 1);
         assert(b.BSRR == 0 && b.MODER == 0 && b.OTYPER == 0);
         assert(a.BSRR == 0);
-        assert(rurp_pinmap_refuses(n) == is_memory_cmd(n));
         b.IDR = n;
         assert(rurp_read_data_buffer() == n);
     }
+    // A genuine zero is a valid sample, not an ADC error. Every second
+    // conversion is zero: averaging must still include it and retain 1024.
+    adc_mix_zero = true;
+    assert(rurp_read_divider_adc() == 1024);
+    adc_mix_zero = false;
+    for (unsigned stage = 1; stage <= 3; ++stage) {
+        adc_error = stage;
+        assert(rurp_read_divider_adc() == 0);
+    }
+    adc_error = 0;
     rurp_set_data_output();
     assert(b.MODER == 0);
 #if RURP_PY32F071_HAS_USER_BUTTON

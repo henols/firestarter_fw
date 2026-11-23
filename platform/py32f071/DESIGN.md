@@ -134,7 +134,7 @@ introduced. MicroPetal uses the factory **USB-HID ISP** procedure in
 [the MicroPetal wiki](https://github.com/henols/firestarter/wiki/MicroPetal-Uno), not the generic DFU client. A compatible external
 uploader is acceptable for current bring-up; physical installation is unverified.
 
-The following is the earlier long-term design, not a requirement for this PR.
+The following is a deferred long-term design, not a current implementation requirement.
 Its custom bootloader priority and external-tool rejection are deferred.
 This design considered three ways to write the flash, in order of priority.
 
@@ -249,14 +249,14 @@ You fix R3 already when you select the part.
 
 This rule is stricter than on the AVR boards, for these reasons:
 
-1. **The pin map is provisional.** `include/boards/py32f071_rurp_shield.h` defines
-   `RURP_PY32F071_PINMAP_PROVISIONAL`. All pins except the ADC input are placeholders.
+1. **The pin maps are provisional.** CMake sets `RURP_PINMAP_PROVISIONAL` per board.
+   The generic example is not PCB wiring; the MicroPetal map is source-backed but unmeasured.
 2. **A pin can have the wrong direction.** If the firmware drives a pin as an output and the real
    board connects that pin to a PROM output, the two outputs fight. That can damage the chip on
    the first power-up. The AVR pin map has measurements from three board revisions. This map has
    none.
-3. **Nobody measured the startup levels.** The code sets `/CE` and `/OE` high at startup, but
-   no measurement confirms it.
+3. **Nobody measured the startup levels.** The provisional images leave socket outputs
+   disabled. Reset and bootloader pin states still require physical measurements.
 4. **A DFU install is the worst case.** The board starts with `BOOT0` high. The application GPIO
    setup does not run. The factory bootloader sets the pins, and no Firestarter code controls
    them.
@@ -335,13 +335,25 @@ On Rev 2.x, logical A18 aliases the physical pin-1 VPP switch, A16 moves to bit 
 and the drop bit maps to bit 0; Rev 0/1 keep their original mapping. These routes
 are covered by host regressions, but physical backend/timing validation is pending.
 
-This target retains `RURP_PINMAP_PROVISIONAL`. In addition it suppresses **all
+### Bring-up safety and buffers
+
+Both targets use one CMake-selected `RURP_PINMAP_PROVISIONAL` flag for memory-command
+refusal and the backend output gate. The backend suppresses **all
 socket GPIO output writes**, including startup, voltage-monitor setup and command
-cleanup. D0–D7 stay inputs; control pins stay at their reset input state. PA2 is
-analog input and PB14 is the button input. USB/configuration are available for
+cleanup. D0–D7 stay inputs; control pins stay at their reset input state. On MicroPetal,
+PA2/PA3 are analog inputs and PB14 is the button input. USB/configuration are available for
 bring-up; voltage monitoring is passive only and cannot enable the regulator.
 An attached shield can retain old latch state: do not attach it for this phase.
-No read, program, erase or chip-ID capability is claimed.
+No read, program, erase or chip-ID capability is claimed. Do not clear the flag
+until the physical routes, startup/reset sequence, ADC accuracy and timing pass
+bench validation; builds and host simulation cannot authorize socket operation.
+
+The bring-up transfer buffer is 512 bytes, with a fixed 1024-byte USB RX ring.
+OUT is armed only when a complete 64-byte packet fits. When the ring fills, the
+endpoint NAKs until main drains enough space; no full-frame ring allocation is
+needed. Host regressions cover production-sized frames and a test-only 4096-byte
+stress configuration. Any larger production buffer requires a measured RAM/stack
+budget and belongs with socket-operation enablement. AVR sizes are unchanged.
 
 Supply reference: [Puya PY32F071 datasheet V1.4](https://www.puyasemi.com/download_path/%E6%95%B0%E6%8D%AE%E6%89%8B%E5%86%8C/MCU%20%E5%BE%AE%E5%A4%84%E7%90%86%E5%99%A8/PY32F071%E7%B3%BB%E5%88%97%E6%95%B0%E6%8D%AE%E6%89%8B%E5%86%8C_V1.4.pdf).
 
@@ -349,7 +361,7 @@ Supply reference: [Puya PY32F071 datasheet V1.4](https://www.puyasemi.com/downlo
 
 ### USB session ownership and recovery
 
-The USB ISR publishes a monotonically increasing session generation on configuration and DTR transitions. It does not reset ring indices. Main applies pending resets with IRQs masked and then re-arms OUT. TX byte enqueue and RX peek/read/snapshot are IRQ-protected. The frame emitter pins one generation across all byte writes; a session change fails the frame and prevents its remaining bytes from entering the new queue. The COBS decoder and its resynchronization drain also stop at a generation change.
+The USB ISR publishes a monotonically increasing session generation on configuration and DTR transitions. It does not reset ring indices. Main applies pending resets with IRQs masked and re-arms OUT when endpoint ownership and ring space permit. TX byte enqueue and RX peek/read/snapshot are IRQ-protected. The frame emitter pins one generation across all byte writes; a session change fails the frame and prevents its remaining bytes from entering the new queue. The COBS decoder and its resynchronization drain also stop at a generation change.
 
 A stalled IN endpoint latches TX failure for the session. Reopening the CDC port (DTR transition) clears the software queues and permits a fresh frame without USB re-enumeration. A DTR change does not cancel the hardware packet already submitted: its buffer remains owned until completion, and no old-frame ZLP or further queued bytes are submitted. The host can still receive that one already-submitted packet and must resynchronize on a new valid frame. SET_CONFIGURATION resets endpoint ownership. Peak IRQ latency and actual close/reopen/reset behavior remain hardware-validation items.
 

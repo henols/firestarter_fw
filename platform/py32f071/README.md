@@ -53,9 +53,10 @@ Its pin map and design decisions are in [DESIGN.md](DESIGN.md#micropetal-uno-r1-
 PA4 with ADC channel 4 follows the Puya ADC example. The other pins are placeholders that give a
 simple bus. Do not use them as PCB wiring.
 
-The only place that sets the pins is `include/boards/py32f071_rurp_shield.h`. That header defines
-`RURP_PY32F071_PINMAP_PROVISIONAL 1`. The flag makes `configure_memory()` refuse the socket
-commands. When a final schematic exists, change the pin definitions and clear the flag.
+Pin assignments live in `include/boards/py32f071_pinmap.h`; MicroPetal has its own
+`micropetal_uno_pinmap.h`. CMake selects the header and the per-board
+`RURP_PINMAP_PROVISIONAL` flag. See [the design record](DESIGN.md#bring-up-safety-and-buffers)
+for the guards, RAM budget and conditions for enabling socket operations.
 
 ## Build
 
@@ -90,16 +91,9 @@ that reaches past the application region.
 
 ## Flash path
 
-**Current decision:** use the chip's factory bootloader for installation and
-updates. A custom USB CDC self-flash bootloader is deferred, not part of this PR.
-For MicroPetal Uno, follow [MicroPetal installation](https://github.com/henols/firestarter/wiki/MicroPetal-Uno): its documented route is
-USB-HID ISP, not the generic DFU client above. Physical installation is unverified.
-Both provisional targets now suppress socket GPIO output writes, including those
-requested by voltage-monitor commands. This does not control factory-bootloader
-pin states: keep the shield disconnected during installation.
-
-The ARM transfer buffer is 4096 bytes (the host's accepted maximum); the USB RX
-ring includes room for the full encoded block. AVR sizes are unchanged.
+See [the design record](DESIGN.md#flash-path) for the current factory-bootloader
+decision, and [the MicroPetal wiki](https://github.com/henols/firestarter/wiki/MicroPetal-Uno)
+for its board-specific installation procedure. Physical installation is unverified.
 
 The longer-term design has three ways to write the flash. [DESIGN.md](DESIGN.md) has the detail.
 

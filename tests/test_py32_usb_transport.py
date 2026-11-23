@@ -3,11 +3,22 @@
 Uses the same host-compiler / real-compile-database seam as other ARM tests.
 The mocked USB controller only supplies packets and completion callbacks.
 """
+import pytest
+
 from ._host_build import REPO_ROOT, compile_ok, host_cc, host_cxx, run_binary
 from ._py32_build import arm_defines
 
 
-def test_large_usb_frames_and_stalled_host(tmp_path):
+@pytest.mark.parametrize('stress_size', [None, 4096], ids=['production', '4k-stress'])
+def test_large_usb_frames_and_stalled_host(tmp_path, stress_size):
+    def transport_defines(source):
+        defines = arm_defines(source)
+        # The real image stays at its CMake size. This second configuration
+        # stresses streaming across a much smaller USB ring, not shipped RAM.
+        if stress_size is not None:
+            defines = [d for d in defines if not d.startswith('-DDATA_BUFFER_SIZE=')]
+            defines.append(f'-DDATA_BUFFER_SIZE={stress_size}')
+        return defines
     (tmp_path / 'boards').mkdir()
     (tmp_path / 'avr').mkdir()
     (tmp_path / 'boards/py32f071_rurp_shield.h').write_text('''
@@ -40,7 +51,8 @@ struct usbd_interface { int unused; };
 struct usbd_endpoint { unsigned ep_addr; void (*ep_cb)(uint8_t, uint32_t); };
 void fake_ep_write(uint8_t, const uint8_t *, size_t);
 static inline bool usb_device_is_configured(void) { return true; }
-static inline void usbd_ep_start_read(uint8_t ep, uint8_t *buf, size_t n) {}
+void fake_ep_read(void);
+static inline int usbd_ep_start_read(uint8_t ep, uint8_t *buf, size_t n) { fake_ep_read(); return 0; }
 static inline int usbd_ep_start_write(uint8_t ep, const uint8_t *buf, size_t n) {
     fake_ep_write(ep, buf, n);
     return 0;
@@ -81,13 +93,28 @@ static size_t received_count;
 static size_t pending_size;
 static bool pending;
 static bool paused;
+static bool host_out_armed;
+static uint8_t host_rx[DATA_BUFFER_SIZE + 64U];
+static size_t host_rx_count, host_rx_offset;
+void fake_ep_read(void) { assert(!host_out_armed); host_out_armed = true; }
+static void pump_host_rx(void) {
+    if (!host_out_armed || host_rx_offset == host_rx_count) return;
+    size_t n = host_rx_count - host_rx_offset;
+    if (n > sizeof(cdc_out_packet)) n = sizeof(cdc_out_packet);
+    memcpy(cdc_out_packet, host_rx + host_rx_offset, n);
+    host_rx_offset += n;
+    host_out_armed = false;
+    firestarter_cdc_bulk_out(FIRESTARTER_CDC_OUT_EP, n);
+}
 static uint32_t now_ms;
 static unsigned irq_state, unlock_event, timer_event, event_at;
 static bool event_fired;
 static void fire_event(unsigned kind) {
     event_fired = true;
     if (kind == 1) {
-        pending = false; /* SET_CONFIGURATION cancels the endpoint transfer. */
+        pending = false; /* SET_CONFIGURATION cancels endpoint transfers. */
+        host_out_armed = false;
+        host_rx_count = host_rx_offset = 0;
         usbd_configure_done_callback();
     } else {
         usbd_cdc_acm_set_dtr(0, false);
@@ -101,12 +128,13 @@ void test_enable_irq(void) {
     if (unlock_event) { unsigned kind = unlock_event; unlock_event = 0; fire_event(kind); }
 }
 void test_event_during_frame(unsigned kind) {
-    timer_event = kind; event_at = now_ms + 1000; event_fired = false;
+    timer_event = kind; event_at = now_ms + 150; event_fired = false;
 }
 void test_assert_event_fired(void) { assert(event_fired && !irq_state); }
 void test_ring_reset_ownership(void) {
     assert(!pending);
     rx_head = 70; rx_tail = 65; tx_head = 30; tx_tail = 25;
+    host_out_armed = false;
     usbd_configure_done_callback();
     /* The ISR must not mutate either ring while main might hold an index. */
     assert(rx_head == 70 && rx_tail == 65 && tx_head == 30 && tx_tail == 25);
@@ -129,6 +157,7 @@ void fake_ep_write(uint8_t ep, const uint8_t *data, size_t count) {
 
 uint32_t test_millis(void) {
     ++now_ms;
+    pump_host_rx();
     if (timer_event && now_ms >= event_at) {
         unsigned kind = timer_event; timer_event = 0; fire_event(kind);
     }
@@ -145,18 +174,41 @@ uint32_t test_millis(void) {
 
 void test_usb_begin(void) {
     rurp_communication_begin();
+    host_out_armed = false; /* SET_CONFIGURATION cancels the pending OUT read. */
     usbd_configure_done_callback();
     (void)py32_usb_available();
 }
 
 void test_feed_rx(const uint8_t *data, size_t count) {
-    (void)py32_usb_available(); /* main services reset before OUT is re-armed */
-    for (size_t offset = 0; offset < count;) {
-        size_t n = count - offset;
-        if (n > sizeof(cdc_out_packet)) n = sizeof(cdc_out_packet);
-        memcpy(cdc_out_packet, data + offset, n);
-        firestarter_cdc_bulk_out(FIRESTARTER_CDC_OUT_EP, (uint32_t)n);
-        offset += n;
+    (void)py32_usb_available();
+    assert(host_rx_offset == host_rx_count);
+    assert(count <= sizeof(host_rx));
+    memcpy(host_rx, data, count);
+    host_rx_count = count;
+    host_rx_offset = 0;
+    while (host_out_armed && host_rx_offset < host_rx_count) pump_host_rx();
+}
+
+void test_rx_backpressure(void) {
+    uint8_t block[64U];
+    for (size_t i = 0; i < sizeof(block); ++i) block[i] = (uint8_t)i;
+    /* Fill beyond ring capacity. The host must stop while bytes stay queued;
+     * draining the ring must re-arm OUT, with no loss and repeated wraparound. */
+    for (unsigned pass = 0; pass < 4; ++pass) {
+        size_t total = 0;
+        while (host_out_armed) {
+            assert(total < 2 * sizeof(rx_buffer));
+            memcpy(cdc_out_packet, block, 64);
+            host_out_armed = false;
+            firestarter_cdc_bulk_out(FIRESTARTER_CDC_OUT_EP, 64);
+            total += 64;
+        }
+        assert(total > 0 && !rx_armed);
+        for (size_t i = 0; i < total; ++i) {
+            assert(py32_usb_peek() == (int)(uint8_t)(i % 64));
+            assert(py32_usb_read() == (int)(uint8_t)(i % 64));
+        }
+        assert(host_out_armed && py32_usb_available() == 0);
     }
 }
 
@@ -165,6 +217,7 @@ void test_prepare_tx(int hold) {
     received_count = 0U;
     paused = hold != 0;
     now_ms = 0U;
+    host_out_armed = false; /* SET_CONFIGURATION cancels the pending OUT read. */
     usbd_configure_done_callback();
     (void)py32_usb_available();
 }
@@ -191,9 +244,11 @@ const uint8_t *test_tx_bytes(void) { return received; }
 #include <vector>
 
 #include "messages.h"
+#include "frame_ref.h"
 
 extern "C" {
 void test_usb_begin(void);
+void test_rx_backpressure(void);
 void test_feed_rx(const uint8_t *, size_t);
 void test_prepare_tx(int);
 size_t test_tx_length(void);
@@ -235,42 +290,16 @@ void delayMicroseconds(unsigned long) {}
 
 #include "src/boards/rurp_serial_utils.cpp"
 
-static uint8_t reference_crc(const std::vector<uint8_t>& data) {
-    uint8_t crc = 0;
-    for (const uint8_t b : data) {
-        crc ^= b;
-        for (int bit = 0; bit < 8; ++bit)
-            crc = (crc & 0x80) ? uint8_t((crc << 1) ^ 0x07) : uint8_t(crc << 1);
-    }
-    return crc;
-}
-
 static std::vector<uint8_t> frame(const std::vector<uint8_t>& payload, bool wrong_crc = false) {
-    std::vector<uint8_t> raw = payload;
-    raw.push_back(uint8_t(reference_crc(payload) ^ (wrong_crc ? 0x5A : 0)));
     std::vector<uint8_t> encoded;
-    encoded.push_back(0);
-    size_t code_index = 0;
-    uint8_t code = 1;
-    for (const uint8_t b : raw) {
-        if (b == 0) {
-            encoded[code_index] = code;
-            code_index = encoded.size();
-            encoded.push_back(0);
-            code = 1;
-        } else {
-            encoded.push_back(b);
-            ++code;
-            if (code == 0xFF) {
-                encoded[code_index] = code;
-                code_index = encoded.size();
-                encoded.push_back(0);
-                code = 1;
-            }
-        }
+    if (!wrong_crc) build_cobs_frame_bytes(payload.data(), payload.size(), encoded);
+    else {
+        std::vector<uint8_t> raw = payload;
+        raw.push_back(uint8_t(ref_crc8(payload.data(), payload.size()) ^ 0x5A));
+        encoded.resize(raw.size() + raw.size() / 254 + 2);
+        encoded.resize(test_cobs_encode(raw.data(), raw.size(), encoded.data()));
+        encoded.push_back(0);
     }
-    encoded[code_index] = code;
-    encoded.push_back(0);
     return encoded;
 }
 
@@ -287,6 +316,7 @@ static int decode_from_usb(const std::vector<uint8_t>& encoded, std::vector<char
 
 int main() {
     test_usb_begin();
+    test_rx_backpressure();
     std::vector<char> decoded(DATA_BUFFER_SIZE + 1);
 
     // Full-size payload, embedded zeros, nonzero runs and a real CRC.
@@ -322,7 +352,7 @@ int main() {
     expected.insert(expected.end(), mixed.begin(), mixed.end());
     std::vector<uint8_t> checksum_input = {id};
     checksum_input.insert(checksum_input.end(), mixed.begin(), mixed.end());
-    expected.push_back(reference_crc(checksum_input));
+    expected.push_back(ref_crc8(checksum_input.data(), checksum_input.size()));
     expected.push_back(0x0A);
     assert(test_tx_length() == expected.size());
     assert(memcmp(test_tx_bytes(), expected.data(), expected.size()) == 0);
@@ -378,14 +408,15 @@ int main() {
 
     backend_obj = tmp_path / 'usb_backend.o'
     compile_ok([host_cc(), '-std=c11',
-                *arm_defines('platform/py32f071/src/usb_cdc.c'),
+                *transport_defines('platform/py32f071/src/usb_cdc.c'),
                 '-UNDEBUG', '-I', tmp_path, '-I', REPO_ROOT,
                 '-c', backend, '-o', backend_obj])
     binary = tmp_path / 'transport'
     compile_ok([host_cxx(), '-std=c++17',
-                *arm_defines('src/boards/rurp_serial_utils.cpp'),
+                *transport_defines('src/boards/rurp_serial_utils.cpp'),
                 '-UNDEBUG', '-I', tmp_path, '-I', REPO_ROOT,
                 '-I', REPO_ROOT / 'include',
+                '-I', REPO_ROOT / 'test/native/avr/_shared',
                 driver, backend_obj, '-o', binary])
     result = run_binary(binary)
     assert result.returncode == 0, result.stderr

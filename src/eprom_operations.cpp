@@ -164,7 +164,6 @@ static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
                      (const uint8_t*)handle->data_buffer,
                      (uint16_t)handle->data_size);
 
-#if defined(RURP_PLATFORM_PY32F071)
     /* The shared frame emitter has a void API. On USB, fail this operation
      * explicitly if this chunk frame could not be delivered. The frame-scoped
      * result cannot be cleared by a reconnect mid-emit. An error reply on a
@@ -173,7 +172,6 @@ static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
         handle->response_code = RESPONSE_CODE_ERROR;
         return false;
     }
-#endif
 
     if (!op_wait_for_ack(handle)) {
         return false;

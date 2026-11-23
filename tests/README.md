@@ -14,16 +14,14 @@ regressions rather than replacing code review with a text-matching test.
 
 ### Actual ARM build configurations
 
-For the command-gate, GPIO-isolation and USB RX regressions, set both
-`FIRESTARTER_PY32_COMPILE_COMMANDS` to the CMake-generated compile database and
-`FIRESTARTER_PY32_BOARD` to the intended target (`py32f071` or `micropetal_uno`).
-The tests use production definitions, remove `NDEBUG` so assertions execute, and
-fail if the expected target/provisional flags are missing. Without an ARM database
-these tests skip; the ARM CI matrix always supplies both variables. The USB test
-queues a full worst-case encoded block before draining it and repeats across ring
-wraparound. Hardware USB enumeration and throughput still require a real board.
+Set `FIRESTARTER_PY32_COMPILE_COMMANDS` to a CMake-generated compile database.
+Tests derive the board identity from its definitions, remove `NDEBUG` so assertions
+execute, and fail when expected target/provisional flags are absent. Without a
+database ARM tests skip; the ARM CI supplies it. Board-specific GPIO tests run in
+both matrix legs; transport and command-gate tests run once on the generic target.
 
-The PY32 USB transport integration regression compiles the production USB backend
-and shared frame encoder/decoder with host fakes and the **actual ARM CMake flags**.
-It checks complete 4096-byte COBS/CRC frames, invalid-frame resynchronization,
-and outgoing MSG_DATA_CHUNK framing during normal and stalled USB IN transfers.
+The USB integration test compiles the production backend and shared encoder/decoder.
+It covers the production block size plus a test-only 4 KiB stress configuration,
+CRC/COBS errors and resynchronization, ring wraparound, OUT backpressure, stalled IN
+transfers, DTR recovery and session changes mid-frame. It reuses the native suite's
+reference encoders. Hardware enumeration, throughput and timing remain unverified.
