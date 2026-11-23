@@ -27,6 +27,10 @@ inputs:
     description: PY32F071 board target
     default: py32f071
     required: false
+  experimental_micropetal:
+    description: Enable full MicroPetal operations, ROM touch and diagnostics for CI
+    default: OFF
+    required: false
 outputs:
   hex_path:
     description: Path to the emitted Intel HEX image
@@ -78,6 +82,9 @@ runs:
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
           -DRURP_BOARD="${{ inputs.board }}" \
+          -DRURP_MICROPETAL_FULL="${{ inputs.experimental_micropetal }}" \
+          -DRURP_MICROPETAL_ROM_TOUCH="${{ inputs.experimental_micropetal }}" \
+          -DRURP_DEV_TOOLS="${{ inputs.experimental_micropetal }}" \
           2>&1 | tee configure.log
         # Composite steps inherit the caller's checked-out workspace.
 

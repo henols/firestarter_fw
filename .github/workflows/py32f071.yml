@@ -110,3 +110,12 @@ jobs:
             build/py32f071/firestarter_${{ matrix.board }}.*
             build/py32f071/BUILD_COMMIT.txt
             build/py32f071/SHA256SUMS
+
+      # Run after uploading the default-safe image: the experimental image
+      # is build-checked, never substituted into the normal artifact.
+      - name: Build all opt-in MicroPetal features
+        if: matrix.board == 'micropetal_uno'
+        uses: ./.github/actions/build-py32f071
+        with:
+          board: micropetal_uno
+          experimental_micropetal: ON
