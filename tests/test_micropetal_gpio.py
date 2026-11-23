@@ -1,10 +1,17 @@
 """Exercise the actual ARM board backend without a connected shield."""
+import pytest
 from ._py32_build import arm_defines
 from ._host_build import FAKE_ARDUINO_H, INCLUDE, REPO_ROOT, host_cxx, compile_ok, run_binary
 
 
-def test_provisional_arm_safe_idle_and_operation_lockout(tmp_path):
+@pytest.mark.parametrize("full", [False, True])
+def test_provisional_arm_safe_idle_and_operation_lockout(tmp_path, full):
     defines = arm_defines("platform/py32f071/src/py32f071_rurp_shield.cpp")
+    if full:
+        if '-DRURP_BOARD_MICROPETAL_UNO=1' not in defines:
+            pytest.skip('full operation mode is MicroPetal-only')
+        defines = [d for d in defines if not d.startswith('-DRURP_PINMAP_PROVISIONAL=')]
+        defines += ['-DRURP_PINMAP_PROVISIONAL=0']
     # Only the HAL and serial transport are fake; the mapping, setup and bus
     # functions under test are the production translation unit.
     hal = r'''
@@ -164,6 +171,21 @@ int main() {
     assert((b.MODER & 0xFFFF) == 0); // bus released, control drivers stay active
 #else
     assert(gpio_writes == 0 && gpio_outputs == 0);
+#endif
+#if !RURP_PINMAP_PROVISIONAL
+    // Full mode must deliver all 256 data bytes unmodified to CTRL. This
+    // distinguishes real operation enablement from the bench-zero clamp.
+    for (unsigned n = 0; n < 256; ++n) {
+        bsrr_count = 0;
+        rurp_write_data_buffer(n);
+        rurp_set_control_pin(CONTROL_REGISTER, 1);
+        assert(bsrr_count == 2);
+        assert(bsrr_trace[0] == (n | ((~n & 255U) << 16)));
+        assert(bsrr_trace[1] == (1U << 15));
+        rurp_set_control_pin(CONTROL_REGISTER, 0);
+        assert(bsrr_trace[2] == (1U << 31));
+    }
+    return 0;
 #endif
     const auto idle_mode = b.MODER;
     const auto idle_odr = b.ODR;

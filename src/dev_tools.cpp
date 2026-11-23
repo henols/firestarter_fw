@@ -208,10 +208,16 @@ static void dt_sample_adc(dt_adc_sample_t* out, rurp_register_t ctrl) {
     // about one count, which is 0.5 % on the bandgap channel.
     out->divider_adc = rurp_read_divider_adc();
     out->bandgap_adc = (uint16_t)rurp_get_bandgap_adc_reading();
-    out->vcc_mv = rurp_scale_vcc_mv(out->bandgap_adc, cfg->bandgap_mv);
+#if RURP_HAS_BANDGAP_CAL
+    const uint16_t reference_mv = cfg->bandgap_mv;
+#else
+    // The PY32 rail readers use fixed 1.2 V VREFINT, not AVR calibration.
+    const uint16_t reference_mv = 1200U;
+#endif
+    out->vcc_mv = rurp_scale_vcc_mv(out->bandgap_adc, reference_mv);
     out->voltage_mv = rurp_scale_voltage_mv(out->divider_adc, out->bandgap_adc,
                                             (uint32_t)cfg->r1, (uint32_t)cfg->r2,
-                                            cfg->bandgap_mv);
+                                            reference_mv);
 }
 
 /*

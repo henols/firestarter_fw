@@ -36,6 +36,15 @@ option(RURP_MICROPETAL_ROM_TOUCH "Experimental 1200-baud touch into factory ROM 
 if(RURP_MICROPETAL_ROM_TOUCH AND NOT RURP_BOARD STREQUAL "micropetal_uno")
     message(FATAL_ERROR "ROM touch requires MicroPetal")
 endif()
+option(RURP_MICROPETAL_FULL "Enable all implemented MicroPetal socket operations (experimental)" OFF)
+option(RURP_DEV_TOOLS "Include development diagnostics" OFF)
+set(RURP_BUILD_VERSION "" CACHE STRING "Version for an untagged local build")
+if(RURP_MICROPETAL_FULL)
+    if(NOT RURP_BOARD STREQUAL "micropetal_uno")
+        message(FATAL_ERROR "Full operation mode requires MicroPetal")
+    endif()
+    set(RURP_PROVISIONAL_micropetal_uno 0)
+endif()
 set(TARGET_NAME firestarter_${RURP_BOARD}.elf)
 set(REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 set(PY32_SDK_ROOT "${py32f071_sdk_SOURCE_DIR}")
@@ -44,7 +53,6 @@ set(LINKER_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/linker/PY32F071xB_FLASH.ld")
 # PY32_EXCLUDED: src/boards/uno_rurp_shield.cpp -- AVR board impl, no ARM analogue
 # PY32_EXCLUDED: src/boards/leonardo_rurp_shield.cpp -- AVR board impl, no ARM analogue
 # PY32_EXCLUDED: src/boards/rurp_common.cpp -- AVR-specific common
-# PY32_EXCLUDED: src/dev_tools.cpp -- ARM uses the shared DEV_TOOLS=0 default
 # PY32_EXCLUDED: src/boards/rurp_config_storage_eeprom.cpp -- AVR EEPROM backend, no ARM analogue
 set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/firestarter.cpp"
@@ -68,6 +76,10 @@ set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/proms/sram.cpp"
     "${REPOSITORY_ROOT}/src/proms/not_implemented.cpp"
 )
+
+if(RURP_DEV_TOOLS)
+    list(APPEND FIRESTARTER_COMMON_SOURCES "${REPOSITORY_ROOT}/src/dev_tools.cpp")
+endif()
 
 set(PY32_PLATFORM_SOURCES
     startup/startup_py32f071.s
@@ -146,6 +158,14 @@ target_compile_definitions(
 if(RURP_BOARD STREQUAL "micropetal_uno")
     target_compile_definitions(${TARGET_NAME} PRIVATE RURP_BOARD_MICROPETAL_UNO=1 HARDWARE_REVISION=1)
 endif()
+
+if(RURP_DEV_TOOLS)
+    target_compile_definitions(${TARGET_NAME} PRIVATE DEV_TOOLS=1)
+endif()
+if(RURP_BUILD_VERSION)
+    target_compile_definitions(${TARGET_NAME} PRIVATE VERSION="${RURP_BUILD_VERSION}")
+endif()
+
 
 if(RURP_MICROPETAL_ROM_TOUCH)
     target_compile_definitions(${TARGET_NAME} PRIVATE RURP_MICROPETAL_ROM_TOUCH=1)
