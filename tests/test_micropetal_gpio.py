@@ -3,14 +3,28 @@ from ._py32_build import arm_defines
 from ._host_build import FAKE_ARDUINO_H, INCLUDE, REPO_ROOT, host_cxx, compile_ok, run_binary
 
 
-def test_provisional_arm_never_drives_socket_gpio(tmp_path):
+def test_provisional_arm_safe_idle_and_operation_lockout(tmp_path):
     defines = arm_defines("platform/py32f071/src/py32f071_rurp_shield.cpp")
     # Only the HAL and serial transport are fake; the mapping, setup and bus
     # functions under test are the production translation unit.
     hal = r'''
 #pragma once
 #include <stdint.h>
-struct GPIO_TypeDef { uint32_t MODER, OTYPER, PUPDR, BSRR, IDR; };
+#include <cassert>
+#define __NOP() ((void)0)
+extern unsigned bsrr_count;
+extern uint32_t bsrr_trace[2048];
+struct TraceRegister {
+    uint32_t value;
+    operator uint32_t() const { return value; }
+    TraceRegister& operator=(uint32_t v) {
+        assert(bsrr_count < 2048);
+        bsrr_trace[bsrr_count++] = v;
+        value = v;
+        return *this;
+    }
+};
+struct GPIO_TypeDef { uint32_t MODER, OTYPER, PUPDR; TraceRegister BSRR; uint32_t IDR, ODR; };
 extern GPIO_TypeDef a, b;
 #define GPIOA (&a)
 #define GPIOB (&b)
@@ -21,12 +35,44 @@ struct GPIO_InitTypeDef { uint32_t Pin, Mode, Pull, Speed; };
 enum GPIO_PinState { GPIO_PIN_RESET, GPIO_PIN_SET };
 #define GPIO_MODE_OUTPUT_PP 1
 #define GPIO_SPEED_FREQ_HIGH 3
-inline void HAL_GPIO_WritePin(GPIO_TypeDef*, uint16_t, GPIO_PinState) { __builtin_trap(); }
+extern unsigned gpio_writes, gpio_outputs;
+inline void HAL_GPIO_WritePin(GPIO_TypeDef* p, uint16_t pin, GPIO_PinState state) {
+#ifdef RURP_BOARD_MICROPETAL_UNO
+    const unsigned pins[] = {1U<<13, 1U<<12, 1U<<8, 1U<<9, 1U<<15, 255, 1U<<15, 1U<<15};
+    const GPIO_PinState states[] = {GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_RESET, GPIO_PIN_RESET,
+        GPIO_PIN_RESET, GPIO_PIN_RESET, GPIO_PIN_SET, GPIO_PIN_RESET};
+    assert(gpio_writes < 8 && p == GPIOB && pin == pins[gpio_writes] && state == states[gpio_writes]);
+    if (gpio_writes == 6) {
+        // At the control-latch edge all data drivers hold zero, CE/OE high,
+        // both address latch enables low. No HV-on byte can be captured.
+        assert((p->ODR & 0xB3FF) == ((1U<<13) | (1U<<12)));
+        assert((p->MODER & 0xFFFF) == 0x5555);
+        assert(gpio_outputs == 6);
+    }
+    ++gpio_writes;
+    if (state == GPIO_PIN_SET) p->ODR |= pin; else p->ODR &= ~pin;
+#else
+    __builtin_trap();
+#endif
+}
 #define GPIO_MODE_ANALOG 3
 #define GPIO_MODE_INPUT 0
 #define GPIO_NOPULL 0
 #define GPIO_PULLUP 1
 inline void HAL_GPIO_Init(GPIO_TypeDef *p, GPIO_InitTypeDef *c) {
+#ifdef RURP_BOARD_MICROPETAL_UNO
+    if (p == GPIOB && c->Mode == GPIO_MODE_OUTPUT_PP) {
+        const unsigned pins[] = {1U<<13, 1U<<12, 1U<<8, 1U<<9, 1U<<15, 255};
+        assert(gpio_outputs < 6 && c->Pin == pins[gpio_outputs]);
+        assert(gpio_writes == gpio_outputs + 1); // preload before direction
+        assert(c->Pull == GPIO_NOPULL);
+        for (unsigned bit = 0; bit < 16; ++bit)
+            if (c->Pin & (1U << bit))
+                p->MODER = (p->MODER & ~(3U << (bit*2))) | (1U << (bit*2));
+        ++gpio_outputs;
+        return;
+    }
+#endif
     // Only the selected diagnostic ADC and optional button may be configured.
     extern unsigned adc_pins, button_pins;
     if (p == GPIOA && c->Pin ==
@@ -86,6 +132,9 @@ inline unsigned HAL_ADC_GetValue(ADC_HandleTypeDef*) { if (adc_mix_zero) return 
 unsigned long millis() { return 0; }
 void delayMicroseconds(unsigned long) {}
 GPIO_TypeDef a = {}, b = {};
+unsigned bsrr_count;
+uint32_t bsrr_trace[2048];
+unsigned gpio_writes, gpio_outputs;
 unsigned adc_pins, button_pins;
 unsigned adc_channel, adc_a2 = 2048, adc_a3;
 unsigned adc_error, adc_samples;
@@ -96,7 +145,28 @@ extern "C" rurp_configuration_t *rurp_get_config() {
     static rurp_configuration_t c = {}; return &c;
 }
 int main() {
+    // Simulate stale/random control latch inputs and a nonzero bus latch.
+#ifdef RURP_BOARD_MICROPETAL_UNO
+    b.ODR = 0xFFFF;
+#endif
+    // Exercise the early-main hook before ADC/serial setup, then its safe
+    // reapplication in board setup (the runtime follows this same sequence).
+    rurp_board_safe_idle();
+#ifdef RURP_BOARD_MICROPETAL_UNO
+    assert(gpio_writes == 8 && gpio_outputs == 6);
+    assert(adc_pins == 0 && button_pins == 0);
+    gpio_writes = gpio_outputs = 0;
+#endif
     rurp_board_setup();
+#ifdef RURP_BOARD_MICROPETAL_UNO
+    assert(gpio_writes == 8 && gpio_outputs == 6);
+    assert((b.ODR & 0xB3FF) == ((1U<<13) | (1U<<12)));
+    assert((b.MODER & 0xFFFF) == 0); // bus released, control drivers stay active
+#else
+    assert(gpio_writes == 0 && gpio_outputs == 0);
+#endif
+    const auto idle_mode = b.MODER;
+    const auto idle_odr = b.ODR;
     assert(adc_pins == 1 + RURP_PY32F071_HAS_USER_BUTTON && button_pins == RURP_PY32F071_HAS_USER_BUTTON);
 #ifdef RURP_BOARD_MICROPETAL_UNO
     rurp_get_config()->hardware_revision = 0xFF;
@@ -140,7 +210,7 @@ int main() {
         rurp_write_data_buffer(n);
         rurp_set_control_pin(n, 0);
         rurp_set_control_pin(n, 1);
-        assert(b.BSRR == 0 && b.MODER == 0 && b.OTYPER == 0);
+        assert(b.BSRR == 0 && b.MODER == idle_mode && b.ODR == idle_odr && b.OTYPER == 0);
         assert(a.BSRR == 0);
         b.IDR = n;
         assert(rurp_read_data_buffer() == n);
@@ -156,7 +226,8 @@ int main() {
     }
     adc_error = 0;
     rurp_set_data_output();
-    assert(b.MODER == 0);
+    assert(b.MODER == idle_mode);
+    assert(gpio_writes == 8 * RURP_PY32F071_HAS_USER_BUTTON);
 #if RURP_PY32F071_HAS_USER_BUTTON
     b.IDR = 1U << 14;
     assert(!rurp_user_button_pressed());

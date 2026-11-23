@@ -12,8 +12,9 @@
 
 /* MicroPetal Uno R1, non-E PY32F071C1BU6. See platform/py32f071/DESIGN.md.
  * U4 CAN transceiver is DNP on the F071 assembly: D8/D9 are available.
- * Keep socket outputs disabled until ARM shield-revision routing
- * and the board backend are validated on hardware.
+ * Keep socket operations disabled until the board backend is validated.
+ * Startup must still drive latch enables low, /CE and /OE high, and clear
+ * the physical control latch: floating controls are not electrically safe.
  */
 #define RURP_PY32F071_LSB_PORT GPIOB
 #define RURP_PY32F071_LSB_PIN GPIO_PIN_8

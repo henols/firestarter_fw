@@ -370,3 +370,11 @@ The read-operation TX check is the result of the current MSG_DATA_CHUNK frame, n
 MicroPetal revision detection runs before USB enumeration, so its boot-time UNKNOWN warning is not delivered on ARM. The normal ready reply reports the effective hardware revision, including UNKNOWN when no override is set. This is not proof of physical shield identification.
 
 Operator build/install and board-arrival procedures live in the [MicroPetal wiki](https://github.com/henols/firestarter/wiki/MicroPetal-Uno) and [bring-up checklist](https://github.com/henols/firestarter/wiki/MicroPetal-Bring-up), not a second per-board design record.
+
+### MicroPetal application safe idle
+
+MicroPetal preloads /CE and /OE high and the latch enables low before it
+enables output drivers. It then writes zero to the physical control latch
+with the data bus actively driven, and releases the data bus. This runs
+before clock, ADC and USB initialization, independently of operation refusal.
+It cannot protect reset or ROM-loader intervals; those require hardware bias.

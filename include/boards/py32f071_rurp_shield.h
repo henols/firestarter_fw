@@ -28,6 +28,7 @@
 extern "C" {
 #endif
 
+void rurp_board_safe_idle(void);
 void rurp_communication_begin(void);
 void rurp_timing_init(void);
 

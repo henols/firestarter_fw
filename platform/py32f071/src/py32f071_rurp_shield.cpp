@@ -148,6 +148,10 @@ bool socket_output_allowed()
 
 void configure_socket_outputs()
 {
+#if defined(RURP_BOARD_MICROPETAL_UNO)
+    // safe_idle already configures these pins and clears the physical latch.
+    return;
+#endif
     if (!socket_output_allowed()) return;
     /* Preload inactive levels before enabling output drivers. */
     configure_output(RURP_PY32F071_CE_PORT, RURP_PY32F071_CE_PIN, GPIO_PIN_SET);
@@ -170,10 +174,39 @@ extern "C" bool rurp_read_revision_adc10(bool divider, uint16_t *out)
 }
 #endif
 
+/* Independent of the operation gate: high-Z latch enables are NOT safe on a
+ * populated shield. Zero is the physical all-HV-off byte on every revision.
+ * Do not call the guarded bus APIs here, or depend on revision ADC / USB / TIM3.
+ * This cannot protect the reset/ROM-loader interval: hardware biasing is needed.
+ */
+extern "C" void rurp_board_safe_idle(void)
+{
+#if defined(RURP_BOARD_MICROPETAL_UNO)
+    RURP_PY32F071_ENABLE_GPIO_CLOCKS();
+    configure_output(RURP_PY32F071_CE_PORT, RURP_PY32F071_CE_PIN, GPIO_PIN_SET);
+    configure_output(RURP_PY32F071_OE_PORT, RURP_PY32F071_OE_PIN, GPIO_PIN_SET);
+    configure_output(RURP_PY32F071_LSB_PORT, RURP_PY32F071_LSB_PIN, GPIO_PIN_RESET);
+    configure_output(RURP_PY32F071_MSB_PORT, RURP_PY32F071_MSB_PIN, GPIO_PIN_RESET);
+    configure_output(RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_RESET);
+
+    // Preload zero before driving the data bus. Clear an already-random latch,
+    // not just its enable pin; /CE and /OE stay inactive throughout.
+    configure_output(RURP_PY32F071_DATA_PORT, data_pin_mask(), GPIO_PIN_RESET);
+    // Conservative setup/pulse/hold delays at any supported clock, without TIM3.
+    for (volatile unsigned n = 0; n < 64; ++n) { __NOP(); }
+    HAL_GPIO_WritePin(RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_SET);
+    for (volatile unsigned n = 0; n < 64; ++n) { __NOP(); }
+    HAL_GPIO_WritePin(RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_RESET);
+    for (volatile unsigned n = 0; n < 64; ++n) { __NOP(); }
+    rurp_set_data_input();
+#endif
+}
+
 extern "C" void rurp_board_setup(void)
 {
     RURP_PY32F071_ENABLE_GPIO_CLOCKS();
 
+    rurp_board_safe_idle();
     configure_socket_outputs();
     rurp_set_data_input();
 
