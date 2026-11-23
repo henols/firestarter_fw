@@ -38,7 +38,7 @@ void test_enable_irq(void);
 uint32_t test_millis(void);
 #define RURP_MILLIS() test_millis()
 ''')
-    (tmp_path / 'usbd_cdc.h').write_text('#include "usbd_core.h"\n')
+    (tmp_path / 'usbd_cdc.h').write_text('#include "usbd_core.h"\nstruct cdc_line_coding { uint32_t dwDTERate; };\n')
     (tmp_path / 'usbd_core.h').write_text('''
 #pragma once
 #define USB_MEM_ALIGNX
@@ -233,6 +233,32 @@ void test_reopen(void) {
 }
 size_t test_tx_length(void) { return received_count; }
 const uint8_t *test_tx_bytes(void) { return received; }
+void test_rom_touch(void) {
+    assert(!py32_usb_take_rom_request());
+#if RURP_MICROPETAL_ROM_TOUCH
+    struct cdc_line_coding coding = {250000};
+    usbd_cdc_acm_set_dtr(0, false);
+    usbd_cdc_acm_set_line_coding(0, &coding);
+    usbd_cdc_acm_set_dtr(0, true);
+    usbd_cdc_acm_set_dtr(0, false);
+    assert(!py32_usb_take_rom_request());
+    coding.dwDTERate = 1200;
+    usbd_cdc_acm_set_line_coding(1, &coding); // wrong interface
+    usbd_cdc_acm_set_dtr(0, true);
+    usbd_cdc_acm_set_dtr(0, false);
+    assert(!py32_usb_take_rom_request());
+    usbd_cdc_acm_set_line_coding(0, &coding);
+    assert(!py32_usb_take_rom_request()); // rate alone is not a trigger
+    usbd_cdc_acm_set_dtr(0, true);
+    usbd_cdc_acm_set_dtr(0, false);
+    assert(py32_usb_take_rom_request());
+    assert(!py32_usb_take_rom_request()); // consumed exactly once
+    coding.dwDTERate = 250000;
+    usbd_cdc_acm_set_line_coding(0, &coding);
+    (void)py32_usb_available(); // apply DTR session reset before RX tests
+#endif
+}
+
 ''')
 
     driver = tmp_path / 'transport.cpp'
@@ -248,6 +274,7 @@ const uint8_t *test_tx_bytes(void) { return received; }
 
 extern "C" {
 void test_usb_begin(void);
+void test_rom_touch(void);
 void test_rx_backpressure(void);
 void test_feed_rx(const uint8_t *, size_t);
 void test_prepare_tx(int);
@@ -316,6 +343,7 @@ static int decode_from_usb(const std::vector<uint8_t>& encoded, std::vector<char
 
 int main() {
     test_usb_begin();
+    test_rom_touch();
     test_rx_backpressure();
     std::vector<char> decoded(DATA_BUFFER_SIZE + 1);
 
@@ -410,6 +438,7 @@ int main() {
     compile_ok([host_cc(), '-std=c11',
                 *transport_defines('platform/py32f071/src/usb_cdc.c'),
                 '-UNDEBUG', '-I', tmp_path, '-I', REPO_ROOT,
+                '-I', REPO_ROOT / 'include',
                 '-c', backend, '-o', backend_obj])
     binary = tmp_path / 'transport'
     compile_ok([host_cxx(), '-std=c++17',

@@ -1,4 +1,5 @@
 #include "boards/py32f071_rurp_shield.h"
+#include "rurp_rom_touch.h"
 
 extern void setup(void);
 extern void loop(void);
@@ -70,5 +71,6 @@ extern "C" int main(void)
     for (;;)
     {
         loop();
+        rurp_rom_boot_poll();
     }
 }

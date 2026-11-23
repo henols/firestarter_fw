@@ -32,6 +32,10 @@ if(NOT RURP_BOARD IN_LIST RURP_BOARDS)
 endif()
 set(RURP_PROVISIONAL_py32f071 1)
 set(RURP_PROVISIONAL_micropetal_uno 1)
+option(RURP_MICROPETAL_ROM_TOUCH "Experimental 1200-baud touch into factory ROM USB loader" OFF)
+if(RURP_MICROPETAL_ROM_TOUCH AND NOT RURP_BOARD STREQUAL "micropetal_uno")
+    message(FATAL_ERROR "ROM touch requires MicroPetal")
+endif()
 set(TARGET_NAME firestarter_${RURP_BOARD}.elf)
 set(REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 set(PY32_SDK_ROOT "${py32f071_sdk_SOURCE_DIR}")
@@ -68,6 +72,7 @@ set(FIRESTARTER_COMMON_SOURCES
 set(PY32_PLATFORM_SOURCES
     startup/startup_py32f071.s
     src/main.cpp
+    src/rom_boot.cpp
     src/platform_compat.cpp
     src/timing.cpp
     src/usb_cdc.c
@@ -140,6 +145,10 @@ target_compile_definitions(
 
 if(RURP_BOARD STREQUAL "micropetal_uno")
     target_compile_definitions(${TARGET_NAME} PRIVATE RURP_BOARD_MICROPETAL_UNO=1 HARDWARE_REVISION=1)
+endif()
+
+if(RURP_MICROPETAL_ROM_TOUCH)
+    target_compile_definitions(${TARGET_NAME} PRIVATE RURP_MICROPETAL_ROM_TOUCH=1)
 endif()
 
 target_compile_features(${TARGET_NAME} PRIVATE c_std_11 cxx_std_17)
