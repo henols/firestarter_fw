@@ -381,21 +381,30 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
             usb_restore_irq(state);
             break;
         }
-        const uint16_t next = ring_next(tx_head, FIRESTARTER_USB_TX_CAPACITY);
-        const bool full = next == tx_tail;
-        if (!full)
+        bool buffer_was_full = false;
+        while (count < length)
         {
+            const uint16_t next = ring_next(tx_head, FIRESTARTER_USB_TX_CAPACITY);
+            if (next == tx_tail)
+            {
+                buffer_was_full = true;
+                break;
+            }
             tx_buffer[tx_head] = buffer[count++];
             tx_head = next;
         }
         usb_start_next_transmit();
         usb_restore_irq(state);
         const uint32_t now = RURP_MILLIS();
-        if (!full) deadline = now + FIRESTARTER_USB_TIMEOUT_MS;
+        if (!buffer_was_full) deadline = now + FIRESTARTER_USB_TIMEOUT_MS;
         else if ((int32_t)(now - deadline) >= 0)
         {
             frame_failed = tx_failed = true;
             break;
+        }
+        else
+        {
+            for (volatile unsigned n = 0; n < 1000; ++n) { __NOP(); }
         }
     }
     return count;

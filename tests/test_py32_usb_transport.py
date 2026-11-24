@@ -29,6 +29,7 @@ void test_enable_irq(void);
 #define __get_PRIMASK() test_irq_state()
 #define __disable_irq() test_disable_irq()
 #define __enable_irq() test_enable_irq()
+#define __NOP() ((void)0)
 #define __HAL_RCC_SYSCFG_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_USB_CLK_ENABLE() ((void)0)
 #define NVIC_EnableIRQ(x) ((void)0)
@@ -90,6 +91,7 @@ static inline void _firestarter_emit_frame(uint8_t id, const uint8_t *params, ui
 static uint8_t received[DATA_BUFFER_SIZE + 32U];
 static uint8_t pending_packet[64];
 static size_t received_count;
+static size_t packet_count;
 static size_t pending_size;
 static bool pending;
 static bool paused;
@@ -128,7 +130,7 @@ void test_enable_irq(void) {
     if (unlock_event) { unsigned kind = unlock_event; unlock_event = 0; fire_event(kind); }
 }
 void test_event_during_frame(unsigned kind) {
-    timer_event = kind; event_at = now_ms + 150; event_fired = false;
+    timer_event = kind; event_at = now_ms + 2; event_fired = false;
 }
 void test_assert_event_fired(void) { assert(event_fired && !irq_state); }
 void test_ring_reset_ownership(void) {
@@ -152,6 +154,7 @@ void fake_ep_write(uint8_t ep, const uint8_t *data, size_t count) {
     assert(!pending);
     if (count) memcpy(pending_packet, data, count);
     pending_size = count;
+    if (count) ++packet_count;
     pending = true;
 }
 
@@ -215,6 +218,7 @@ void test_rx_backpressure(void) {
 void test_prepare_tx(int hold) {
     pending = false;
     received_count = 0U;
+    packet_count = 0U;
     paused = hold != 0;
     now_ms = 0U;
     host_out_armed = false; /* SET_CONFIGURATION cancels the pending OUT read. */
@@ -231,6 +235,7 @@ void test_reopen(void) {
     (void)test_millis();
     received_count = 0;
 }
+size_t test_packet_count(void) { return packet_count; }
 size_t test_tx_length(void) { return received_count; }
 const uint8_t *test_tx_bytes(void) { return received; }
 ''')
@@ -251,6 +256,7 @@ void test_usb_begin(void);
 void test_rx_backpressure(void);
 void test_feed_rx(const uint8_t *, size_t);
 void test_prepare_tx(int);
+size_t test_packet_count(void);
 size_t test_tx_length(void);
 const uint8_t *test_tx_bytes(void);
 uint32_t test_millis(void);
@@ -354,6 +360,7 @@ int main() {
     checksum_input.insert(checksum_input.end(), mixed.begin(), mixed.end());
     expected.push_back(ref_crc8(checksum_input.data(), checksum_input.size()));
     expected.push_back(0x0A);
+    assert(test_packet_count() == (expected.size() + 63) / 64);
     assert(test_tx_length() == expected.size());
     assert(memcmp(test_tx_bytes(), expected.data(), expected.size()) == 0);
 
