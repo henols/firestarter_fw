@@ -65,19 +65,6 @@ jobs:
           python3 -m pip install pytest
           python3 -m pytest ${{ matrix.tests }} -v
 
-      - name: Upload failed build diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: firestarter_${{ matrix.board }}_build_diagnostics
-          if-no-files-found: warn
-          path: |
-            configure.log
-            build.log
-            tool-versions.txt
-            build/py32f071/CMakeCache.txt
-            build/py32f071/build.ninja
-
       # ad47c3b: size goes to the job log, which is worth seeing on every
       # run, and is worth nothing as an artifact -- no longer teed to a file.
       - name: Report firmware size
@@ -119,3 +106,16 @@ jobs:
         with:
           board: micropetal_uno
           experimental_micropetal: ON
+
+      - name: Upload failed build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestarter_${{ matrix.board }}_build_diagnostics
+          if-no-files-found: warn
+          path: |
+            configure.log
+            build.log
+            tool-versions.txt
+            build/py32f071/CMakeCache.txt
+            build/py32f071/build.ninja

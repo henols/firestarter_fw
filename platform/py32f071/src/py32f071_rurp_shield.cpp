@@ -4,6 +4,7 @@
 #include "rurp_register_utils.h"
 #include "rurp_serial_utils.h"
 #include "rurp_shield.h"
+#include "rurp_voltage_math.h"
 
 #if !defined(RURP_PLATFORM_PY32F071)
 #error "py32f071_rurp_shield.cpp compiled for the wrong platform"
@@ -324,7 +325,7 @@ extern "C" uint16_t rurp_read_vcc_mv(void)
     }
 
     return static_cast<uint16_t>(
-        (4095UL * 1200UL + reference_reading / 2U) /
+        (RURP_ADC_FULL_SCALE * 1200UL + reference_reading / 2U) /
         reference_reading);
 }
 

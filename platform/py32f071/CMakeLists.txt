@@ -133,7 +133,7 @@ target_include_directories(
         "${PY32_SDK_ROOT}/Middlewares/Third_Party/CherryUSB/class/cdc"
 )
 
-# ARM uses the shared DEV_TOOLS=0 default.
+# Development diagnostics are opt-in through RURP_DEV_TOOLS below.
 # The pin-map guard requires an explicitly configured board to avoid silently
 # compiling provisional GPIO mappings. No PY32 PCB exists to validate the DAC,
 # so keep the VPP DAC capability disabled until real hardware is available.

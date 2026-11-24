@@ -93,7 +93,7 @@ truth for the name set.
 
 1. `rurp_pinmap_refuses(handle->cmd)` refuses each command that can energise the PROM bus while the
    pin map of the board is provisional. It refuses before the firmware configures a handler. It
-   sends `MSG_ERR_NOT_SUPPORTED` with the **command** ordinal, not the protocol ordinal. It leaves
+   sends `MSG_ERR_NOT_SUPPORTED` with no parameter. It leaves
    all three operation pointers NULL. AVR targets never define `RURP_PINMAP_PROVISIONAL`, so on AVR
    this gate compiles to nothing.
 2. A `switch (handle->cmd)` sets the main operation for `CMD_READ` and `CMD_WRITE`. The firmware has

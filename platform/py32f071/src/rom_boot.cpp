@@ -66,6 +66,7 @@ void jump_to_rom() {
 
     // Release D+ immediately before the ROM initializes its USB controller.
     // Shield control pins remain actively safe until ROM takes ownership.
+    __HAL_RCC_GPIOA_CLK_ENABLE();
     dp.Mode = GPIO_MODE_INPUT;
     HAL_GPIO_Init(GPIOA, &dp);
     enter_rom(stack, reset);

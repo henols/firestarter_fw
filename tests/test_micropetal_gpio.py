@@ -247,6 +247,8 @@ int main() {
         assert(rurp_read_divider_adc() == 0);
     }
     adc_error = 0;
+    adc_a2 = 1489;
+    assert(rurp_read_vcc_mv() == 3301); // 12-bit VREFINT scale matches raw ADC diagnostics
     rurp_set_data_output();
     assert(b.MODER == idle_mode);
     assert(gpio_writes == 8 * RURP_PY32F071_HAS_USER_BUTTON);

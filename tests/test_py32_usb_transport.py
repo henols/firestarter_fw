@@ -10,9 +10,13 @@ from ._py32_build import arm_defines
 
 
 @pytest.mark.parametrize('stress_size', [None, 4096], ids=['production', '4k-stress'])
-def test_large_usb_frames_and_stalled_host(tmp_path, stress_size):
+@pytest.mark.parametrize('rom_touch', [False, True], ids=['normal', 'rom-touch'])
+def test_large_usb_frames_and_stalled_host(tmp_path, stress_size, rom_touch):
     def transport_defines(source):
         defines = arm_defines(source)
+        if rom_touch and source == 'platform/py32f071/src/usb_cdc.c':
+            defines = [d for d in defines if not d.startswith('-DRURP_MICROPETAL_ROM_TOUCH=')]
+            defines.append('-DRURP_MICROPETAL_ROM_TOUCH=1')
         # The real image stays at its CMake size. This second configuration
         # stresses streaming across a much smaller USB ring, not shipped RAM.
         if stress_size is not None:
