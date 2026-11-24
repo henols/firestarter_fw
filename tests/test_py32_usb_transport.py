@@ -15,6 +15,8 @@ def test_large_usb_frames_and_stalled_host(tmp_path, stress_size, rom_touch):
     def transport_defines(source):
         defines = arm_defines(source)
         if rom_touch and source == 'platform/py32f071/src/usb_cdc.c':
+            if '-DRURP_BOARD_MICROPETAL_UNO=1' not in defines:
+                pytest.skip('ROM USB touch is MicroPetal-only')
             defines = [d for d in defines if not d.startswith('-DRURP_MICROPETAL_ROM_TOUCH=')]
             defines.append('-DRURP_MICROPETAL_ROM_TOUCH=1')
         # The real image stays at its CMake size. This second configuration
