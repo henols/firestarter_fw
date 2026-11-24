@@ -172,10 +172,14 @@ extern "C" void rurp_write_to_register(uint8_t reg, rurp_register_t data) {
     }
 }
 
+/* A suite that models the data bus itself (test_ram_test_march) defines
+ * HOST_STUBS_CUSTOM_DATA_BUFFER and supplies rurp_write_data_buffer. */
+#ifndef HOST_STUBS_CUSTOM_DATA_BUFFER
 #define HOST_STUBS_CUSTOM_DATA_BUFFER
 extern "C" void rurp_write_data_buffer(uint8_t data) {
     bus_cycle_push(BUS_CYCLE_WRITE, data);
 }
+#endif
 #else
 extern "C" void rurp_write_to_register(uint8_t reg, rurp_register_t data) {
     (void)reg; (void)data;
