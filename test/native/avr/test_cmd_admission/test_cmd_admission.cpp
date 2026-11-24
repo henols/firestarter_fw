@@ -51,6 +51,7 @@ void test_admission_truth_table_over_every_cmd_value(void) {
             case 9:
             case 10:
             case 16:
+            case 18:
                 expected = true;
                 break;
             default:
@@ -63,18 +64,16 @@ void test_admission_truth_table_over_every_cmd_value(void) {
     }
 }
 
-void test_admission_count_is_exactly_seven(void) {
+void test_admission_count_is_exactly_eight(void) {
     int count = 0;
     for (int c = 0; c <= 255; c++) {
         if (is_memory_cmd((uint8_t)c)) {
             count++;
         }
     }
-    TEST_ASSERT_EQUAL_MESSAGE(7, count,
-        "is_memory_cmd() must admit exactly seven of the 256 possible uint8_t values "
-        "(Phase 151, LOCK-02, established the original nine; Phase 204 retires two of "
-        "them -- the verify command's own ordinal in plan 01, the blank-check "
-        "command's own ordinal here in plan 03)");
+    TEST_ASSERT_EQUAL_MESSAGE(8, count,
+        "is_memory_cmd() must admit exactly eight of the 256 possible uint8_t values: "
+        "read, write, erase, chip-ID, SDP unlock, SDP lock, lock status and RAM test");
 }
 
 /* Case 2 — cmd 7 and 8 (CMD_DEV_ADDRESS / CMD_DEV_REGISTER) are excluded.
@@ -97,7 +96,11 @@ void test_admission_boundary_around_cmd_lock_status(void) {
     TEST_ASSERT_FALSE_MESSAGE(is_memory_cmd(15),
         "cmd 15 (CMD_HW_VERSION, highest pre-existing command) must not be admitted");
     TEST_ASSERT_FALSE_MESSAGE(is_memory_cmd(17),
-        "cmd 17 (first value above the new ninth admission, 16) must not be admitted");
+        "cmd 17 (CMD_DEV_ADC, DEV_TOOLS-conditional, not a memory command) must not be admitted");
+    TEST_ASSERT_TRUE_MESSAGE(is_memory_cmd(CMD_RAM_TEST),
+        "CMD_RAM_TEST (18) reads and writes through the protocol handler, so it must be admitted");
+    TEST_ASSERT_FALSE_MESSAGE(is_memory_cmd(19),
+        "cmd 19 (first value above CMD_RAM_TEST) must not be admitted");
 }
 
 void test_admission_rejects_cmd_idle_zero(void) {
@@ -122,7 +125,7 @@ int main(int argc, char** argv) {
     UNITY_BEGIN();
 
     RUN_TEST(test_admission_truth_table_over_every_cmd_value);
-    RUN_TEST(test_admission_count_is_exactly_seven);
+    RUN_TEST(test_admission_count_is_exactly_eight);
     RUN_TEST(test_admission_rejects_dev_tool_ordinals_7_and_8);
     RUN_TEST(test_admission_boundary_around_cmd_lock_status);
     RUN_TEST(test_admission_rejects_cmd_idle_zero);

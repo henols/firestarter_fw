@@ -12,7 +12,7 @@
  * then synced here. Edit the catalog there and re-sync.
  *
  * Catalog version: 1
- * Total messages: 91
+ * Total messages: 92
  */
 
 #ifndef __MESSAGES_H__
@@ -117,6 +117,7 @@ extern "C" {
 #define MSG_ERR_BAD_COMMAND               0xC2
 #define MSG_ERR_FRAME_VERSION             0xC3
 #define MSG_ERR_VPP_HIGH_MV               0xC4
+#define MSG_ERR_RAM_TEST                  0xC5
 #define MSG_DATA_PROGRESS                 0xE0
 #define MSG_DATA_PROTECTION_STATUS        0xE1
 #define MSG_DATA_SENDING                  0xE2
