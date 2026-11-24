@@ -86,7 +86,7 @@ static volatile uint16_t tx_tail;
 static volatile bool tx_busy;
 static volatile bool rx_armed;
 /* ISR publishes session changes, main owns all ring resets. A frame keeps
- * its generation across every single-byte Serial.write call. */
+ * its generation across every Serial.write call in the frame. */
 static volatile uint32_t usb_generation;
 static uint32_t applied_generation;
 static uint32_t frame_generation;
@@ -381,13 +381,14 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
             usb_restore_irq(state);
             break;
         }
-        bool buffer_was_full = false;
-        while (count < length)
+        /* Copy at most one USB packet per critical section, so the USB ISR
+         * and millis() are never held off for a whole caller buffer. */
+        const size_t before = count;
+        while (count < length && count - before < FIRESTARTER_CDC_MAX_PACKET_SIZE)
         {
             const uint16_t next = ring_next(tx_head, FIRESTARTER_USB_TX_CAPACITY);
             if (next == tx_tail)
             {
-                buffer_was_full = true;
                 break;
             }
             tx_buffer[tx_head] = buffer[count++];
@@ -396,7 +397,9 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
         usb_start_next_transmit();
         usb_restore_irq(state);
         const uint32_t now = RURP_MILLIS();
-        if (!buffer_was_full) deadline = now + FIRESTARTER_USB_TIMEOUT_MS;
+        /* A slow host that keeps draining the ring is progress. Time out only
+         * after FIRESTARTER_USB_TIMEOUT_MS without a single accepted byte. */
+        if (count != before) deadline = now + FIRESTARTER_USB_TIMEOUT_MS;
         else if ((int32_t)(now - deadline) >= 0)
         {
             frame_failed = tx_failed = true;

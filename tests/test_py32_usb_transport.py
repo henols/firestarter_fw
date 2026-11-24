@@ -109,6 +109,10 @@ static void pump_host_rx(void) {
     firestarter_cdc_bulk_out(FIRESTARTER_CDC_OUT_EP, n);
 }
 static uint32_t now_ms;
+static uint32_t slow_period;
+static bool measure_cs;
+static uint16_t cs_tx_head;
+static size_t max_cs_bytes;
 static unsigned irq_state, unlock_event, timer_event, event_at;
 static bool event_fired;
 static void fire_event(unsigned kind) {
@@ -124,9 +128,14 @@ static void fire_event(unsigned kind) {
     }
 }
 unsigned test_irq_state(void) { return irq_state; }
-void test_disable_irq(void) { assert(!irq_state); irq_state = 1; }
+void test_disable_irq(void) { assert(!irq_state); irq_state = 1; cs_tx_head = tx_head; }
 void test_enable_irq(void) {
     assert(irq_state); irq_state = 0;
+    if (measure_cs) {
+        const size_t queued = (size_t)((tx_head + FIRESTARTER_USB_TX_CAPACITY - cs_tx_head) %
+                                       FIRESTARTER_USB_TX_CAPACITY);
+        if (queued > max_cs_bytes) max_cs_bytes = queued;
+    }
     if (unlock_event) { unsigned kind = unlock_event; unlock_event = 0; fire_event(kind); }
 }
 void test_event_during_frame(unsigned kind) {
@@ -164,7 +173,7 @@ uint32_t test_millis(void) {
     if (timer_event && now_ms >= event_at) {
         unsigned kind = timer_event; timer_event = 0; fire_event(kind);
     }
-    if (pending && !paused) {
+    if (pending && !paused && (!slow_period || now_ms % slow_period == 0)) {
         const size_t sent = pending_size;
         pending = false;
         assert(received_count + sent <= sizeof(received));
@@ -216,6 +225,9 @@ void test_rx_backpressure(void) {
 }
 
 void test_prepare_tx(int hold) {
+    slow_period = 0U;
+    measure_cs = false;
+    max_cs_bytes = 0U;
     pending = false;
     received_count = 0U;
     packet_count = 0U;
@@ -235,6 +247,12 @@ void test_reopen(void) {
     (void)test_millis();
     received_count = 0;
 }
+/* Host drains one IN packet every `period` ms, so the TX ring stays full
+ * for far longer than the timeout while bytes keep moving. */
+void test_slow_host(uint32_t period) { slow_period = period; }
+void test_measure_critical_sections(void) { measure_cs = true; max_cs_bytes = 0U; }
+size_t test_max_critical_section_bytes(void) { return max_cs_bytes; }
+uint32_t test_now(void) { return now_ms; }
 size_t test_packet_count(void) { return packet_count; }
 size_t test_tx_length(void) { return received_count; }
 const uint8_t *test_tx_bytes(void) { return received; }
@@ -256,6 +274,10 @@ void test_usb_begin(void);
 void test_rx_backpressure(void);
 void test_feed_rx(const uint8_t *, size_t);
 void test_prepare_tx(int);
+void test_slow_host(uint32_t);
+void test_measure_critical_sections(void);
+size_t test_max_critical_section_bytes(void);
+uint32_t test_now(void);
 size_t test_packet_count(void);
 size_t test_tx_length(void);
 const uint8_t *test_tx_bytes(void);
@@ -277,6 +299,8 @@ void test_arm_rx_interrupt(void);
 int rurp_communication_tx_failed(void);
 }
 
+static size_t writes_after_failure;
+
 struct SerialMock {
     void begin(unsigned long) {}
     void end() {}
@@ -285,9 +309,10 @@ struct SerialMock {
     int read() { return py32_usb_read(); }
     int peek() const { return py32_usb_peek(); }
     size_t readBytes(char *out, size_t n) { return py32_usb_read_bytes(out, n); }
-    size_t write(uint8_t b) { return py32_usb_write(&b, 1); }
-    size_t write(const uint8_t *p, size_t n) { return py32_usb_write(p, n); }
-    void flush() { py32_usb_flush(); }
+    size_t write(uint8_t b) { note_failed_use(); return py32_usb_write(&b, 1); }
+    size_t write(const uint8_t *p, size_t n) { note_failed_use(); return py32_usb_write(p, n); }
+    void flush() { note_failed_use(); py32_usb_flush(); }
+    static void note_failed_use() { if (rurp_communication_tx_failed()) ++writes_after_failure; }
 } Serial;
 
 unsigned long millis() { return test_millis(); }
@@ -364,10 +389,33 @@ int main() {
     assert(test_tx_length() == expected.size());
     assert(memcmp(test_tx_bytes(), expected.data(), expected.size()) == 0);
 
-    // Stalled USB IN endpoint: the write is incomplete and fails closed.
+    // A slow but steady host keeps the TX ring full for much longer than the
+    // timeout. Each accepted byte is progress, so the write must complete.
+    // Interrupts are re-enabled after at most one USB packet of copying.
+    {
+        std::vector<uint8_t> bulk(3000);
+        for (size_t i = 0; i < bulk.size(); ++i) bulk[i] = uint8_t(i * 7 + 1);
+        test_prepare_tx(0);
+        test_slow_host(20);
+        test_measure_critical_sections();
+        assert(py32_usb_write(bulk.data(), bulk.size()) == bulk.size());
+        assert(!rurp_communication_tx_failed());
+        assert(test_now() > 2 * 100); // ring stayed full far beyond the timeout
+        assert(test_max_critical_section_bytes() <= 64);
+        assert(test_max_critical_section_bytes() > 0);
+        py32_usb_flush();
+        assert(!rurp_communication_tx_failed());
+        assert(test_tx_length() == bulk.size());
+        assert(memcmp(test_tx_bytes(), bulk.data(), bulk.size()) == 0);
+    }
+
+    // Stalled USB IN endpoint: the write is incomplete and fails closed, and
+    // the emitter stops writing or flushing as soon as a write comes up short.
     test_prepare_tx(1);
+    writes_after_failure = 0;
     rurp_log_id_wide(id, mixed.data(), (uint16_t)mixed.size());
     assert(rurp_communication_tx_failed());
+    assert(writes_after_failure == 0);
     assert(py32_usb_write(mixed.data(), 1) == 0);
 
     // Reopening the port, without SET_CONFIGURATION, recovers a stalled link.

@@ -397,16 +397,21 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
     py32_usb_frame_begin();
     // Fill full USB packets before handing bytes to the TX ring. Single-byte
     // Serial.write calls otherwise start tiny transfers even for wide frames.
+    // A short write means the frame has already failed (reconnect or TX
+    // timeout), so stop building and sending the rest of it.
     uint8_t packet[64];
     size_t packet_size = 0;
+    bool stopped = false;
     const auto emit_byte = [&](uint8_t value) {
+        if (stopped) return;
         packet[packet_size++] = value;
         if (packet_size == sizeof(packet)) {
-            SERIAL_PORT.write(packet, packet_size);
+            stopped = SERIAL_PORT.write(packet, packet_size) != packet_size;
             packet_size = 0;
         }
     };
 #else
+    const bool stopped = false;
     const auto emit_byte = [&](uint8_t value) { SERIAL_PORT.write(value); };
 #endif
     // Magic preamble (4 bytes from PROGMEM).
@@ -429,7 +434,7 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
     crc = crc8_ccitt(crc, id);
 
     // Params.
-    for (uint16_t i = 0; i < param_count; i++) {
+    for (uint16_t i = 0; i < param_count && !stopped; i++) {
         uint8_t b = params[i];
         emit_byte(b);
         crc = crc8_ccitt(crc, b);
@@ -442,9 +447,11 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
     emit_byte((uint8_t)0x0A);
 
 #if defined(RURP_PLATFORM_PY32F071)
-    if (packet_size != 0) SERIAL_PORT.write(packet, packet_size);
+    if (!stopped && packet_size != 0) {
+        stopped = SERIAL_PORT.write(packet, packet_size) != packet_size;
+    }
 #endif
-    SERIAL_PORT.flush();
+    if (!stopped) SERIAL_PORT.flush();
 #if defined(RURP_PLATFORM_PY32F071)
     py32_usb_frame_end();
 #endif
