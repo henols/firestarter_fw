@@ -416,8 +416,9 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
 void py32_usb_flush(void)
 {
     const uint32_t generation = frame_active ? frame_generation : usb_generation;
-    const uint32_t deadline = RURP_MILLIS() + FIRESTARTER_USB_TIMEOUT_MS;
+    uint32_t deadline = RURP_MILLIS() + FIRESTARTER_USB_TIMEOUT_MS;
     usb_start_next_transmit_safe();
+    uint16_t last_tail = tx_tail;
     while (tx_head != tx_tail || tx_busy)
     {
         if (generation != usb_generation)
@@ -425,7 +426,15 @@ void py32_usb_flush(void)
             frame_failed = true;
             return;
         }
-        if (tx_failed || (int32_t)(RURP_MILLIS() - deadline) >= 0)
+        const uint32_t now = RURP_MILLIS();
+        /* Dequeuing a packet means the previous IN transfer completed. A
+         * slow but draining host must not time out on total frame duration. */
+        if (tx_tail != last_tail)
+        {
+            last_tail = tx_tail;
+            deadline = now + FIRESTARTER_USB_TIMEOUT_MS;
+        }
+        if (tx_failed || (int32_t)(now - deadline) >= 0)
         {
             frame_failed = tx_failed = true;
             return;

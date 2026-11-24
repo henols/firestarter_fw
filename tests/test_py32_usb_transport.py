@@ -88,7 +88,8 @@ static inline void _firestarter_emit_frame(uint8_t id, const uint8_t *params, ui
 #include <string.h>
 #include "platform/py32f071/src/usb_cdc.c"
 
-static uint8_t received[DATA_BUFFER_SIZE + 32U];
+/* Capture the independent 3000-byte streaming case as well as frames. */
+static uint8_t received[DATA_BUFFER_SIZE + 3000U + 32U];
 static uint8_t pending_packet[64];
 static size_t received_count;
 static size_t packet_count;
