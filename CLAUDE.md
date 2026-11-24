@@ -59,11 +59,6 @@ image therefore implements `CMD_DEV_ADDRESS` (`7`) and `CMD_DEV_REGISTER` (`8`).
 `firestarter dev addr` and `firestarter dev reg` need them. For a stable tag it sets no such flag,
 so a stable image refuses both commands.
 
-`CMD_DEV_ADC` (`17`, `firestarter dev adc`) is also a dev command, but the `leonardo` pre-release
-image does not have it. `leonardo` sets `-D DEV_ADC_SUPPORTED=0`, because its DEV_TOOLS image does
-not fit under the 28672 B cliff with both `CMD_DEV_ADC` and `CMD_RAM_TEST`. On `leonardo`, ordinal
-17 answers `MSG_ERR_UNKNOWN_CMD`. `uno` and `uno328pb` pre-release images have `CMD_DEV_ADC`.
-
 **`platformio.ini` tells you what a local build does. It does not tell you what ships.** To build
 a local image that matches a pre-release artifact, run:
 

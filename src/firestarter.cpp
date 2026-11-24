@@ -269,11 +269,9 @@ void loop() {
         case CMD_DEV_ADDRESS:
             finished = dt_set_address(&handle);
             break;
-#ifdef CMD_DEV_ADC
         case CMD_DEV_ADC:
             finished = dt_read_adc(&handle);
             break;
-#endif
 #endif
 
         case CMD_CONFIG:

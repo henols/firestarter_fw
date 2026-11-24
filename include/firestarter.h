@@ -66,16 +66,7 @@
 // injects and the stable build does not. Ordinals 4 and 6 are retired and
 // must never be reused. It is not a memory command: it configures no protocol
 // handler and is absent from is_memory_cmd() below.
-//
-// leonardo sets DEV_ADC_SUPPORTED=0 to keep its DEV_TOOLS image under the
-// 28672 B Caterina cliff. There, ordinal 17 answers UNKNOWN_CMD like any
-// command the image does not implement.
-#ifndef DEV_ADC_SUPPORTED
-#define DEV_ADC_SUPPORTED 1
-#endif
-#if DEV_ADC_SUPPORTED
 #define CMD_DEV_ADC 17
-#endif
 #endif
 
 // Standalone SDP (Software Data Protection) enable/disable commands on
