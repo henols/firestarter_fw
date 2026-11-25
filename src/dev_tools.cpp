@@ -209,7 +209,7 @@ static void dt_sample_adc(dt_adc_sample_t* out, rurp_register_t ctrl) {
     out->divider_adc = rurp_read_divider_adc();
     out->bandgap_adc = (uint16_t)rurp_get_bandgap_adc_reading();
     // rurp_reference_mv() is the reference the rail readers use, so these
-    // figures match hw read for the same counts on every platform.
+    // figures match hw read for the same counts.
     const uint32_t reference_mv = rurp_reference_mv(cfg->bandgap_mv);
     out->vcc_mv = rurp_scale_vcc_mv(out->bandgap_adc, reference_mv);
     out->voltage_mv = rurp_scale_voltage_mv(out->divider_adc, out->bandgap_adc,

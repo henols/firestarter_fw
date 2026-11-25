@@ -157,22 +157,21 @@ int main() {
     }
     adc_error = 0;
     // henols/firestarter#186: the rail readers use the shared conversions with
-    // the same reference as the dev adc diagnostic, so both report the same
-    // millivolts for the same counts (4096 full scale, not 4095).
+    // the fixed 1200 mV reference (4096 full scale, not 4095).
     rurp_configuration_t *cfg = rurp_get_config();
     cfg->r1 = VALUE_R1;
     cfg->r2 = VALUE_R2;
     cfg->bandgap_mv = 1100;  // AVR calibration field; PY32 must ignore it
     adc_vref = 1489;
     assert(rurp_read_vcc_mv() == 3301);
+    const uint32_t ref = rurp_reference_mv(cfg->bandgap_mv);
+    assert(ref == 1200);
     const unsigned vrefs[] = {0, 1, 1000, 1489, 1500, 4095};
     const unsigned dividers[] = {0, 1, 100, 1024, 2048, 4095};
     for (unsigned vref : vrefs) {
         for (unsigned div : dividers) {
             adc_vref = vref;
             adc_a2 = div;
-            const uint32_t ref = rurp_reference_mv(cfg->bandgap_mv);
-            assert(ref == 1200);
             assert(rurp_read_vcc_mv() == rurp_scale_vcc_mv(vref, ref));
             assert(rurp_read_voltage_mv() ==
                    rurp_scale_voltage_mv(div, vref, VALUE_R1, VALUE_R2, ref));

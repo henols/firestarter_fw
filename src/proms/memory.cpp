@@ -216,7 +216,8 @@ void mem_util_warn_if_uncalibrated(firestarter_handle_t* handle) {
 
 bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle) {
     rurp_configuration_t* cfg = rurp_get_config();
-    if (rurp_calibration_is_plausible((uint32_t)cfg->r1, (uint32_t)cfg->r2, cfg->bandgap_mv)) {
+    if (rurp_calibration_is_plausible((uint32_t)cfg->r1, (uint32_t)cfg->r2,
+                                      rurp_reference_mv(cfg->bandgap_mv))) {
         return false;
     }
     LOG_DATA_ID_U32_U32(MSG_ERR_CALIBRATION, cfg->r1, cfg->r2);
