@@ -38,12 +38,23 @@ if(RURP_MICROPETAL_ROM_TOUCH AND NOT RURP_BOARD STREQUAL "micropetal_uno")
 endif()
 option(RURP_MICROPETAL_FULL "Enable all implemented MicroPetal socket operations (experimental)" OFF)
 option(RURP_DEV_TOOLS "Include development diagnostics" OFF)
-set(RURP_BUILD_VERSION "" CACHE STRING "Version for an untagged local build")
+# Optional version for an untagged local build: -DRURP_BUILD_VERSION=<text>.
+# -D writes the cache. Copy the value, then remove the cache entry, so that
+# a later configure of this build directory does not use an old value.
+set(RURP_LOCAL_BUILD_VERSION "${RURP_BUILD_VERSION}")
+unset(RURP_BUILD_VERSION CACHE)
 if(RURP_MICROPETAL_FULL)
     if(NOT RURP_BOARD STREQUAL "micropetal_uno")
         message(FATAL_ERROR "Full operation mode requires MicroPetal")
     endif()
     set(RURP_PROVISIONAL_micropetal_uno 0)
+endif()
+# A provisional build blocks all register writes, so the dev commands would
+# report values that the shield never received.
+if(RURP_DEV_TOOLS AND NOT RURP_MICROPETAL_FULL)
+    message(FATAL_ERROR
+        "RURP_DEV_TOOLS=ON requires RURP_MICROPETAL_FULL=ON "
+        "(and RURP_BOARD=micropetal_uno)")
 endif()
 set(TARGET_NAME firestarter_${RURP_BOARD}.elf)
 set(REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
@@ -162,8 +173,9 @@ endif()
 if(RURP_DEV_TOOLS)
     target_compile_definitions(${TARGET_NAME} PRIVATE DEV_TOOLS=1)
 endif()
-if(RURP_BUILD_VERSION)
-    target_compile_definitions(${TARGET_NAME} PRIVATE VERSION="${RURP_BUILD_VERSION}")
+if(RURP_LOCAL_BUILD_VERSION)
+    message(STATUS "Local build version: ${RURP_LOCAL_BUILD_VERSION}")
+    target_compile_definitions(${TARGET_NAME} PRIVATE VERSION="${RURP_LOCAL_BUILD_VERSION}")
 endif()
 
 

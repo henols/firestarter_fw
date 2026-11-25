@@ -100,12 +100,14 @@ jobs:
 
       # Run after uploading the default-safe image: the experimental image
       # is build-checked, never substituted into the normal artifact.
+      # Its own build directory keeps it apart from the default image.
       - name: Build all opt-in MicroPetal features
         if: matrix.board == 'micropetal_uno'
         uses: ./.github/actions/build-py32f071
         with:
           board: micropetal_uno
           experimental_micropetal: ON
+          build_dir: build/micropetal_uno_full
 
       - name: Upload failed build diagnostics
         if: failure()
@@ -119,3 +121,5 @@ jobs:
             tool-versions.txt
             build/py32f071/CMakeCache.txt
             build/py32f071/build.ninja
+            build/micropetal_uno_full/CMakeCache.txt
+            build/micropetal_uno_full/build.ninja

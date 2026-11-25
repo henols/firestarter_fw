@@ -384,8 +384,10 @@ It cannot protect reset or ROM-loader intervals; those require hardware bias.
 The default build stays provisional. `RURP_MICROPETAL_FULL=ON` explicitly
 enables the implemented socket commands on MicroPetal only; it is not chip
 programming qualification. `RURP_DEV_TOOLS=ON` includes the shared register,
-address and raw ADC diagnostics. PY32 raw ADC uses fixed 1200 mV VREFINT, not
-stored AVR calibration. `RURP_BUILD_VERSION` labels an untagged bench build.
+address and raw ADC diagnostics. It requires `RURP_MICROPETAL_FULL=ON`.
+PY32 raw ADC uses fixed 1200 mV VREFINT, not stored AVR calibration.
+`RURP_BUILD_VERSION` labels an untagged bench build. CMake does not keep it in
+the cache: give it again at each configure.
 
 `RURP_MICROPETAL_ROM_TOUCH=ON` enables a 1200-baud DTR close request. Main
 checks BOOT0 low and ROM vectors, clears shield controls, resets USB, holds
