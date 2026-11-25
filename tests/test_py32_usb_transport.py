@@ -147,6 +147,67 @@ void test_ring_reset_ownership(void) {
 }
 void test_arm_rx_interrupt(void) { unlock_event = 1; event_fired = false; }
 
+/* Issue henols/firestarter#183: the host opens the port (DTR edge) and sends a
+ * command at once, before main applies the session reset. */
+static void host_send_packet(const uint8_t *data, size_t n) {
+    assert(host_out_armed && n <= sizeof(cdc_out_packet));
+    memcpy(cdc_out_packet, data, n);
+    host_out_armed = false;
+    firestarter_cdc_bulk_out(FIRESTARTER_CDC_OUT_EP, (uint32_t)n);
+}
+static void expect_rx(const uint8_t *data, size_t n) {
+    assert(py32_usb_available() == (int)n);
+    for (size_t i = 0; i < n; ++i) assert(py32_usb_read() == data[i]);
+    assert(py32_usb_available() == 0 && host_out_armed);
+}
+void test_dtr_edge_then_command(void) {
+    const uint8_t stale[] = {0xEE, 0xEE, 0xEE};
+    const uint8_t cmd[] = {'#', 0x03, 0x11, 0x22, 0x00};
+    const uint8_t next[] = {0x05, 0x06};
+    uint8_t full[64];
+    for (size_t i = 0; i < sizeof(full); ++i) full[i] = (uint8_t)(0x40 + i);
+    (void)py32_usb_available();
+    assert(host_out_armed);
+
+    /* Old-session bytes queued, then reopen, then the command arrives on the
+     * OUT buffer that was armed before the edge. Main has not run yet. */
+    host_send_packet(stale, sizeof(stale));
+    (void)py32_usb_available();
+    usbd_cdc_acm_set_dtr(0, false);
+    usbd_cdc_acm_set_dtr(0, true);
+    assert(host_out_armed);
+    host_send_packet(cmd, sizeof(cmd));
+    /* OUT stays disarmed: the host gets NAK, nothing is overwritten. */
+    assert(!host_out_armed && !rx_armed);
+    expect_rx(cmd, sizeof(cmd));            /* stale bytes gone, command kept */
+    host_send_packet(next, sizeof(next));   /* normal flow resumes */
+    expect_rx(next, sizeof(next));
+
+    /* A full 64-byte packet is kept whole. */
+    usbd_cdc_acm_set_dtr(0, false);
+    host_send_packet(full, sizeof(full));
+    expect_rx(full, sizeof(full));
+    usbd_cdc_acm_set_dtr(0, true);
+
+    /* A packet held for an earlier edge belongs to the session that the next
+     * edge ends: close (packet held), reopen before main runs -> discarded. */
+    (void)py32_usb_available();
+    usbd_cdc_acm_set_dtr(0, false);
+    host_send_packet(stale, sizeof(stale));
+    usbd_cdc_acm_set_dtr(0, true);
+    assert(py32_usb_available() == 0 && host_out_armed);
+    host_send_packet(cmd, sizeof(cmd));
+    expect_rx(cmd, sizeof(cmd));
+
+    /* SET_CONFIGURATION cancels endpoint ownership: nothing held survives. */
+    usbd_cdc_acm_set_dtr(0, false);
+    host_send_packet(stale, sizeof(stale));
+    usbd_configure_done_callback();
+    assert(py32_usb_available() == 0 && host_out_armed);
+    usbd_cdc_acm_set_dtr(0, true);
+    (void)py32_usb_available();
+}
+
 void fake_ep_write(uint8_t ep, const uint8_t *data, size_t count) {
     assert(ep == FIRESTARTER_CDC_IN_EP && count <= sizeof(pending_packet));
     assert(!pending);
@@ -268,6 +329,7 @@ void test_event_during_frame(unsigned);
 void test_assert_event_fired(void);
 void test_ring_reset_ownership(void);
 void test_arm_rx_interrupt(void);
+void test_dtr_edge_then_command(void);
 int rurp_communication_tx_failed(void);
 }
 
@@ -317,6 +379,7 @@ static int decode_from_usb(const std::vector<uint8_t>& encoded, std::vector<char
 int main() {
     test_usb_begin();
     test_rx_backpressure();
+    test_dtr_edge_then_command();
     std::vector<char> decoded(DATA_BUFFER_SIZE + 1);
 
     // Full-size payload, embedded zeros, nonzero runs and a real CRC.

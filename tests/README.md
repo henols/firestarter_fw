@@ -23,5 +23,5 @@ both matrix legs; transport and command-gate tests run once on the generic targe
 The USB integration test compiles the production backend and shared encoder/decoder.
 It covers the production block size plus a test-only 4 KiB stress configuration,
 CRC/COBS errors and resynchronization, ring wraparound, OUT backpressure, stalled IN
-transfers, DTR recovery and session changes mid-frame. It reuses the native suite's
+transfers, DTR recovery, a command sent right after a DTR edge and session changes mid-frame. It reuses the native suite's
 reference encoders. Hardware enumeration, throughput and timing remain unverified.

@@ -93,6 +93,12 @@ static uint32_t frame_generation;
 static uint32_t packet_generation;
 static volatile bool reset_pending;
 static volatile bool endpoint_reset_pending;
+/* Bytes of the first OUT packet that completed after a DTR edge, before main
+ * applied the session reset (0: none). The packet stays in cdc_out_packet and
+ * OUT stays disarmed, so the host gets NAK until main discards the old queue
+ * and appends this packet. Once OUT is armed, this controller accepts one
+ * packet; it cannot cancel that buffer without losing the packet. */
+static volatile uint8_t held_out_count;
 static volatile bool dtr_enabled;
 static bool frame_active;
 static bool frame_failed;
@@ -134,11 +140,19 @@ static void usb_apply_session_reset(void)
     if (endpoint_reset_pending) {
         tx_busy = false;
         rx_armed = false;
+        held_out_count = 0U;
     }
     endpoint_reset_pending = false;
     reset_pending = false;
     applied_generation = usb_generation;
     tx_failed = false;
+    /* The new session's first command, received while the reset was pending. */
+    if (held_out_count != 0U)
+    {
+        memcpy(rx_buffer, cdc_out_packet, held_out_count);
+        rx_head = held_out_count;
+        held_out_count = 0U;
+    }
     usb_arm_receive();
 }
 
@@ -187,13 +201,20 @@ void usbd_configure_done_callback(void)
     ++usb_generation;
     reset_pending = true;
     endpoint_reset_pending = true;
+    held_out_count = 0U;
 }
 
 static void firestarter_cdc_bulk_out(uint8_t endpoint, uint32_t byte_count)
 {
     (void)endpoint;
     rx_armed = false;
-    if (reset_pending) return;
+    if (reset_pending)
+    {
+        /* Keep the packet and leave OUT disarmed; see held_out_count. */
+        if (!endpoint_reset_pending && byte_count <= sizeof(cdc_out_packet))
+            held_out_count = (uint8_t)byte_count;
+        return;
+    }
 
     for (uint32_t index = 0U; index < byte_count; ++index)
     {
@@ -246,6 +267,9 @@ void usbd_cdc_acm_set_dtr(uint8_t interface_number, bool enabled)
     dtr_enabled = enabled;
     ++usb_generation;
     reset_pending = true;
+    /* A packet held for an earlier edge belongs to the session that this edge
+     * ends. OUT stays disarmed until main applies the reset. */
+    held_out_count = 0U;
 }
 
 void usbd_cdc_acm_set_rts(uint8_t interface_number, bool enabled)
