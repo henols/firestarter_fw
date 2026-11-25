@@ -9,7 +9,6 @@
 #include "rurp_shield.h"
 #include <Arduino.h>
 #include "rurp_register_utils.h"
-#include "rurp_revision_adc.h"
 
 #include "rurp_serial_utils.h"
 #include "deferred_log.h"

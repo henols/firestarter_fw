@@ -76,6 +76,7 @@ static unsigned control_strobes = 0;
  */
 #define ARDUINO_AVR_LEONARDO
 #include "../../../../src/boards/leonardo_rurp_shield.cpp"
+#include "../../../../src/boards/rurp_revision_adc.cpp"
 
 ControlLatchPort& ControlLatchPort::operator=(uint8_t v) {
     const uint8_t strobe = (uint8_t)(CONTROL_REGISTER << 4);

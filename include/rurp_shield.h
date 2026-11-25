@@ -196,8 +196,8 @@ extern "C" {
     uint8_t rurp_map_ctrl_reg_for_hardware_revision(rurp_register_t data);
     /* One 10-bit revision-detect reading: divider=false reads the detect
      * input (A3 on the Uno-form shield, averaged), divider=true the legacy VPP
-     * divider (A2) check. Returns false on an ADC error. The Arduino boards use
-     * rurp_revision_adc.h; another board backend defines its own. */
+     * divider (A2) check. Returns false on an ADC error. The AVR boards use
+     * src/boards/rurp_revision_adc.cpp; another board backend defines its own. */
     bool rurp_read_revision_adc10(bool divider, uint16_t* out);
 #endif
 

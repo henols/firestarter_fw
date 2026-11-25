@@ -1,10 +1,13 @@
-#pragma once
 /*
+ * Project Name: Firestarter
+ * Copyright (c) 2024 Henrik Olsson
+ *
+ * Permission is hereby granted under MIT license.
+ *
  * The Arduino analog-pin implementation of rurp_read_revision_adc10()
- * (declared in rurp_shield.h). Include it once, in the board backend that
- * includes rurp_register_utils.h. A board without Arduino analog pins (PY32)
- * defines the function in its own backend and does not include this file;
- * a board that has neither fails at link time.
+ * (declared in rurp_shield.h). PlatformIO compiles it for the AVR boards.
+ * The PY32 build does not list this file; its board backend defines the
+ * function.
  */
 #ifdef HARDWARE_REVISION
 #include <stdint.h>
