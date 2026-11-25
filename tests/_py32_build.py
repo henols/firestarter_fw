@@ -18,6 +18,7 @@ def arm_defines(source):
     assert '-DRURP_PLATFORM_PY32F071=1' in defines
     assert '-DRURP_PINMAP_PROVISIONAL=1' in defines
     assert '-DRURP_PY32F071_PINMAP_CONFIGURED=1' in defines
+    assert '-DRURP_HAS_HOST_SESSIONS=1' in defines
     board = next(d.split('=', 1)[1].strip('"') for d in defines if d.startswith('-DRURP_BOARD_NAME='))
     assert ('-DRURP_BOARD_MICROPETAL_UNO=1' in defines) == (board == 'micropetal_uno')
     return defines

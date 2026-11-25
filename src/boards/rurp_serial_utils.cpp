@@ -405,16 +405,6 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
     rurp_communication_frame_end();
 }
 
-// Weak defaults for the communication-session hooks (rurp_shield.h), for a
-// transport that cannot start a new host session without a board reset (a
-// UART): the session never changes, no frame fails, and frames need no
-// bracketing. The PY32 USB CDC backend (platform/py32f071/src/usb_cdc.c)
-// overrides all four.
-__attribute__((weak)) uint32_t rurp_communication_session(void) { return 0; }
-__attribute__((weak)) int rurp_communication_tx_failed(void) { return 0; }
-__attribute__((weak)) void rurp_communication_frame_begin(void) {}
-__attribute__((weak)) void rurp_communication_frame_end(void) {}
-
 // Weak default for rurp_log_id — no com_mode gate (Leonardo path). Uno
 // provides a strong override in uno_rurp_shield.cpp that gates by com_mode.
 __attribute__((weak)) void rurp_log_id(uint8_t id, const uint8_t* params, uint8_t param_count) {

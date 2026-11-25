@@ -5,6 +5,7 @@
 
 #include "boards/py32f071_rurp_shield.h"
 #include "rurp_platform.h"
+#include "rurp_shield.h"
 #include "usbd_cdc.h"
 #include "usbd_core.h"
 

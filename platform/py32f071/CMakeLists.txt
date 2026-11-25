@@ -138,6 +138,8 @@ target_compile_definitions(
         # to every translation unit, not only the hardware backend.
         RURP_PINMAP_PROVISIONAL=${RURP_PROVISIONAL_${RURP_BOARD}}
         RURP_HAS_VPP_DAC=0
+        # USB CDC starts a new host session on each port open (rurp_shield.h).
+        RURP_HAS_HOST_SESSIONS=1
 )
 
 if(RURP_BOARD STREQUAL "micropetal_uno")

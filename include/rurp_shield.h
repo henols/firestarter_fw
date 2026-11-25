@@ -89,19 +89,34 @@ extern "C" {
     size_t rurp_communication_read_bytes(char* buffer, size_t length);
     int rurp_communication_read_data(char* buffer, size_t cap);
 
-    /* Host-session hooks. rurp_serial_utils.cpp has weak defaults for a
-     * transport that cannot start a new host session without a board reset;
-     * a transport that can (PY32 USB CDC) overrides all four.
+    /* Host-session hooks.
      * - rurp_communication_session(): changes on every new host session, so
      *   a decoder stops instead of joining bytes from two sessions.
      * - rurp_communication_tx_failed(): result of the latest frame; cleared
      *   by a new session or frame.
      * - rurp_communication_frame_begin()/_end(): bracket each emitted frame,
-     *   so a session change fails the frame instead of mixing sessions. */
+     *   so a session change fails the frame instead of mixing sessions.
+     * RURP_HAS_HOST_SESSIONS 1: the board transport defines all four (PY32
+     * USB CDC). The build must set it for every translation unit.
+     * RURP_HAS_HOST_SESSIONS 0 (default): the inline defaults below apply.
+     * The session never changes and no frame fails, so the compiler removes
+     * the checks. The AVR boards use the defaults. The UART of the Uno cannot
+     * start a new host session without a board reset. The native USB of the
+     * Leonardo can, but it has no session hook yet. */
+#ifndef RURP_HAS_HOST_SESSIONS
+#define RURP_HAS_HOST_SESSIONS 0
+#endif
+#if RURP_HAS_HOST_SESSIONS
     uint32_t rurp_communication_session(void);
     int rurp_communication_tx_failed(void);
     void rurp_communication_frame_begin(void);
     void rurp_communication_frame_end(void);
+#else
+    static inline uint32_t rurp_communication_session(void) { return 0; }
+    static inline int rurp_communication_tx_failed(void) { return 0; }
+    static inline void rurp_communication_frame_begin(void) {}
+    static inline void rurp_communication_frame_end(void) {}
+#endif
 
 
     // ID-encoded wire frame emit -- the sole log surface.

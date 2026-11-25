@@ -79,18 +79,22 @@ static inline void _firestarter_emit_frame(uint8_t id, const uint8_t *params, ui
     _firestarter_emit_frame_wide(id, params, param_count);
 }
 ''')
-    # The board API: the serial layer calls the session hooks that the
-    # production usb_cdc.c overrides (their weak defaults are in the code
-    # under test).
+    # The board API with RURP_HAS_HOST_SESSIONS 1: the serial layer calls
+    # the session hooks, and the production usb_cdc.c defines them. Both the
+    # C backend and the C++ serial layer include it.
     (tmp_path / 'rurp_shield.h').write_text('''
 #pragma once
 #include <stdint.h>
+#ifdef __cplusplus
 extern "C" {
+#endif
 uint32_t rurp_communication_session(void);
 int rurp_communication_tx_failed(void);
 void rurp_communication_frame_begin(void);
 void rurp_communication_frame_end(void);
+#ifdef __cplusplus
 }
+#endif
 ''')
 
     backend = tmp_path / 'usb_backend.c'
