@@ -87,6 +87,8 @@ int rurp_communication_read_data(char* buf, size_t cap) {
     return (int)n;
 }
 size_t rurp_communication_write(const char*, size_t n) { return n; }
+// The board-API default for a transport without host sessions.
+int rurp_communication_tx_failed() { return 0; }
 void rurp_log_id(uint8_t id, const uint8_t*, uint8_t) {
     ids.push_back(id);
     if (id == MSG_OK_REQ_DATA) host_on_data_request();

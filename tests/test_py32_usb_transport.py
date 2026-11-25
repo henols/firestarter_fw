@@ -79,7 +79,19 @@ static inline void _firestarter_emit_frame(uint8_t id, const uint8_t *params, ui
     _firestarter_emit_frame_wide(id, params, param_count);
 }
 ''')
-    (tmp_path / 'rurp_shield.h').write_text('#pragma once\n')
+    # The board API: the serial layer calls the session hooks that the
+    # production usb_cdc.c overrides (their weak defaults are in the code
+    # under test).
+    (tmp_path / 'rurp_shield.h').write_text('''
+#pragma once
+#include <stdint.h>
+extern "C" {
+uint32_t rurp_communication_session(void);
+int rurp_communication_tx_failed(void);
+void rurp_communication_frame_begin(void);
+void rurp_communication_frame_end(void);
+}
+''')
 
     backend = tmp_path / 'usb_backend.c'
     backend.write_text(r'''
@@ -260,9 +272,9 @@ int py32_usb_read(void);
 size_t py32_usb_read_bytes(char *, size_t);
 size_t py32_usb_write(const uint8_t *, size_t);
 void py32_usb_flush(void);
-void py32_usb_frame_begin(void);
-void py32_usb_frame_end(void);
-uint32_t py32_usb_generation(void);
+void rurp_communication_frame_begin(void);
+void rurp_communication_frame_end(void);
+uint32_t rurp_communication_session(void);
 void test_reopen(void);
 void test_event_during_frame(unsigned);
 void test_assert_event_fired(void);

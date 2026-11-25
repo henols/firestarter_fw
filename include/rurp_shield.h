@@ -88,12 +88,19 @@ extern "C" {
     size_t rurp_communication_read_bytes(char* buffer, size_t length);
     int rurp_communication_read_data(char* buffer, size_t cap);
 
-#if defined(RURP_PLATFORM_PY32F071)
-    /* Result of the latest USB frame; cleared by a new session/frame. */
+    /* Host-session hooks. rurp_serial_utils.cpp has weak defaults for a
+     * transport that cannot start a new host session without a board reset;
+     * a transport that can (PY32 USB CDC) overrides all four.
+     * - rurp_communication_session(): changes on every new host session, so
+     *   a decoder stops instead of joining bytes from two sessions.
+     * - rurp_communication_tx_failed(): result of the latest frame; cleared
+     *   by a new session or frame.
+     * - rurp_communication_frame_begin()/_end(): bracket each emitted frame,
+     *   so a session change fails the frame instead of mixing sessions. */
+    uint32_t rurp_communication_session(void);
     int rurp_communication_tx_failed(void);
-#else
-    static inline int rurp_communication_tx_failed(void) { return 0; }
-#endif
+    void rurp_communication_frame_begin(void);
+    void rurp_communication_frame_end(void);
 
 
     // ID-encoded wire frame emit -- the sole log surface.
