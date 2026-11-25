@@ -70,7 +70,7 @@ cmake --build build/py32f071
 Use one build directory per board: `-DRURP_BOARD=micropetal_uno` builds into
 `build/micropetal_uno`. The build writes an ELF, BIN, HEX, linker map and size report to
 `build/<board>/`. Only the `firestarter_<board>.hex` image goes into a release. The host installer finds a release asset by the
-name `firestarter_<board>.hex`. `<board>` is the board name that the firmware reports, `py32f071`.
+name `firestarter_<board>.hex`. `<board>` is the board name that the firmware reports: `py32f071` or `micropetal_uno`.
 
 ## Install over USB DFU
 

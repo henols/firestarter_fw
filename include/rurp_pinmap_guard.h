@@ -19,7 +19,9 @@
  * not include those, so a header value would release socket GPIO in the
  * backend while this refusal still blocks every memory command (or the
  * reverse). tests/test_py32_compile_db.py checks that every firmware
- * translation unit gets the same single value.
+ * translation unit gets the same single value. It checks the build flags
+ * only. It cannot see a #define in a header, so no test enforces the
+ * header rule.
  *
  * The #ifndef default of 0 is load-bearing, not decorative: without it a build
  * that already defines the flag hits a macro-redefinition warning. On AVR,
