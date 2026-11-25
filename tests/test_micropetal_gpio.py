@@ -1,17 +1,17 @@
 """Exercise the actual ARM board backend without a connected shield."""
 import pytest
-from ._py32_build import arm_defines
+from ._py32_build import arm_defines, with_define
 from ._host_build import FAKE_ARDUINO_H, INCLUDE, REPO_ROOT, host_cxx, compile_ok, run_binary
 
 
 @pytest.mark.parametrize("full", [False, True])
 def test_provisional_arm_safe_idle_and_operation_lockout(tmp_path, full):
     defines = arm_defines("platform/py32f071/src/py32f071_rurp_shield.cpp")
-    if full:
-        if '-DRURP_BOARD_MICROPETAL_UNO=1' not in defines:
-            pytest.skip('full operation mode is MicroPetal-only')
-        defines = [d for d in defines if not d.startswith('-DRURP_PINMAP_PROVISIONAL=')]
-        defines += ['-DRURP_PINMAP_PROVISIONAL=0']
+    if full and '-DRURP_BOARD_MICROPETAL_UNO=1' not in defines:
+        pytest.skip('full operation mode is MicroPetal-only')
+    # Set the mode explicitly. Then both cases run with the default and the
+    # full compile database.
+    defines = with_define(defines, 'RURP_PINMAP_PROVISIONAL', 0 if full else 1)
     # Only the HAL and serial transport are fake; the mapping, setup and bus
     # functions under test are the production translation unit.
     hal = r'''
@@ -151,10 +151,20 @@ void rurp_serial_begin(unsigned long) {}
 extern "C" rurp_configuration_t *rurp_get_config() {
     static rurp_configuration_t c = {}; return &c;
 }
+// No pin of the port is in output mode (MODER field 01).
+static bool no_output_mode(const GPIO_TypeDef &p) {
+    for (unsigned bit = 0; bit < 16; ++bit)
+        if (((p.MODER >> (bit * 2)) & 3U) == 1U) return false;
+    return true;
+}
 int main() {
     // Simulate stale/random control latch inputs and a nonzero bus latch.
 #ifdef RURP_BOARD_MICROPETAL_UNO
     b.ODR = 0xFFFF;
+#else
+    // PY32 GPIO reset state is analog mode. The provisional generic board
+    // may change pins to input, but never to output.
+    a.MODER = b.MODER = 0xFFFFFFFFU;
 #endif
     // Exercise the early-main hook before ADC/serial setup, then its safe
     // reapplication in board setup (the runtime follows this same sequence).
@@ -163,6 +173,8 @@ int main() {
     assert(gpio_writes == 8 && gpio_outputs == 6);
     assert(adc_pins == 0 && button_pins == 0);
     gpio_writes = gpio_outputs = 0;
+#else
+    assert(no_output_mode(a) && no_output_mode(b) && a.BSRR == 0 && b.BSRR == 0);
 #endif
     rurp_board_setup();
 #ifdef RURP_BOARD_MICROPETAL_UNO
@@ -171,6 +183,7 @@ int main() {
     assert((b.MODER & 0xFFFF) == 0); // bus released, control drivers stay active
 #else
     assert(gpio_writes == 0 && gpio_outputs == 0);
+    assert(no_output_mode(a) && no_output_mode(b));
 #endif
 #if !RURP_PINMAP_PROVISIONAL
     // Full mode must deliver all 256 data bytes unmodified to CTRL. This
@@ -251,6 +264,9 @@ int main() {
     assert(rurp_read_vcc_mv() == 3301); // 12-bit VREFINT scale matches raw ADC diagnostics
     rurp_set_data_output();
     assert(b.MODER == idle_mode);
+#ifndef RURP_BOARD_MICROPETAL_UNO
+    assert(no_output_mode(a) && no_output_mode(b));
+#endif
     assert(gpio_writes == 8 * RURP_PY32F071_HAS_USER_BUTTON);
 #if RURP_PY32F071_HAS_USER_BUTTON
     b.IDR = 1U << 14;

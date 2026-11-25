@@ -109,6 +109,15 @@ jobs:
           experimental_micropetal: ON
           build_dir: build/micropetal_uno_full
 
+      # The full build sets ROM touch and full operation in the compile
+      # database, so the ROM-touch and full-mode test cases run here.
+      - name: Test ARM behavior with the full MicroPetal build
+        if: matrix.board == 'micropetal_uno'
+        env:
+          FIRESTARTER_PY32_COMPILE_COMMANDS: build/micropetal_uno_full/compile_commands.json
+        run: |
+          python3 -m pytest tests/test_py32_*.py tests/test_micropetal_*.py -v
+
       - name: Upload failed build diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

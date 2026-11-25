@@ -6,7 +6,7 @@ The mocked USB controller only supplies packets and completion callbacks.
 import pytest
 
 from ._host_build import REPO_ROOT, compile_ok, host_cc, host_cxx, run_binary
-from ._py32_build import arm_defines
+from ._py32_build import arm_defines, with_define
 
 
 @pytest.mark.parametrize('stress_size', [None, 4096], ids=['production', '4k-stress'])
@@ -17,13 +17,13 @@ def test_large_usb_frames_and_stalled_host(tmp_path, stress_size, rom_touch):
         if rom_touch and source == 'platform/py32f071/src/usb_cdc.c':
             if '-DRURP_BOARD_MICROPETAL_UNO=1' not in defines:
                 pytest.skip('ROM USB touch is MicroPetal-only')
-            defines = [d for d in defines if not d.startswith('-DRURP_MICROPETAL_ROM_TOUCH=')]
-            defines.append('-DRURP_MICROPETAL_ROM_TOUCH=1')
+            defines = with_define(defines, 'RURP_MICROPETAL_ROM_TOUCH', 1)
+        elif source == 'platform/py32f071/src/usb_cdc.c':
+            defines = with_define(defines, 'RURP_MICROPETAL_ROM_TOUCH', 0)
         # The real image stays at its CMake size. This second configuration
         # stresses streaming across a much smaller USB ring, not shipped RAM.
         if stress_size is not None:
-            defines = [d for d in defines if not d.startswith('-DDATA_BUFFER_SIZE=')]
-            defines.append(f'-DDATA_BUFFER_SIZE={stress_size}')
+            defines = with_define(defines, 'DATA_BUFFER_SIZE', stress_size)
         return defines
     (tmp_path / 'boards').mkdir()
     (tmp_path / 'avr').mkdir()
