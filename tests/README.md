@@ -14,7 +14,10 @@ regressions rather than replacing code review with a text-matching test.
 
 ### Actual ARM build configurations
 
-Set `FIRESTARTER_PY32_COMPILE_COMMANDS` to a CMake-generated compile database.
+Set `FIRESTARTER_PY32_COMPILE_COMMANDS` to a CMake-generated compile database
+(`build/<board>/compile_commands.json`). `tests/_compile_db.py` is the one reader for it:
+it accepts both `-DX` and `-D X`, and fails with the database and source names when no
+entry compiles a requested file.
 Tests derive the board identity from its definitions, remove `NDEBUG` so assertions
 execute, and fail when expected target/provisional flags are absent. Without a
 database ARM tests skip; the ARM CI supplies it. Board-specific GPIO tests run in

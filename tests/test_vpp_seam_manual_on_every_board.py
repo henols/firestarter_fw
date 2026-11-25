@@ -23,28 +23,17 @@ import re
 import shlex
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
+from ._compile_db import COMPILE_COMMANDS_ENV, compile_defines, defines_from_argv
 from ._host_build import INCLUDE, REPO_ROOT, host_cxx, run_binary, run_compiler
 
-_SEAM_SRC = REPO_ROOT / "src" / "rurp_vpp.cpp"
-_PY32_COMPILE_COMMANDS_ENV = "FIRESTARTER_PY32_COMPILE_COMMANDS"
+_SEAM_SRC = "src/rurp_vpp.cpp"
+_PY32_COMPILE_COMMANDS_ENV = COMPILE_COMMANDS_ENV
 
 _EXPECTED_MODE_MANUAL = 0
 _EXPECTED_RESULT_MANUAL_REQUIRED = 1
-
-
-def _defines_from_argv(tokens):
-    """The -D definitions in a compiler argv, one token per argument."""
-    defines = []
-    for index, token in enumerate(tokens):
-        if token == "-D" and index + 1 < len(tokens):
-            defines.append(tokens[index + 1])
-        elif token.startswith("-D") and len(token) > 2:
-            defines.append(token[2:])
-    return defines
 
 
 def _avr_macro_sets():
@@ -65,7 +54,7 @@ def _avr_macro_sets():
         if not section.startswith("env:") or options.get("platform") != "atmelavr":
             continue
         tokens = [token for flag in options.get("build_flags", []) for token in shlex.split(flag)]
-        defines = _defines_from_argv(tokens)
+        defines = defines_from_argv(tokens)
         params.append(pytest.param(("__AVR__", *defines), id=section[len("env:"):]))
     return params, None
 
@@ -88,11 +77,10 @@ def _py32_macro_set():
                 )
             ),
         )
-    for entry in json.loads(Path(path).read_text()):
-        if (Path(entry["directory"]) / entry["file"]).resolve() == _SEAM_SRC:
-            tokens = entry["arguments"] if "arguments" in entry else shlex.split(entry["command"])
-            return pytest.param(tuple(_defines_from_argv(tokens)), id="py32f071")
-    return pytest.param(f"{path} has no entry for {_SEAM_SRC}", id="py32f071")
+    try:
+        return pytest.param(tuple(compile_defines(path, _SEAM_SRC)), id="py32f071")
+    except LookupError as error:
+        return pytest.param(str(error), id="py32f071")
 
 
 _AVR_MACRO_SETS, _AVR_CONFIG_ERROR = _avr_macro_sets()
