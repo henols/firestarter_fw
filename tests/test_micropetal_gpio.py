@@ -26,22 +26,9 @@ inline void HAL_GPIO_WritePin(GPIO_TypeDef*, uint16_t, GPIO_PinState) { __builti
 #define GPIO_MODE_INPUT 0
 #define GPIO_NOPULL 0
 #define GPIO_PULLUP 1
-inline void HAL_GPIO_Init(GPIO_TypeDef *p, GPIO_InitTypeDef *c) {
-    // Only the selected diagnostic ADC and optional button may be configured.
-    extern unsigned adc_pins, button_pins;
-    if (p == GPIOA && c->Pin ==
-#ifdef RURP_BOARD_MICROPETAL_UNO
-        (1U << 2)
-#else
-        (1U << 4)
-#endif
-         && c->Mode == GPIO_MODE_ANALOG) ++adc_pins;
-#ifdef RURP_BOARD_MICROPETAL_UNO
-    else if (p == GPIOA && c->Pin == (1U << 3) && c->Mode == GPIO_MODE_ANALOG) ++adc_pins;
-#endif
-    else if (p == GPIOB && c->Pin == (1U << 14) && c->Mode == GPIO_MODE_INPUT) ++button_pins;
-    else __builtin_trap();
-}
+// Defined in driver.cpp: the check reads the pin map, which the board
+// header includes after this file.
+void HAL_GPIO_Init(GPIO_TypeDef *p, GPIO_InitTypeDef *c);
 inline GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *p, uint16_t pin) {
     return (p->IDR & pin) ? GPIO_PIN_SET : GPIO_PIN_RESET;
 }
@@ -95,10 +82,24 @@ void rurp_serial_begin(unsigned long) {}
 extern "C" rurp_configuration_t *rurp_get_config() {
     static rurp_configuration_t c = {}; return &c;
 }
+void HAL_GPIO_Init(GPIO_TypeDef *p, GPIO_InitTypeDef *c) {
+    // Only the pin-map ADC inputs and the optional button may be configured.
+    if (p == RURP_PY32F071_VPP_ADC_PORT && c->Pin == RURP_PY32F071_VPP_ADC_PIN
+        && c->Mode == GPIO_MODE_ANALOG) ++adc_pins;
+#if RURP_PY32F071_HAS_REVISION_ADC
+    else if (p == RURP_PY32F071_REV_ADC_PORT && c->Pin == RURP_PY32F071_REV_ADC_PIN
+             && c->Mode == GPIO_MODE_ANALOG) ++adc_pins;
+#endif
+#if RURP_PY32F071_HAS_USER_BUTTON
+    else if (p == RURP_PY32F071_BUTTON_PORT && c->Pin == RURP_PY32F071_BUTTON_PIN
+             && c->Mode == GPIO_MODE_INPUT) ++button_pins;
+#endif
+    else __builtin_trap();
+}
 int main() {
     rurp_board_setup();
-    assert(adc_pins == 1 + RURP_PY32F071_HAS_USER_BUTTON && button_pins == RURP_PY32F071_HAS_USER_BUTTON);
-#ifdef RURP_BOARD_MICROPETAL_UNO
+    assert(adc_pins == 1 + RURP_PY32F071_HAS_REVISION_ADC && button_pins == RURP_PY32F071_HAS_USER_BUTTON);
+#ifdef HARDWARE_REVISION
     rurp_get_config()->hardware_revision = 0xFF;
     for (unsigned n = 0; n < 1024; ++n) {
         adc_a3 = n << 2;

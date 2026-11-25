@@ -32,6 +32,10 @@ if(NOT RURP_BOARD IN_LIST RURP_BOARDS)
 endif()
 set(RURP_PROVISIONAL_py32f071 1)
 set(RURP_PROVISIONAL_micropetal_uno 1)
+# 1 when the board reads the shield revision on an ADC input. The pin map must
+# then set RURP_PY32F071_HAS_REVISION_ADC 1; the board header checks this.
+set(RURP_HARDWARE_REVISION_py32f071 0)
+set(RURP_HARDWARE_REVISION_micropetal_uno 1)
 set(TARGET_NAME firestarter_${RURP_BOARD}.elf)
 set(REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 set(PY32_SDK_ROOT "${py32f071_sdk_SOURCE_DIR}")
@@ -142,8 +146,8 @@ target_compile_definitions(
         RURP_HAS_HOST_SESSIONS=1
 )
 
-if(RURP_BOARD STREQUAL "micropetal_uno")
-    target_compile_definitions(${TARGET_NAME} PRIVATE RURP_BOARD_MICROPETAL_UNO=1 HARDWARE_REVISION=1)
+if(RURP_HARDWARE_REVISION_${RURP_BOARD})
+    target_compile_definitions(${TARGET_NAME} PRIVATE HARDWARE_REVISION=1)
 endif()
 
 target_compile_features(${TARGET_NAME} PRIVATE c_std_11 cxx_std_17)

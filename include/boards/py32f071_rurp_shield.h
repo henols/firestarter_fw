@@ -29,6 +29,9 @@
 #if defined(HARDWARE_REVISION) && !RURP_PY32F071_HAS_REVISION_ADC
 #error "HARDWARE_REVISION detection needs a revision-detect ADC input (RURP_PY32F071_HAS_REVISION_ADC 1)"
 #endif
+#if RURP_PY32F071_HAS_REVISION_ADC && !defined(HARDWARE_REVISION)
+#error "A revision-detect ADC input needs HARDWARE_REVISION (set RURP_HARDWARE_REVISION_<board> 1 in CMake)"
+#endif
 
 #if RURP_PY32F071_DATA_SHIFT > 8
 #error "The contiguous PY32F071 D0-D7 bus must fit within one 16-pin GPIO port"
