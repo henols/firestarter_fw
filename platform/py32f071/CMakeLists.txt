@@ -42,6 +42,15 @@ option(RURP_DEV_TOOLS "Include development diagnostics" OFF)
 # -D writes the cache. Copy the value, then remove the cache entry, so that
 # a later configure of this build directory does not use an old value.
 set(RURP_LOCAL_BUILD_VERSION "${RURP_BUILD_VERSION}")
+# An earlier revision of this file kept the value as a cache option with this
+# help text. Do not use such an old value.
+get_property(RURP_BUILD_VERSION_HELP CACHE RURP_BUILD_VERSION PROPERTY HELPSTRING)
+if(RURP_BUILD_VERSION_HELP STREQUAL "Version for an untagged local build")
+    message(WARNING
+        "Ignored RURP_BUILD_VERSION from an old CMake cache. "
+        "Give -DRURP_BUILD_VERSION=<text> again to label this build.")
+    set(RURP_LOCAL_BUILD_VERSION "")
+endif()
 unset(RURP_BUILD_VERSION CACHE)
 if(RURP_MICROPETAL_FULL)
     if(NOT RURP_BOARD STREQUAL "micropetal_uno")
