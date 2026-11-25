@@ -183,6 +183,14 @@ int main() {
     assert(rurp_read_voltage_mv() == 11778);  // 2048 counts, VREFINT 1489, default divider
     cfg->r2 = 0;
     assert(rurp_read_voltage_mv() == 0);
+    // A negative r1 or r2 wraps to a large uint32 and must also read 0.
+    const long bad[][2] = {{-1, VALUE_R2}, {VALUE_R1, -5}, {INT32_MIN, VALUE_R2}};
+    for (const auto &pair : bad) {
+        cfg->r1 = pair[0];
+        cfg->r2 = pair[1];
+        assert(rurp_read_voltage_mv() == 0);
+    }
+    cfg->r1 = VALUE_R1;
     cfg->r2 = VALUE_R2;
     rurp_set_data_output();
     assert(b.MODER == 0);
