@@ -45,7 +45,7 @@ jobs:
           - board: py32f071
             tests: 'tests/test_py32_*.py tests/test_micropetal_*.py'
           - board: micropetal_uno
-            tests: 'tests/test_micropetal_*.py'
+            tests: 'tests/test_py32_compile_db.py tests/test_micropetal_*.py'
     runs-on: ubuntu-latest
 
     steps:

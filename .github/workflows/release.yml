@@ -167,7 +167,8 @@ jobs:
       # composite action: the py32f071.yml gate uses the same action and must
       # stay loud. A broken ARM build leaves that asset out of the release
       # instead of failing the AVR release. Each board builds into its own
-      # build/<board> directory.
+      # build/<board> directory. Both boards use one SDK clone in build/_deps,
+      # and the second build does not install the toolchain again.
       - name: Build the PY32F071 image
         id: arm
         if: steps.tag.outputs.prerelease == 'true'
@@ -175,6 +176,7 @@ jobs:
         uses: ./.github/actions/build-py32f071
         with:
           board: py32f071
+          deps-dir: build/_deps
 
       - name: Build the MicroPetal Uno image
         id: arm_micropetal
@@ -183,6 +185,7 @@ jobs:
         uses: ./.github/actions/build-py32f071
         with:
           board: micropetal_uno
+          deps-dir: build/_deps
 
       # Reads `outcome`, not `conclusion`: a continue-on-error step reports
       # conclusion success even when it failed.
@@ -217,7 +220,7 @@ jobs:
           check_image() {
             local BOARD="$1" OUTCOME="$2" HEX_PATH="$3" SDK_SHA="$4"
             [ "$OUTCOME" = success ] || return 0
-            if [ -z "$HEX_PATH" ] || [ "$HEX_PATH" != "build/$BOARD/firestarter_$BOARD.hex" ]; then
+            if [ "$HEX_PATH" != "build/$BOARD/firestarter_$BOARD.hex" ]; then
               echo "::error::emitted asset '$HEX_PATH' is not build/$BOARD/firestarter_$BOARD.hex"
               exit 1
             fi
@@ -226,7 +229,10 @@ jobs:
               exit 1
             fi
             arm-none-eabi-objcopy -I ihex -O binary "$HEX_PATH" "$RUNNER_TEMP/$BOARD.bin"
-            if ! strings "$RUNNER_TEMP/$BOARD.bin" | grep -Fq -- "$TAG:$BOARD"; then
+            # Write the strings to a file first. In a pipe, grep -q can stop
+            # strings with SIGPIPE, and pipefail then reports a false miss.
+            strings "$RUNNER_TEMP/$BOARD.bin" > "$RUNNER_TEMP/$BOARD.txt"
+            if ! grep -Fq -- "$TAG:$BOARD" "$RUNNER_TEMP/$BOARD.txt"; then
               echo "::error::$BOARD image does not contain the version string '$TAG:$BOARD'"
               exit 1
             fi
