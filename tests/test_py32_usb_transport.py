@@ -185,17 +185,19 @@ void test_dtr_edge_then_command(void) {
 
     /* A full 64-byte packet is kept whole. */
     usbd_cdc_acm_set_dtr(0, false);
+    usbd_cdc_acm_set_dtr(0, true);
     host_send_packet(full, sizeof(full));
     expect_rx(full, sizeof(full));
-    usbd_cdc_acm_set_dtr(0, true);
 
     /* A packet held for an earlier edge belongs to the session that the next
-     * edge ends: close (packet held), reopen before main runs -> discarded. */
-    (void)py32_usb_available();
+     * edge ends: open, packet held, close before main runs -> discarded. */
     usbd_cdc_acm_set_dtr(0, false);
-    host_send_packet(stale, sizeof(stale));
     usbd_cdc_acm_set_dtr(0, true);
+    host_send_packet(stale, sizeof(stale));
+    assert(!host_out_armed);
+    usbd_cdc_acm_set_dtr(0, false);
     assert(py32_usb_available() == 0 && host_out_armed);
+    usbd_cdc_acm_set_dtr(0, true);
     host_send_packet(cmd, sizeof(cmd));
     expect_rx(cmd, sizeof(cmd));
 
