@@ -12,8 +12,14 @@
  * PROM bus on a board whose pin map has no verified PCB assignment behind it.
  *
  * The flag is platform-neutral because configure_memory() is compiled by every
- * target. Any board header can opt in by defining it; shared code tests only
- * the neutral name.
+ * target; shared code tests only the neutral name. It has ONE source: the
+ * build. platform/py32f071/CMakeLists.txt passes
+ * RURP_PINMAP_PROVISIONAL=${RURP_PROVISIONAL_<board>} to every translation
+ * unit. Do not define it in a board or pin-map header: the shared handlers do
+ * not include those, so a header value would release socket GPIO in the
+ * backend while this refusal still blocks every memory command (or the
+ * reverse). tests/test_py32_compile_db.py checks that every firmware
+ * translation unit gets the same single value.
  *
  * The #ifndef default of 0 is load-bearing, not decorative: without it a build
  * that already defines the flag hits a macro-redefinition warning. On AVR,
