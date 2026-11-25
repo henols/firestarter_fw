@@ -211,7 +211,7 @@ static void firestarter_cdc_bulk_out(uint8_t endpoint, uint32_t byte_count)
     if (reset_pending)
     {
         /* Keep the packet and leave OUT disarmed; see held_out_count. */
-        if (!endpoint_reset_pending && byte_count <= sizeof(cdc_out_packet))
+        if (!endpoint_reset_pending && dtr_enabled && byte_count <= sizeof(cdc_out_packet))
             held_out_count = (uint8_t)byte_count;
         return;
     }

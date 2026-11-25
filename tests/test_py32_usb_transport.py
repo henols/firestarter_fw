@@ -206,6 +206,12 @@ void test_dtr_edge_then_command(void) {
     assert(py32_usb_available() == 0 && host_out_armed);
     usbd_cdc_acm_set_dtr(0, true);
     (void)py32_usb_available();
+
+    /* DTR drop, then a completed OUT packet, then main runs -> expect empty RX queue. */
+    usbd_cdc_acm_set_dtr(0, false);
+    host_send_packet(stale, sizeof(stale));
+    (void)py32_usb_available();
+    assert(py32_usb_available() == 0 && host_out_armed);
 }
 
 void fake_ep_write(uint8_t ep, const uint8_t *data, size_t count) {
