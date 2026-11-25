@@ -76,9 +76,25 @@ extern "C" {
  */
 #if defined(RURP_PLATFORM_PY32F071)
 #define RURP_HAS_BANDGAP_CAL 0
+#define RURP_FIXED_REFERENCE_MV 1200U /* PY32 VREFINT */
 #else
 #define RURP_HAS_BANDGAP_CAL 1
 #endif
+
+/*
+ * The reference voltage, in millivolts, that the rail readers and the dev adc
+ * diagnostic pass as bandgap_mv to the two conversions below: the stored
+ * calibration where the platform has one, otherwise the fixed reference. Both
+ * paths call this, so they report the same millivolts for the same counts.
+ */
+static inline uint32_t rurp_reference_mv(uint32_t stored_bandgap_mv) {
+#if RURP_HAS_BANDGAP_CAL
+    return stored_bandgap_mv;
+#else
+    (void)stored_bandgap_mv;
+    return RURP_FIXED_REFERENCE_MV;
+#endif
+}
 
 /*
  * Guards that keep both products inside uint32 in rurp_scale_voltage_mv:
