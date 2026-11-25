@@ -7,7 +7,7 @@
 
 #include "operation_utils.h"
 
-#include <Arduino.h>
+#include "rurp_platform.h"
 #include <stdlib.h>
 
 #include "firestarter.h"
@@ -93,8 +93,8 @@ bool op_execute_function(void (*callback)(firestarter_handle_t* handle), firesta
 }
 
 bool op_wait_for_ack(firestarter_handle_t* handle) {
-    const uint32_t started_ms = (uint32_t)millis();
-    while (!fs_timeout_expired(started_ms, 1000U, (uint32_t)millis())) {
+    const uint32_t started_ms = (uint32_t)RURP_MILLIS();
+    while (!fs_timeout_expired(started_ms, 1000U, (uint32_t)RURP_MILLIS())) {
         op_message_type msg_type = op_get_message(handle);
         if (msg_type == OP_MSG_ACK) {
             return true;

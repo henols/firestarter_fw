@@ -1,6 +1,7 @@
 #ifndef __RURP_REGISTERS_UTILS_H__
 #define __RURP_REGISTERS_UTILS_H__
 
+#include "rurp_platform.h"
 #include "rurp_shield.h"
 #include "rurp_pinout.h"
 #include "rurp_internal_register_utils.h"
@@ -47,7 +48,7 @@ void rurp_write_to_register(uint8_t reg, rurp_register_t data) {
             settle = true;
         }
         if ((control_register & CTRL_VPP_REGULATOR_ENABLE) > (data & CTRL_VPP_REGULATOR_ENABLE)) {
-            regulator_off_ms = millis();
+            regulator_off_ms = RURP_MILLIS();
         }
         control_register = data;
 #ifdef HARDWARE_REVISION
@@ -61,7 +62,7 @@ void rurp_write_to_register(uint8_t reg, rurp_register_t data) {
 
     //Take a break here if an address change needs time to settle
     if (settle) {
-        delayMicroseconds(4);
+        RURP_DELAY_US(4);
     }
 }
 
@@ -91,7 +92,7 @@ void rurp_internal_write_to_register(uint8_t reg, rurp_register_t data) {
     rurp_write_data_buffer(data);
     rurp_set_control_pin(reg, 1);
     // Probably useless - verify later
-    delayMicroseconds(1);
+    RURP_DELAY_US(1);
 
     rurp_set_control_pin(reg, 0);
 }

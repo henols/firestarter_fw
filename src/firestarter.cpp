@@ -7,7 +7,7 @@
 
 #include "firestarter.h"
 
-#include <Arduino.h>
+#include "rurp_platform.h"
 #include <stdlib.h>
 
 #include "eprom_operations.h"
@@ -185,7 +185,7 @@ void command_done(firestarter_handle_t* handle) {
 
 void loop() {
     rurp_watchdog_reset();
-    if (handle.cmd != CMD_IDLE && fs_timeout_expired(timeout_started_ms, TIMEOUT_MS, (uint32_t)millis())) {
+    if (handle.cmd != CMD_IDLE && fs_timeout_expired(timeout_started_ms, TIMEOUT_MS, (uint32_t)RURP_MILLIS())) {
         LOG_ERROR_ID_U8(MSG_ERR_CMD_TIMEOUT, handle.cmd);
         command_done(&handle);
     } else if (handle.cmd == CMD_IDLE) {
@@ -286,5 +286,5 @@ void loop() {
 }
 
 void op_reset_timeout() {
-    timeout_started_ms = (uint32_t)millis();
+    timeout_started_ms = (uint32_t)RURP_MILLIS();
 }

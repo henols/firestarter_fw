@@ -396,6 +396,22 @@ voltage measurement is taken in that mode. `firestarter cal --vcc` calculates
 with the config `bg` value. The firmware refuses a stored bandgap outside the same window
 (`rurp_config_commit`). On py32f071 the count is 0, and the decoder refuses `bg`.
 
+### Platform Layer
+
+Shared code (`src/proms/`, the `src/*.cpp` files and `src/boards/rurp_serial_utils.cpp`) must not
+include `<Arduino.h>`. It uses two seams:
+
+- **Timing:** `RURP_MILLIS()`, `RURP_MICROS()`, `RURP_DELAY_MS()` and `RURP_DELAY_US()` from
+  `include/rurp_platform.h`.
+- **Serial:** the `rurp_serial_port_*` functions in `include/rurp_serial_port.h`.
+
+Arduino is the AVR backend only. It stays in the AVR board files, in
+`src/boards/rurp_serial_port_arduino.cpp` and in the AVR branch of `include/rurp_revision_adc.h`.
+The py32f071 backend is `platform/py32f071/src/serial_port.cpp` and `timing.cpp`.
+
+On host builds, `rurp_platform.h` includes `<Arduino.h>`, which is a test fake there. The `RURP_*`
+macros then call `millis()`, `delay()` and the other Arduino names, so ArduinoFake can stub them.
+
 ### Key Files
 
 - `include/command_frame.h` — **a generated file. Do not edit it.** The frame layout and limits.

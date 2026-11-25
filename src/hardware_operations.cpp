@@ -1,6 +1,6 @@
 #include "hardware_operations.h"
 
-#include <Arduino.h>
+#include "rurp_platform.h"
 #include <stdlib.h>
 
 #include "firestarter.h"
@@ -35,7 +35,7 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
             LOG_ERROR_ID(MSG_ERR_CMD);
             return true;  // Finish command with an error.
         }
-        delay(100);                     // Allow voltage to stabilize.
+        RURP_DELAY_MS(100);              // Allow voltage to stabilize.
         rurp_set_communication_mode();  // Switch back to communication mode to send the ready signal.
         handle->operation_state = 1;    // Transition to the reading state.
 
@@ -64,7 +64,7 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
         // Returning false keeps the command active without doing anything.
         return false;
     }
-    delay(500);
+    RURP_DELAY_MS(500);
 
     // An ACK was received. Proceed with taking a measurement.
     uint16_t vcc_mv = rurp_read_vcc_mv();
@@ -83,12 +83,15 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
     return false;
 }
 
+// The only text-format emit: "OK: FW: <version>:<board>\r\n", kept in PROGMEM.
+static const char FW_VERSION_LINE[] PROGMEM = "OK: FW: " FW_VERSION "\r\n";
+
 bool fw_get_version(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_FW_VERSION);
-    // The only text-format emit. F("OK: FW: ") keeps the literal in PROGMEM.
-    SERIAL_PORT.print(F("OK: FW: "));
-    SERIAL_PORT.println(FW_VERSION);
-    SERIAL_PORT.flush();
+    for (size_t i = 0; i < sizeof(FW_VERSION_LINE) - 1; i++) {
+        rurp_serial_port_write_byte((uint8_t)pgm_read_byte(&FW_VERSION_LINE[i]));
+    }
+    rurp_serial_port_flush();
     return true;
 }
 

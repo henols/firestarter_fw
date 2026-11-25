@@ -3,6 +3,12 @@
 extern void setup(void);
 extern void loop(void);
 
+/* newlib's __libc_init_array calls _init. This image has no crti, so supply
+ * an empty one. */
+extern "C" void _init(void)
+{
+}
+
 namespace
 {
 [[noreturn]] void error_handler()

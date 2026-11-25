@@ -45,11 +45,11 @@ void rurp_board_setup() {
 
     // Note: User button is not available on Leonardo shield revision.
 
-    SERIAL_PORT.begin(MONITOR_SPEED);
-    while (!SERIAL_PORT) {
+    rurp_serial_port_begin(MONITOR_SPEED);
+    while (!rurp_serial_port_ready()) {
         delayMicroseconds(1);
     }
-    SERIAL_PORT.flush();
+    rurp_serial_port_flush();
     delay(1);
 }
 

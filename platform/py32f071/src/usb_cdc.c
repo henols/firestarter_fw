@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "boards/py32f071_rurp_shield.h"
+#include "boards/py32f071_usb.h"
 #include "rurp_platform.h"
 #include "usbd_cdc.h"
 #include "usbd_core.h"

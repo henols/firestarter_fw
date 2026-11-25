@@ -37,8 +37,15 @@ void rurp_delay_us(uint32_t microseconds);
 #define RURP_MILLIS() millis()
 #define RURP_MICROS() micros()
 
-#elif defined(RURP_PLATFORM_NATIVE)
+#else
 
+/*
+ * Host builds: the PlatformIO native tests and the tests/ harness. There,
+ * <Arduino.h> is a test fake (ArduinoFake, or the header that the harness
+ * writes), so the tests can stub and count the timing calls. An embedded
+ * target that is not named above has no <Arduino.h> and fails here.
+ */
+#define RURP_PLATFORM_HOST 1
 #include <Arduino.h>
 
 #define RURP_DELAY_US(value) delayMicroseconds(value)
@@ -46,6 +53,4 @@ void rurp_delay_us(uint32_t microseconds);
 #define RURP_MILLIS() millis()
 #define RURP_MICROS() micros()
 
-#else
-#error "Unsupported Firestarter target platform"
 #endif

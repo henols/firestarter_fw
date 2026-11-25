@@ -7,7 +7,7 @@
 
 #include "eeprom_28c.h"
 
-#include <Arduino.h>
+#include "rurp_platform.h"
 
 #include "firestarter.h"
 #include "flash_utils.h"
@@ -189,7 +189,7 @@ static void eeprom28c_check_chip_id(firestarter_handle_t* handle) {
         return;
     }
     handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE, 1);
-    delay(50);
+    RURP_DELAY_MS(50);
     if (measure) {
         mem_util_check_vpp_window(handle, rurp_read_voltage_mv());
         if (handle->response_code == RESPONSE_CODE_ERROR) {
@@ -198,7 +198,7 @@ static void eeprom28c_check_chip_id(firestarter_handle_t* handle) {
         }
     }
     handle->firestarter_set_control_register(handle, CTRL_VPP_A9_ENABLE, 1);
-    delay(100);
+    RURP_DELAY_MS(100);
     uint32_t mfr_addr = handle->mem_size - 64;  // 0x7FC0 (AT28C256) / 0x1FC0 (AT28C64) / ...
     uint16_t chip_id = mem_util_read_u16_be(handle, mfr_addr);
     handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_A9_ENABLE, 0);
@@ -242,10 +242,10 @@ static void eeprom28c_emit_command_sequence(firestarter_handle_t* handle, const 
 // that helper emits four recorded strobes per read, which would inject
 // entries into the compared stream.
 static void eeprom28c_wait_for_sdp_completion(firestarter_handle_t* handle) {
-    delay(AT28C_TWC_MAX_MS);
+    RURP_DELAY_MS(AT28C_TWC_MAX_MS);
     uint8_t previous = handle->firestarter_get_data(handle, EEPROM28C_TOGGLE_POLL_ADDRESS);
     for (uint8_t j = 0; j < AT28C_TOGGLE_POLL_MAX_READS; j++) {
-        delayMicroseconds(10);
+        RURP_DELAY_US(10);
         uint8_t observed = handle->firestarter_get_data(handle, EEPROM28C_TOGGLE_POLL_ADDRESS);
         if ((observed & AT28C_DQ6_TOGGLE_MASK) == (previous & AT28C_DQ6_TOGGLE_MASK)) {
             return;
@@ -279,9 +279,9 @@ static void eeprom28c_emit_sdp_sequence_timed(firestarter_handle_t* handle, cons
         return;
     }
     LOG_ID(emitted_msg_id);
-    uint32_t sdp_emit_start_us = micros();
+    uint32_t sdp_emit_start_us = RURP_MICROS();
     eeprom28c_emit_command_sequence(handle, sequence, length);
-    uint32_t sdp_emit_us = (uint32_t)(micros() - sdp_emit_start_us);
+    uint32_t sdp_emit_us = (uint32_t)(RURP_MICROS() - sdp_emit_start_us);
     LOG_ID_U32(done_us_msg_id, sdp_emit_us);
 
     uint32_t sdp_tblc_budget_us = (uint32_t)length * AT28C_TBLC_MAX_US;
@@ -315,7 +315,7 @@ static void eeprom28c_sdp_lock_execute(firestarter_handle_t* handle) {
     size_t sdp_seq_len = sizeof(EEPROM_SDP_ENABLE) / sizeof(EEPROM_SDP_ENABLE[0]);
     eeprom28c_emit_sdp_sequence_timed(handle, EEPROM_SDP_ENABLE, sdp_seq_len, MSG_INFO_SDP_LOCK,
                                        MSG_INFO_SDP_LOCK_DONE_US);
-    delay(AT28C_TWC_MAX_MS);
+    RURP_DELAY_MS(AT28C_TWC_MAX_MS);
 }
 
 // Six-byte SOFTWARE chip erase [Atmel AN "Software Chip Erase" Rev
@@ -349,7 +349,7 @@ static void eeprom28c_erase_execute(firestarter_handle_t* handle) {
     handle->firestarter_set_data(handle, 0x5555, 0xAA);
     handle->firestarter_set_data(handle, 0x2AAA, 0x55);
     handle->firestarter_set_data(handle, 0x5555, 0x10);
-    delay(AT28C_TEC_MAX_MS);
+    RURP_DELAY_MS(AT28C_TEC_MAX_MS);
 }
 
 void eeprom28c_write_init(firestarter_handle_t* handle) {
@@ -449,7 +449,7 @@ void eeprom28c_write_execute(firestarter_handle_t* handle) {
     // byte-load window it measures, so a stable image leaves it out.
 #if DEV_TOOLS
     uint32_t page_load_worst_us = 0;
-    uint32_t page_load_previous_us = micros();
+    uint32_t page_load_previous_us = RURP_MICROS();
 #endif
     // The loop exits by break, not early return, so the worst-interval report
     // below is reached on BOTH paths. With an empty socket the very first
@@ -463,7 +463,7 @@ void eeprom28c_write_execute(firestarter_handle_t* handle) {
         handle->firestarter_set_data(handle, address, data);
 
 #if DEV_TOOLS
-        uint32_t page_load_now_us = micros();
+        uint32_t page_load_now_us = RURP_MICROS();
         uint32_t page_load_interval_us = (uint32_t)(page_load_now_us - page_load_previous_us);
         if (page_load_interval_us > page_load_worst_us) {
             page_load_worst_us = page_load_interval_us;
@@ -506,7 +506,7 @@ void eeprom28c_write_execute(firestarter_handle_t* handle) {
 static bool eeprom28c_wait_for_page_write(firestarter_handle_t* handle, uint32_t address, uint8_t expected) {
     uint8_t observed = 0;
     for (uint16_t j = 0; j < AT28C_PAGE_POLL_MAX_READS; j++) {
-        delayMicroseconds(10);
+        RURP_DELAY_US(10);
         observed = handle->firestarter_get_data(handle, address);
         if ((observed & AT28C_DQ7_MASK) == (expected & AT28C_DQ7_MASK)) {
             uint8_t confirm = handle->firestarter_get_data(handle, address);

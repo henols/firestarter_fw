@@ -4,38 +4,43 @@
  *
  * Permission is hereby granted under MIT license.
  */
-#include <avr/pgmspace.h>
-
+#include "rurp_platform.h"
+#include "rurp_platform_compat.h"
+#include "rurp_serial_port.h"
 #include "rurp_serial_utils.h"
 #include "rurp_shield.h"
 
+#if defined(RURP_PLATFORM_PY32F071)
+#include "boards/py32f071_usb.h"
+#endif
+
 void rurp_serial_begin(unsigned long baud) {
-    SERIAL_PORT.begin(baud);
-    while (!SERIAL_PORT) {
-        delayMicroseconds(1);
+    rurp_serial_port_begin(baud);
+    while (!rurp_serial_port_ready()) {
+        RURP_DELAY_US(1);
     }
-    delay(50);
+    RURP_DELAY_MS(50);
 }
 
 void rurp_serial_end() {
-    SERIAL_PORT.end();
-    delay(5);
+    rurp_serial_port_end();
+    RURP_DELAY_MS(5);
 }
 
 int rurp_communication_available() {
-    return SERIAL_PORT.available();
+    return rurp_serial_port_available();
 }
 
 int rurp_communication_read() {
-    return SERIAL_PORT.read();
+    return rurp_serial_port_read();
 }
 
 int rurp_communication_peak() {
-    return SERIAL_PORT.peek();
+    return rurp_serial_port_peek();
 }
 
 size_t rurp_communication_read_bytes(char* buffer, size_t size) {
-    return SERIAL_PORT.readBytes(buffer, size);
+    return rurp_serial_port_read_bytes(buffer, size);
 }
 
 // Streaming COBS decode-in-place + CRC8 verify + drain-to-0x00 resync.
@@ -95,12 +100,12 @@ static void _drain_to_delimiter(bool wait_on_silence) {
             if (!wait_on_silence) {
                 return;  /* caller already proved silence; nothing buffered to drain */
             }
-            unsigned long start = millis();
+            unsigned long start = RURP_MILLIS();
             while (rurp_communication_available() <= 0) {
 #if defined(RURP_PLATFORM_PY32F071)
                 if (generation != py32_usb_generation()) return;
 #endif
-                if (millis() - start >= TIMEOUT_MS) {
+                if (RURP_MILLIS() - start >= TIMEOUT_MS) {
                     return;  /* deadline: stop draining, return bounded */
                 }
             }
@@ -169,12 +174,12 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
          * The truly-idle path is unaffected: loop() guards entry on
          * rurp_communication_available()>0, so no timer runs while idle. */
         if (rurp_communication_available() <= 0) {
-            unsigned long start = millis();
+            unsigned long start = RURP_MILLIS();
             while (rurp_communication_available() <= 0) {
 #if defined(RURP_PLATFORM_PY32F071)
                 if (generation != py32_usb_generation()) return -1;
 #endif
-                if (millis() - start >= TIMEOUT_MS) {
+                if (RURP_MILLIS() - start >= TIMEOUT_MS) {
                     /* 53-04: silence already proven + buffer empty -> drain without a
                      * second redundant TIMEOUT_MS wait (brings a dropped-delimiter
                      * frame error from ~2 s to ~1 s). */
@@ -261,9 +266,9 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
 // rurp_communication_read_data above. Dead code in all shipping envs, kept
 // for contract symmetry and Unity round-trip coverage.
 //
-// Emit [COBS(payload + CRC8(payload))][0x00] directly to SERIAL_PORT.
+// Emit [COBS(payload + CRC8(payload))][0x00] directly to the serial port.
 // ~6 B stack: run_start, run_len, crc.  No second buffer: run data bytes are
-// emitted via SERIAL_PORT.write(buffer+run_start, run_len) from the source
+// emitted via rurp_serial_port_write(buffer+run_start, run_len) from the source
 // buffer; the single CRC byte is held in a 1-byte local.
 //
 // CRC8 uses the EXISTING crc8_ccitt PROGMEM table accessor.
@@ -276,7 +281,7 @@ size_t rurp_communication_write(const char* buffer, size_t size) {
     }
 
     /* Step 2: COBS-encode the logical stream [buffer[0..size-1] | crc_byte]
-     * directly to SERIAL_PORT.  Logical stream length = size + 1.
+     * directly to the serial port.  Logical stream length = size + 1.
      *
      * We scan for runs of ≤254 non-zero bytes.  When a zero is encountered or
      * the 254-byte run limit is hit, we emit:
@@ -297,9 +302,9 @@ size_t rurp_communication_write(const char* buffer, size_t size) {
 
         if (byte_val == 0x00) {
             /* End current run at this zero. Emit code + run bytes. */
-            SERIAL_PORT.write((uint8_t)(run_len + 1));
+            rurp_serial_port_write_byte((uint8_t)(run_len + 1));
             if (run_len > 0) {
-                SERIAL_PORT.write((const uint8_t*)buffer + run_start, run_len);
+                rurp_serial_port_write((const uint8_t*)buffer + run_start, run_len);
             }
             /* Zero itself is represented by the run-code; not emitted. */
             run_start = i + 1;
@@ -308,8 +313,8 @@ size_t rurp_communication_write(const char* buffer, size_t size) {
             run_len++;
             if (run_len == 254) {
                 /* 254-byte run limit: emit code 0xFF + run bytes, start new run. */
-                SERIAL_PORT.write((uint8_t)0xFF);
-                SERIAL_PORT.write((const uint8_t*)buffer + run_start, 254);
+                rurp_serial_port_write_byte((uint8_t)0xFF);
+                rurp_serial_port_write((const uint8_t*)buffer + run_start, 254);
                 run_start = i + 1;
                 run_len = 0;
             }
@@ -321,23 +326,23 @@ size_t rurp_communication_write(const char* buffer, size_t size) {
      * when the 254-run boundary fires).  Only two cases remain. */
     if (crc == 0x00) {
         /* CRC is zero: end current run, then add a 0x01 run for the zero CRC. */
-        SERIAL_PORT.write((uint8_t)(run_len + 1));
+        rurp_serial_port_write_byte((uint8_t)(run_len + 1));
         if (run_len > 0) {
-            SERIAL_PORT.write((const uint8_t*)buffer + run_start, run_len);
+            rurp_serial_port_write((const uint8_t*)buffer + run_start, run_len);
         }
-        SERIAL_PORT.write((uint8_t)0x01); /* run-code for the zero CRC byte */
+        rurp_serial_port_write_byte((uint8_t)0x01); /* run-code for the zero CRC byte */
     } else {
         /* CRC is non-zero and fits in the current run: append it. */
-        SERIAL_PORT.write((uint8_t)(run_len + 2)); /* +2: +1 for run semantics, +1 for CRC */
+        rurp_serial_port_write_byte((uint8_t)(run_len + 2)); /* +2: +1 for run semantics, +1 for CRC */
         if (run_len > 0) {
-            SERIAL_PORT.write((const uint8_t*)buffer + run_start, run_len);
+            rurp_serial_port_write((const uint8_t*)buffer + run_start, run_len);
         }
-        SERIAL_PORT.write(crc);
+        rurp_serial_port_write_byte(crc);
     }
 
     /* Frame delimiter. */
-    SERIAL_PORT.write((uint8_t)0x00);
-    SERIAL_PORT.flush();
+    rurp_serial_port_write_byte((uint8_t)0x00);
+    rurp_serial_port_flush();
 
     return size; /* bytes of payload written (mirrors old interface) */
 }
@@ -396,38 +401,38 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
     py32_usb_frame_begin();
 #endif
     // Magic preamble (4 bytes from PROGMEM).
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[0]));
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[1]));
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[2]));
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[3]));
+    rurp_serial_port_write_byte((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[0]));
+    rurp_serial_port_write_byte((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[1]));
+    rurp_serial_port_write_byte((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[2]));
+    rurp_serial_port_write_byte((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[3]));
 
     // Length field (u16 big-endian): counts id + params + crc; excludes the
     // len field itself and the trailing 0x0A anchor.
     uint16_t len_u16 = (uint16_t)(1 + param_count + 1);
-    SERIAL_PORT.write((uint8_t)(len_u16 >> 8));    // MSB
-    SERIAL_PORT.write((uint8_t)(len_u16 & 0xFF));  // LSB
+    rurp_serial_port_write_byte((uint8_t)(len_u16 >> 8));    // MSB
+    rurp_serial_port_write_byte((uint8_t)(len_u16 & 0xFF));  // LSB
 
     // CRC8 accumulator over [id, params].
     uint8_t crc = 0;
 
     // ID.
-    SERIAL_PORT.write(id);
+    rurp_serial_port_write_byte(id);
     crc = crc8_ccitt(crc, id);
 
     // Params.
     for (uint16_t i = 0; i < param_count; i++) {
         uint8_t b = params[i];
-        SERIAL_PORT.write(b);
+        rurp_serial_port_write_byte(b);
         crc = crc8_ccitt(crc, b);
     }
 
     // CRC byte.
-    SERIAL_PORT.write(crc);
+    rurp_serial_port_write_byte(crc);
 
     // 0x0A re-sync anchor.
-    SERIAL_PORT.write((uint8_t)0x0A);
+    rurp_serial_port_write_byte((uint8_t)0x0A);
 
-    SERIAL_PORT.flush();
+    rurp_serial_port_flush();
 #if defined(RURP_PLATFORM_PY32F071)
     py32_usb_frame_end();
 #endif
