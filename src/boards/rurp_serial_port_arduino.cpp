@@ -12,8 +12,6 @@
  * Serial overloads as they are: the native tests stub these overloads.
  */
 
-#if !defined(RURP_PLATFORM_PY32F071)
-
 #include <Arduino.h>
 
 #include "rurp_serial_port.h"
@@ -57,5 +55,3 @@ size_t rurp_serial_port_write(const uint8_t* buffer, size_t length) {
 void rurp_serial_port_flush(void) {
     Serial.flush();
 }
-
-#endif  // !RURP_PLATFORM_PY32F071

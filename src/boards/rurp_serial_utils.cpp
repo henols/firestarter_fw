@@ -5,8 +5,6 @@
  * Permission is hereby granted under MIT license.
  */
 #include "rurp_platform.h"
-#include "rurp_platform_compat.h"
-#include "rurp_serial_port.h"
 #include "rurp_serial_utils.h"
 #include "rurp_shield.h"
 

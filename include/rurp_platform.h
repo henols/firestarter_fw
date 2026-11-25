@@ -30,7 +30,25 @@ void rurp_delay_us(uint32_t microseconds);
 #elif defined(__AVR__)
 
 #define RURP_PLATFORM_AVR 1
-#include <Arduino.h>
+
+/* Declare the Arduino AVR core functions that shared code uses here, not
+ * through <Arduino.h>, so that shared code cannot use other Arduino names.
+ * The declarations are the same as those in the core's Arduino.h. The core's
+ * main() calls setup() and loop() with C linkage. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+unsigned long millis(void);
+unsigned long micros(void);
+void delay(unsigned long ms);
+void delayMicroseconds(unsigned int us);
+void setup(void);
+void loop(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #define RURP_DELAY_US(value) delayMicroseconds(value)
 #define RURP_DELAY_MS(value) delay(value)
@@ -45,7 +63,6 @@ void rurp_delay_us(uint32_t microseconds);
  * writes), so the tests can stub and count the timing calls. An embedded
  * target that is not named above has no <Arduino.h> and fails here.
  */
-#define RURP_PLATFORM_HOST 1
 #include <Arduino.h>
 
 #define RURP_DELAY_US(value) delayMicroseconds(value)
