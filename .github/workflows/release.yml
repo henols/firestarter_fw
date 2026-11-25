@@ -188,7 +188,10 @@ jobs:
           deps-dir: build/_deps
 
       # Reads `outcome`, not `conclusion`: a continue-on-error step reports
-      # conclusion success even when it failed.
+      # conclusion success even when it failed. A failed build can leave its
+      # image on disk (the post-build size command runs after objcopy), and the
+      # check below skips a failed board. Remove that image, so that the
+      # Release step cannot publish it.
       - name: Report a missing PY32 image
         if: steps.tag.outputs.prerelease == 'true' && (steps.arm.outcome == 'failure' || steps.arm_micropetal.outcome == 'failure')
         env:
@@ -197,6 +200,7 @@ jobs:
           for PAIR in $OUTCOMES; do
             [ "${PAIR#*=}" = failure ] || continue
             BOARD="${PAIR%%=*}"
+            rm -f "build/$BOARD/firestarter_$BOARD.hex"
             MSG="${BOARD} image not produced — this release carries no ${BOARD} asset."
             echo "::warning::${MSG}"
             { echo "### ${BOARD}"; echo "${MSG}"; } >> "$GITHUB_STEP_SUMMARY"
@@ -246,8 +250,8 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           # The PY32 entries match nothing on a stable release or a failed
-          # ARM build. fail_on_unmatched_files stays false, so the asset is
-          # simply absent.
+          # ARM build (the report step removes a failed image).
+          # fail_on_unmatched_files stays false, so the asset is simply absent.
           files: |
             .pio/build/**/firestarter_*.hex
             build/py32f071/firestarter_py32f071.hex
