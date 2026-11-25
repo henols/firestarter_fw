@@ -231,15 +231,14 @@ static void firestarter_cdc_bulk_in(uint8_t endpoint, uint32_t byte_count)
     (void)endpoint;
     ++tx_in_completions;
 
-    if (reset_pending || packet_generation != usb_generation)
-    {
-        tx_busy = false;
-        return;
-    }
     /* A transfer that ends on a full packet needs a ZLP. Send it only when
-     * no more data follows: queued data continues the transfer. */
-    tx_zlp_due = byte_count == FIRESTARTER_CDC_MAX_PACKET_SIZE;
+     * no more data follows: queued data continues the transfer. An old
+     * session packet gets no ZLP. */
+    tx_zlp_due = !reset_pending && packet_generation == usb_generation &&
+                 byte_count == FIRESTARTER_CDC_MAX_PACKET_SIZE;
     tx_busy = false;
+    /* After a reset, the queue holds only new session bytes. Start them
+     * also when the completed packet is from the old session. */
     usb_start_next_transmit();
 }
 
@@ -440,13 +439,27 @@ void py32_usb_flush(void)
     const uint32_t generation = frame_active ? frame_generation : usb_generation;
     uint32_t deadline = RURP_MILLIS() + FIRESTARTER_USB_TIMEOUT_MS;
     uint32_t completions = tx_in_completions;
+    const uint32_t state = __get_PRIMASK();
+    __disable_irq();
+    /* Bytes queued before a session change are not sent. Discard them now,
+     * so that they do not cause a timeout. */
+    usb_apply_session_reset();
     tx_batching = false;
-    usb_start_next_transmit_safe();
+    usb_start_next_transmit();
+    usb_restore_irq(state);
     while (tx_head != tx_tail || tx_busy || tx_zlp_due)
     {
         if (generation != usb_generation)
         {
             frame_failed = true;
+            return;
+        }
+        if (!usb_device_is_configured())
+        {
+            /* A bus reset stopped the endpoint. A lost ZLP loses no data, so
+             * the frame fails only when data stays unsent. */
+            tx_zlp_due = false;
+            if (tx_head != tx_tail || tx_busy) frame_failed = tx_failed = true;
             return;
         }
         const uint32_t now = RURP_MILLIS();
