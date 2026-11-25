@@ -20,6 +20,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void rurp_serial_port_begin(unsigned long baud);
 void rurp_serial_port_end(void);
 // True when the port can carry data. Leonardo USB CDC: the host opened it.
@@ -31,5 +35,9 @@ size_t rurp_serial_port_read_bytes(char* buffer, size_t length);
 size_t rurp_serial_port_write_byte(uint8_t value);
 size_t rurp_serial_port_write(const uint8_t* buffer, size_t length);
 void rurp_serial_port_flush(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif  // __RURP_SERIAL_PORT_H__

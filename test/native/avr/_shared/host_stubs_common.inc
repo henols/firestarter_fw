@@ -307,9 +307,9 @@ extern "C" void op_reset_timeout() {}
  * longer needs to stub them. Intentionally NOT defined here. */
 
 /* ArduinoFake declares Serial_::operator bool() in its USB-CDC header but
- * does not define it in SerialFake.cpp. rurp_serial_utils.cpp's
- * rurp_serial_begin loop `while (!SERIAL_PORT) ...` references the operator,
- * and the test binary pulls rurp_serial_utils.cpp into the link, so we
+ * does not define it in SerialFake.cpp. rurp_serial_port_ready() in
+ * rurp_serial_port_arduino.cpp references the operator, and the test binary
+ * pulls that file into the link, so we
  * provide a host-side definition that returns true (matches production
  * HardwareSerial::operator bool() behaviour). The dispatch tests never call
  * rurp_serial_begin — this is link-only. */

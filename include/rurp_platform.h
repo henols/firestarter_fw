@@ -55,13 +55,17 @@ void loop(void);
 #define RURP_MILLIS() millis()
 #define RURP_MICROS() micros()
 
+#elif defined(ARDUINO)
+
+/* Every Arduino core defines ARDUINO. Only the AVR core is supported. */
+#error "Unsupported Firestarter target platform"
+
 #else
 
 /*
  * Host builds: the PlatformIO native tests and the tests/ harness. There,
  * <Arduino.h> is a test fake (ArduinoFake, or the header that the harness
- * writes), so the tests can stub and count the timing calls. An embedded
- * target that is not named above has no <Arduino.h> and fails here.
+ * writes), so the tests can stub and count the timing calls.
  */
 #include <Arduino.h>
 

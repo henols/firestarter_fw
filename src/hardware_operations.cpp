@@ -88,9 +88,10 @@ static const char FW_VERSION_LINE[] PROGMEM = "OK: FW: " FW_VERSION "\r\n";
 
 bool fw_get_version(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_FW_VERSION);
-    for (size_t i = 0; i < sizeof(FW_VERSION_LINE) - 1; i++) {
-        rurp_serial_port_write_byte((uint8_t)pgm_read_byte(&FW_VERSION_LINE[i]));
-    }
+    // One bulk write, so that a USB transport sends the line in one packet.
+    uint8_t line[sizeof(FW_VERSION_LINE) - 1];
+    memcpy_P(line, FW_VERSION_LINE, sizeof(line));
+    rurp_serial_port_write(line, sizeof(line));
     rurp_serial_port_flush();
     return true;
 }

@@ -291,7 +291,7 @@ The erase uses the same timed write function as the SDP sequences:
 
 1. An SDP-disable sequence runs first.
 2. The six-byte erase sequence runs.
-3. An unconditional `delay(AT28C_TEC_MAX_MS)` follows. This is the 20 ms `tEC`, with no poll.
+3. An unconditional `RURP_DELAY_MS(AT28C_TEC_MAX_MS)` follows. This is the 20 ms `tEC`, with no poll.
 
 The six writes are inline, not a `.data` table, so the erase uses 0 bytes of RAM. No sector erase
 exists.

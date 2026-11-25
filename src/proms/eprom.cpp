@@ -417,7 +417,7 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
  * bypass it.
  *
  * Conditional on RESPONSE_CODE_ERROR, NOT unconditional. An unconditional
- * disable re-arms the once-per-block guard above and re-pays delay(500) on the
+ * disable re-arms the once-per-block guard above and re-pays RURP_DELAY_MS(500) on the
  * next block too -- roughly 64 s added to a 64 K Uno write. A successful block
  * must leave the route asserted.
  *
