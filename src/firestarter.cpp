@@ -16,6 +16,7 @@
 #include "logging_id.h"
 #include "memory.h"
 #include "operation_utils.h"
+#include "ready_chunk.h"
 #include "rurp_shield.h"
 #include "rurp_config_migrate.h"
 #include "version.h"
@@ -160,8 +161,14 @@ __attribute__((noinline)) bool init_programmer_framed(firestarter_handle_t* hand
         uint8_t _vlen = (uint8_t)strlen(_ver);
         if (_vlen > 32) _vlen = 32;
         uint8_t _ready[4 + 32];
-        _ready[0] = (uint8_t)(((uint16_t)DATA_BUFFER_SIZE >> 8) & 0xFF);
-        _ready[1] = (uint8_t)((uint16_t)DATA_BUFFER_SIZE & 0xFF);
+        // buffer_size is the chunk size for THIS command: page families get
+        // whole pages only (ready_chunk.h). The host reads it from every ack.
+        static_assert(DATA_BUFFER_SIZE >= READY_CHUNK_PAGE_MAX,
+                      "DATA_BUFFER_SIZE must hold the largest page");
+        const uint16_t _chunk =
+            fs_ready_chunk_size((uint16_t)DATA_BUFFER_SIZE, handle->protocol, handle->page_size);
+        _ready[0] = (uint8_t)((_chunk >> 8) & 0xFF);
+        _ready[1] = (uint8_t)(_chunk & 0xFF);
 #ifdef HARDWARE_REVISION
         _ready[2] = (uint8_t)rurp_get_hardware_revision();
 #else
