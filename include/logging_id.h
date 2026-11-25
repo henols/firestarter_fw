@@ -53,24 +53,10 @@
         }                                                              \
     } while (0)
 
-#define LOG_INFO_ID_U16(id, p1)                                        \
-    do {                                                               \
-        if (is_flag_set(FLAG_VERBOSE)) {                               \
-            LOG_ID_U16((id), (p1));                                    \
-        }                                                              \
-    } while (0)
-
 #define LOG_INFO_ID_U24(id, p1)                                        \
     do {                                                               \
         if (is_flag_set(FLAG_VERBOSE)) {                               \
             LOG_ID_U24((id), (p1));                                    \
-        }                                                              \
-    } while (0)
-
-#define LOG_INFO_ID_U32(id, p1)                                        \
-    do {                                                               \
-        if (is_flag_set(FLAG_VERBOSE)) {                               \
-            LOG_ID_U32((id), (p1));                                    \
         }                                                              \
     } while (0)
 
@@ -103,7 +89,6 @@
 #define LOG_ERROR_ID(id)               LOG_ID(id)
 #define LOG_ERROR_ID_U8(id, p1)        LOG_ID_U8((id), (p1))
 #define LOG_ERROR_ID_U16(id, p1)       LOG_ID_U16((id), (p1))
-#define LOG_ERROR_ID_U24(id, p1)       LOG_ID_U24((id), (p1))
 #define LOG_ERROR_ID_U32(id, p1)       LOG_ID_U32((id), (p1))
 #define LOG_ERROR_ID_BYTES(id, b, n)   LOG_ID_BYTES((id), (b), (n))
 
@@ -111,54 +96,30 @@
 
 #define LOG_WARN_ID(id)                LOG_ID(id)
 #define LOG_WARN_ID_U8(id, p1)         LOG_ID_U8((id), (p1))
-#define LOG_WARN_ID_U16(id, p1)        LOG_ID_U16((id), (p1))
-#define LOG_WARN_ID_U24(id, p1)        LOG_ID_U24((id), (p1))
 #define LOG_WARN_ID_U32(id, p1)        LOG_ID_U32((id), (p1))
 #define LOG_WARN_ID_BYTES(id, b, n)    LOG_ID_BYTES((id), (b), (n))
 
 // --- Unconditional OK severity ---
 
 #define LOG_OK_ID(id)                  LOG_ID(id)
-#define LOG_OK_ID_U8(id, p1)           LOG_ID_U8((id), (p1))
 #define LOG_OK_ID_U16(id, p1)          LOG_ID_U16((id), (p1))
-#define LOG_OK_ID_U24(id, p1)          LOG_ID_U24((id), (p1))
-#define LOG_OK_ID_U32(id, p1)          LOG_ID_U32((id), (p1))
 #define LOG_OK_ID_BYTES(id, b, n)      LOG_ID_BYTES((id), (b), (n))
 
 // --- Unconditional INIT severity ---
 
 #define LOG_INIT_ID(id)                LOG_ID(id)
-#define LOG_INIT_ID_U8(id, p1)         LOG_ID_U8((id), (p1))
-#define LOG_INIT_ID_U16(id, p1)        LOG_ID_U16((id), (p1))
-#define LOG_INIT_ID_U24(id, p1)        LOG_ID_U24((id), (p1))
-#define LOG_INIT_ID_U32(id, p1)        LOG_ID_U32((id), (p1))
-#define LOG_INIT_ID_BYTES(id, b, n)    LOG_ID_BYTES((id), (b), (n))
 
 // --- Unconditional MAIN severity ---
 
 #define LOG_MAIN_ID(id)                LOG_ID(id)
-#define LOG_MAIN_ID_U8(id, p1)         LOG_ID_U8((id), (p1))
-#define LOG_MAIN_ID_U16(id, p1)        LOG_ID_U16((id), (p1))
-#define LOG_MAIN_ID_U24(id, p1)        LOG_ID_U24((id), (p1))
-#define LOG_MAIN_ID_U32(id, p1)        LOG_ID_U32((id), (p1))
-#define LOG_MAIN_ID_BYTES(id, b, n)    LOG_ID_BYTES((id), (b), (n))
 
 // --- Unconditional END severity ---
 
 #define LOG_END_ID(id)                 LOG_ID(id)
-#define LOG_END_ID_U8(id, p1)          LOG_ID_U8((id), (p1))
-#define LOG_END_ID_U16(id, p1)         LOG_ID_U16((id), (p1))
-#define LOG_END_ID_U24(id, p1)         LOG_ID_U24((id), (p1))
-#define LOG_END_ID_U32(id, p1)         LOG_ID_U32((id), (p1))
-#define LOG_END_ID_BYTES(id, b, n)     LOG_ID_BYTES((id), (b), (n))
 
 // --- Unconditional DATA severity ---
 
 #define LOG_DATA_ID(id)                LOG_ID(id)
-#define LOG_DATA_ID_U8(id, p1)         LOG_ID_U8((id), (p1))
-#define LOG_DATA_ID_U16(id, p1)        LOG_ID_U16((id), (p1))
-#define LOG_DATA_ID_U24(id, p1)        LOG_ID_U24((id), (p1))
-#define LOG_DATA_ID_U32(id, p1)        LOG_ID_U32((id), (p1))
 #define LOG_DATA_ID_BYTES(id, b, n)    LOG_ID_BYTES((id), (b), (n))
 
 // --- DATA multi-param composites ---
@@ -221,30 +182,12 @@
         rurp_log_id(MSG_DEBUG, _b, 2);                                      \
     } while (0)
 
-// Two u8 params: sub_id + 2 bytes.
-#define LOG_DEBUG_ID_SUB_U8_U8(sub_id, p1, p2)                             \
-    do {                                                                    \
-        uint8_t _b[3] = { (uint8_t)(sub_id), (uint8_t)(p1),                \
-                          (uint8_t)(p2) };                                  \
-        rurp_log_id(MSG_DEBUG, _b, 3);                                      \
-    } while (0)
-
 // Three u8 params: sub_id + 3 bytes.
 #define LOG_DEBUG_ID_SUB_U8_U8_U8(sub_id, p1, p2, p3)                      \
     do {                                                                    \
         uint8_t _b[4] = { (uint8_t)(sub_id), (uint8_t)(p1),                \
                           (uint8_t)(p2), (uint8_t)(p3) };                   \
         rurp_log_id(MSG_DEBUG, _b, 4);                                      \
-    } while (0)
-
-// Two u16 params: sub_id + 4 bytes MSB-first (for pairs of values that may exceed u8).
-#define LOG_DEBUG_ID_SUB_U16_U16(sub_id, p1, p2)                            \
-    do {                                                                    \
-        uint16_t _v1 = (uint16_t)(p1); uint16_t _v2 = (uint16_t)(p2);      \
-        uint8_t _b[5] = { (uint8_t)(sub_id),                               \
-                          (uint8_t)((_v1 >> 8) & 0xFF), (uint8_t)(_v1 & 0xFF), \
-                          (uint8_t)((_v2 >> 8) & 0xFF), (uint8_t)(_v2 & 0xFF) }; \
-        rurp_log_id(MSG_DEBUG, _b, 5);                                      \
     } while (0)
 
 // One u16 param: sub_id + 2 bytes MSB-first.
@@ -299,9 +242,7 @@
 
 #define LOG_DEBUG_ID_SUB(sub_id)
 #define LOG_DEBUG_ID_SUB_U8(sub_id, p1)
-#define LOG_DEBUG_ID_SUB_U8_U8(sub_id, p1, p2)
 #define LOG_DEBUG_ID_SUB_U8_U8_U8(sub_id, p1, p2, p3)
-#define LOG_DEBUG_ID_SUB_U16_U16(sub_id, p1, p2)
 #define LOG_DEBUG_ID_SUB_U16(sub_id, p1)
 #define LOG_DEBUG_ID_SUB_U24(sub_id, p1)
 #define LOG_DEBUG_ID_SUB_U32(sub_id, p1)

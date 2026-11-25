@@ -24,9 +24,6 @@
 #include "dev_tools.h"
 #endif
 
-#define RX 0
-#define TX 1
-
 bool init_programmer_framed(firestarter_handle_t* handle);
 bool parse_command(firestarter_handle_t* handle);
 void command_done(firestarter_handle_t* handle);
