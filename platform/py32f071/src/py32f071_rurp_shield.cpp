@@ -1,4 +1,4 @@
-#include <Arduino.h>
+#include "rurp_platform.h"
 
 #include "boards/py32f071_rurp_shield.h"
 #include "rurp_register_utils.h"

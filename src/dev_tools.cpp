@@ -8,7 +8,7 @@
 #if DEV_TOOLS
 #include "dev_tools.h"
 
-#include <Arduino.h>
+#include "rurp_platform.h"
 
 #include "firestarter.h"
 #include "logging_id.h"
@@ -30,13 +30,13 @@ extern "C" const uint8_t firestarter_dev_tools_image PROGMEM __attribute__((used
 #define DT_BUTTON_WAIT_MS 30000UL
 
 static bool dt_wait_for_button(void) {
-    unsigned long start = millis();
+    unsigned long start = RURP_MILLIS();
     while (!rurp_user_button_pressed()) {
         rurp_watchdog_reset();
-        if ((unsigned long)(millis() - start) >= DT_BUTTON_WAIT_MS) {
+        if ((unsigned long)(RURP_MILLIS() - start) >= DT_BUTTON_WAIT_MS) {
             return false;
         }
-        delay(200);
+        RURP_DELAY_MS(200);
     }
     return true;
 }
@@ -60,9 +60,9 @@ bool dt_set_registers(firestarter_handle_t* handle) {
         return false;
     };
 
-    unsigned long payload_deadline = millis() + TIMEOUT_MS;
+    unsigned long payload_deadline = RURP_MILLIS() + TIMEOUT_MS;
     while (rurp_communication_available() < 4) {
-        if ((long)(millis() - payload_deadline) >= 0) {
+        if ((long)(RURP_MILLIS() - payload_deadline) >= 0) {
             return false;
         }
     }
@@ -197,7 +197,7 @@ static void dt_sample_adc(dt_adc_sample_t* out, rurp_register_t ctrl) {
     // sets it, and CMD_DEV_ADC is deliberately not a memory command.
     rurp_write_to_register(CONTROL_REGISTER, ctrl);
     if (ctrl != 0) {
-        delay(DT_ADC_SETTLE_MS);
+        RURP_DELAY_MS(DT_ADC_SETTLE_MS);
     }
 
     // EXACTLY ONE sample of each channel, and every figure below derived from

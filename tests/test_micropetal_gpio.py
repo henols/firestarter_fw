@@ -1,6 +1,6 @@
 """Exercise the actual ARM board backend without a connected shield."""
 from ._py32_build import arm_defines
-from ._host_build import FAKE_ARDUINO_H, INCLUDE, REPO_ROOT, host_cxx, compile_ok, run_binary
+from ._host_build import INCLUDE, REPO_ROOT, host_cxx, compile_ok, run_binary
 
 
 def test_provisional_arm_never_drives_socket_gpio(tmp_path):
@@ -77,14 +77,13 @@ inline unsigned HAL_ADC_GetValue(ADC_HandleTypeDef*) { if (adc_mix_zero) return 
     for pin in range(16):
         hal += f'\n#define GPIO_PIN_{pin} (1U << {pin})\n'
     (tmp_path / 'py32f0xx_hal.h').write_text(hal)
-    (tmp_path / 'Arduino.h').write_text(FAKE_ARDUINO_H + 'void delayMicroseconds(unsigned long);\n')
     driver = tmp_path / 'driver.cpp'
     driver.write_text(r'''
 #include <cassert>
 #include "boards/py32f071_rurp_shield.h"
 #include "rurp_shield.h"
-unsigned long millis() { return 0; }
-void delayMicroseconds(unsigned long) {}
+extern "C" uint32_t rurp_millis(void) { return 0; }
+extern "C" void rurp_delay_us(uint32_t) {}
 GPIO_TypeDef a = {}, b = {};
 unsigned adc_pins, button_pins;
 unsigned adc_channel, adc_a2 = 2048, adc_a3;

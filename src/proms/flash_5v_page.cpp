@@ -7,7 +7,7 @@
 
 #include "flash_5v_page.h"
 
-#include <Arduino.h>
+#include "rurp_platform.h"
 
 #include "firestarter.h"
 #include "flash_utils.h"
@@ -138,7 +138,7 @@ void flash_5v_page_write_execute(firestarter_handle_t* handle) {
 // says the cycle is done; the other outputs may still be invalid when it
 // flips, so the byte itself is not compared -- the host verify does that.
 static bool flash_5v_page_wait_for_page_write(firestarter_handle_t* handle, uint32_t address, uint8_t expected) {
-    delayMicroseconds(FLASH_5V_PAGE_TBLC_US);
+    RURP_DELAY_US(FLASH_5V_PAGE_TBLC_US);
     if (flash_util_wait_ready(handle, address, expected, FLASH_5V_PAGE_WRITE_TIMEOUT_MS)) {
         return true;
     }

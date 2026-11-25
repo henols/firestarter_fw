@@ -291,7 +291,7 @@ The erase uses the same timed write function as the SDP sequences:
 
 1. An SDP-disable sequence runs first.
 2. The six-byte erase sequence runs.
-3. An unconditional `delay(AT28C_TEC_MAX_MS)` follows. This is the 20 ms `tEC`, with no poll.
+3. An unconditional `RURP_DELAY_MS(AT28C_TEC_MAX_MS)` follows. This is the 20 ms `tEC`, with no poll.
 
 The six writes are inline, not a `.data` table, so the erase uses 0 bytes of RAM. No sector erase
 exists.
@@ -395,6 +395,22 @@ voltage measurement is taken in that mode. `firestarter cal --vcc` calculates
 `bandgap_mv = meter_mv * count / 1024`, refuses a result outside 1000–1200 mV, and writes the result
 with the config `bg` value. The firmware refuses a stored bandgap outside the same window
 (`rurp_config_commit`). On py32f071 the count is 0, and the decoder refuses `bg`.
+
+### Platform Layer
+
+Shared code (`src/proms/`, the `src/*.cpp` files and `src/boards/rurp_serial_utils.cpp`) must not
+include `<Arduino.h>`. It uses two seams:
+
+- **Timing:** `RURP_MILLIS()`, `RURP_MICROS()`, `RURP_DELAY_MS()` and `RURP_DELAY_US()` from
+  `include/rurp_platform.h`.
+- **Serial:** the `rurp_serial_port_*` functions in `include/rurp_serial_port.h`.
+
+Arduino is the AVR backend only. It stays in the AVR board files, in
+`src/boards/rurp_serial_port_arduino.cpp` and in the AVR branch of `include/rurp_revision_adc.h`.
+The py32f071 backend is `platform/py32f071/src/serial_port.cpp` and `timing.cpp`.
+
+On host builds, `rurp_platform.h` includes `<Arduino.h>`, which is a test fake there. The `RURP_*`
+macros then call `millis()`, `delay()` and the other Arduino names, so ArduinoFake can stub them.
 
 ### Key Files
 

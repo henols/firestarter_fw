@@ -62,7 +62,7 @@ void rurp_set_communication_mode() {
     PORTD |= 0x01;
     DDRD &= ~(0x01);
     rurp_serial_begin(MONITOR_SPEED);
-    while (SERIAL_PORT.available()) SERIAL_PORT.read();
+    while (rurp_communication_available()) rurp_communication_read();
     com_mode = true;
 
     // Flush frames only after UART is restored and PORTD is safe to drive.

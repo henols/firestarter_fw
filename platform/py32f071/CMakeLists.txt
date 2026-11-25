@@ -42,6 +42,7 @@ set(LINKER_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/linker/PY32F071xB_FLASH.ld")
 # PY32_EXCLUDED: src/boards/rurp_common.cpp -- AVR-specific common
 # PY32_EXCLUDED: src/dev_tools.cpp -- ARM uses the shared DEV_TOOLS=0 default
 # PY32_EXCLUDED: src/boards/rurp_config_storage_eeprom.cpp -- AVR EEPROM backend, no ARM analogue
+# PY32_EXCLUDED: src/boards/rurp_serial_port_arduino.cpp -- Arduino Serial backend; ARM uses src/serial_port.cpp
 set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/firestarter.cpp"
     "${REPOSITORY_ROOT}/src/eprom_operations.cpp"
@@ -69,7 +70,7 @@ set(FIRESTARTER_COMMON_SOURCES
 set(PY32_PLATFORM_SOURCES
     startup/startup_py32f071.s
     src/main.cpp
-    src/platform_compat.cpp
+    src/serial_port.cpp
     src/timing.cpp
     src/usb_cdc.c
     src/py32f071_rurp_shield.cpp

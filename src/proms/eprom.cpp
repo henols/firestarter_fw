@@ -7,7 +7,7 @@
 
 #include "eprom.h"
 
-#include <Arduino.h>
+#include "rurp_platform.h"
 
 #include "firestarter.h"
 #include "eprom_params.h"
@@ -224,7 +224,7 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
     // Select the program-voltage route once per block using the protocol.
     if (handle->firestarter_get_control_register(handle, CTRL_VPP_REGULATOR_ENABLE) == 0) {
         handle->firestarter_set_control_register(handle, eprom_hv_route_mask(handle), 1);
-        delay(500);  // settle stays amortised once per block
+        RURP_DELAY_MS(500);  // settle stays amortised once per block
     }
 
     // Do NOT add a pins>=32 clear here. mem_util_calculate_top_address_register's
@@ -238,7 +238,7 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
     uint32_t org_delay = handle->pulse_delay;
     // Per-byte progress state is absent on UART-shared Uno targets.
 #ifndef SERIAL_ON_IO
-    uint32_t last_emit_ms = millis();
+    uint32_t last_emit_ms = RURP_MILLIS();
     // Progress uses the operation's exclusive end, not necessarily chip size.
     const uint32_t op_end = mem_util_operation_end(handle);
 #endif
@@ -334,8 +334,8 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
             // block in ascending order exactly once, which is the monotonicity the host
             // relies on.
             if (pulses == 0 &&
-                (uint32_t)(millis() - last_emit_ms) >= EPROM_PROGRESS_EMIT_INTERVAL_MS) {
-                last_emit_ms = millis();
+                (uint32_t)(RURP_MILLIS() - last_emit_ms) >= EPROM_PROGRESS_EMIT_INTERVAL_MS) {
+                last_emit_ms = RURP_MILLIS();
                 LOG_DATA_ID_U32_U32(MSG_DATA_PROGRESS, handle->address + base + i, op_end);
             }
 #endif
@@ -383,7 +383,7 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
             // with the 12 V rail generated but never switched onto the part, so no cell
             // changes and every byte exhausts max_pulses. Granularity is one per pass.
             handle->firestarter_set_control_register(handle, CTRL_VPE_ENABLE, 1);
-            delayMicroseconds(EPROM_VPP_SETUP_US);
+            RURP_DELAY_US(EPROM_VPP_SETUP_US);
             for (uint16_t i = 0; i < group_len; i++) {
                 // A pass over a full group at a wide pulse runs far past the
                 // watchdog period.
@@ -393,7 +393,7 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
                                                  (uint8_t)handle->data_buffer[base + i]);
                 }
             }
-            delayMicroseconds(EPROM_VPP_HOLD_US);
+            RURP_DELAY_US(EPROM_VPP_HOLD_US);
             handle->firestarter_set_control_register(handle, CTRL_VPE_ENABLE, 0);
             pulses++;
             accumulated += org_delay;  // pulse widths only
@@ -417,7 +417,7 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
  * bypass it.
  *
  * Conditional on RESPONSE_CODE_ERROR, NOT unconditional. An unconditional
- * disable re-arms the once-per-block guard above and re-pays delay(500) on the
+ * disable re-arms the once-per-block guard above and re-pays RURP_DELAY_MS(500) on the
  * next block too -- roughly 64 s added to a 64 K Uno write. A successful block
  * must leave the route asserted.
  *
@@ -435,10 +435,10 @@ void eprom_write_execute(firestarter_handle_t* handle) {
 uint16_t eprom_get_chip_id(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_CHIP_ID);
     handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE, 1);
-    delay(50);
+    RURP_DELAY_MS(50);
 
     handle->firestarter_set_control_register(handle, CTRL_VPP_A9_ENABLE, 1);
-    delay(100);
+    RURP_DELAY_MS(100);
     uint16_t chip_id = mem_util_read_u16_be(handle, 0x0000);
     handle->firestarter_set_control_register(handle, EPROM_HV_ALL_OFF_MASK, 0);
     return chip_id;
@@ -469,7 +469,7 @@ void eprom_check_vpp(firestarter_handle_t* handle) {
     // Route selection via eprom_hv_route_mask, as in the write body.
     handle->firestarter_set_control_register(handle, eprom_hv_route_mask(handle), 1);
 
-    delay(100);
+    RURP_DELAY_MS(100);
     uint16_t vpp_mv = rurp_read_voltage_mv();
     LOG_DEBUG_ID_SUB_U16(DBG_CHECKING_VPP_VOLTAGE, vpp_mv);
     mem_util_check_vpp_window(handle, vpp_mv);
@@ -480,10 +480,10 @@ void eprom_internal_erase(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_INTERNAL_ERASE);
     rurp_chip_input();
     handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE, 1);  // Enable regulator without dropping resistor
-    delay(100);
+    RURP_DELAY_MS(100);
     handle->firestarter_set_address(handle, 0x0000);
     handle->firestarter_set_control_register(handle, CTRL_VPP_A9_ENABLE | CTRL_VPE_ENABLE, 1);  // Erase with VPE - assumes CTRL_VPP_VPE_DROP_ENABLE isn't set and left active previously
-    delay(100);
+    RURP_DELAY_MS(100);
     rurp_chip_enable();
     /* The ERASE pulse width, not the per-byte program width the host sends: the
      * program width is far below the erase pulse minimum and only partially

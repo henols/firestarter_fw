@@ -34,7 +34,7 @@ extern "C" {
 }
 
 /* Link-only stub for ArduinoFake's USB-CDC bool-cast — referenced by
- * leonardo_rurp_shield.cpp's rurp_board_setup `while (!SERIAL_PORT)` loop. */
+ * rurp_serial_port_ready() in rurp_serial_port_arduino.cpp. */
 Serial_::operator bool() {
     return true;
 }
