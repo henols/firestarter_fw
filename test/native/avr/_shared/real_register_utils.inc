@@ -9,6 +9,7 @@
  */
 
 #include "rurp_register_utils.h"
+#include "rurp_revision_adc.h"
 
 /* Seeds the production register cache, so a test starts from a known
  * latched state. */

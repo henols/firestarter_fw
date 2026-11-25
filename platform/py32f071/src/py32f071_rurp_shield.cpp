@@ -78,7 +78,7 @@ void configure_adc()
     analog_input.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(RURP_PY32F071_VPP_ADC_PORT, &analog_input);
 
-#if defined(RURP_BOARD_MICROPETAL_UNO)
+#if RURP_PY32F071_HAS_REVISION_ADC
     analog_input.Pin = RURP_PY32F071_REV_ADC_PIN;
     HAL_GPIO_Init(RURP_PY32F071_REV_ADC_PORT, &analog_input);
 #endif
@@ -158,7 +158,7 @@ void configure_socket_outputs()
 }
 }
 
-#if defined(RURP_BOARD_MICROPETAL_UNO)
+#if RURP_PY32F071_HAS_REVISION_ADC
 extern "C" bool rurp_read_revision_adc10(bool divider, uint16_t *out)
 {
     const uint32_t channel = divider ? RURP_PY32F071_VPP_ADC_CHANNEL : RURP_PY32F071_REV_ADC_CHANNEL;
