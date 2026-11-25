@@ -1,7 +1,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 
 #include "boards/py32f071_rurp_shield.h"
 #include "rurp_platform.h"
@@ -93,8 +92,9 @@ static uint32_t frame_generation;
 static uint32_t packet_generation;
 static volatile bool reset_pending;
 static volatile bool endpoint_reset_pending;
-/* Bytes of the first OUT packet that completed after a DTR edge, before main
- * applied the session reset (0: none). The packet stays in cdc_out_packet and
+/* Bytes of the first OUT packet that completed after a DTR edge that asserts
+ * DTR, before main applied the session reset (0: none). A packet that completes
+ * after a DTR drop is discarded. The packet stays in cdc_out_packet and
  * OUT stays disarmed, so the host gets NAK until main discards the old queue
  * and appends this packet. Once OUT is armed, this controller accepts one
  * packet; it cannot cancel that buffer without losing the packet. */
@@ -112,6 +112,23 @@ static uint16_t ring_next(uint16_t value, uint16_t capacity)
 {
     ++value;
     return value == capacity ? 0U : value;
+}
+
+/* Called in the USB ISR or with IRQs disabled in main. Drops bytes that do
+ * not fit. */
+static void usb_rx_append(const uint8_t *data, uint32_t n)
+{
+    for (uint32_t index = 0U; index < n; ++index)
+    {
+        const uint16_t next = ring_next(rx_head, FIRESTARTER_USB_RX_CAPACITY);
+        if (next == rx_tail)
+        {
+            break;
+        }
+
+        rx_buffer[rx_head] = data[index];
+        rx_head = next;
+    }
 }
 
 /* Called in the USB ISR or with IRQs disabled in main. */
@@ -140,7 +157,6 @@ static void usb_apply_session_reset(void)
     if (endpoint_reset_pending) {
         tx_busy = false;
         rx_armed = false;
-        held_out_count = 0U;
     }
     endpoint_reset_pending = false;
     reset_pending = false;
@@ -149,8 +165,7 @@ static void usb_apply_session_reset(void)
     /* The new session's first command, received while the reset was pending. */
     if (held_out_count != 0U)
     {
-        memcpy(rx_buffer, cdc_out_packet, held_out_count);
-        rx_head = held_out_count;
+        usb_rx_append(cdc_out_packet, held_out_count);
         held_out_count = 0U;
     }
     usb_arm_receive();
@@ -216,18 +231,7 @@ static void firestarter_cdc_bulk_out(uint8_t endpoint, uint32_t byte_count)
         return;
     }
 
-    for (uint32_t index = 0U; index < byte_count; ++index)
-    {
-        const uint16_t next = ring_next(rx_head, FIRESTARTER_USB_RX_CAPACITY);
-        if (next == rx_tail)
-        {
-            break;
-        }
-
-        rx_buffer[rx_head] = cdc_out_packet[index];
-        rx_head = next;
-    }
-
+    usb_rx_append(cdc_out_packet, byte_count);
     usb_arm_receive();
 }
 
