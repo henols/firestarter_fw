@@ -3,7 +3,7 @@ name: Firestarter release
 # publishes; build.yml is CI only.
 #
 #   3.2.0b1, 3.2.0rc1  -> GitHub pre-release, images built WITH dev tools,
-#                         plus the py32f071 image
+#                         plus the py32f071 and micropetal_uno images
 #   3.2.0              -> GitHub release, images WITHOUT dev tools; marked
 #                         Latest when it is the highest stable version
 #
@@ -162,61 +162,90 @@ jobs:
           fi
           echo "PASS: uno, uno328pb and leonardo carry $TAG, dev commands=$PRERELEASE" | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # py32f071 is a beta-only board, so only a pre-release carries its image.
-      # continue-on-error belongs HERE, never inside the composite action: the
-      # py32f071.yml gate uses the same action and must stay loud. A broken ARM
-      # build leaves the asset out of the release instead of failing the AVR
-      # release.
+      # py32f071 and micropetal_uno are beta-only boards, so only a pre-release
+      # carries their images. continue-on-error belongs HERE, never inside the
+      # composite action: the py32f071.yml gate uses the same action and must
+      # stay loud. A broken ARM build leaves that asset out of the release
+      # instead of failing the AVR release. Each board builds into its own
+      # build/<board> directory.
       - name: Build the PY32F071 image
         id: arm
         if: steps.tag.outputs.prerelease == 'true'
         continue-on-error: true
         uses: ./.github/actions/build-py32f071
+        with:
+          board: py32f071
+
+      - name: Build the MicroPetal Uno image
+        id: arm_micropetal
+        if: steps.tag.outputs.prerelease == 'true'
+        continue-on-error: true
+        uses: ./.github/actions/build-py32f071
+        with:
+          board: micropetal_uno
 
       # Reads `outcome`, not `conclusion`: a continue-on-error step reports
       # conclusion success even when it failed.
-      - name: Report a missing PY32F071 image
-        if: steps.tag.outputs.prerelease == 'true' && steps.arm.outcome == 'failure'
+      - name: Report a missing PY32 image
+        if: steps.tag.outputs.prerelease == 'true' && (steps.arm.outcome == 'failure' || steps.arm_micropetal.outcome == 'failure')
+        env:
+          OUTCOMES: py32f071=${{ steps.arm.outcome }} micropetal_uno=${{ steps.arm_micropetal.outcome }}
         run: |
-          MSG="PY32F071 image not produced — this release carries no py32f071 asset."
-          echo "::warning::${MSG}"
-          { echo "### PY32F071"; echo "${MSG}"; } >> "$GITHUB_STEP_SUMMARY"
+          for PAIR in $OUTCOMES; do
+            [ "${PAIR#*=}" = failure ] || continue
+            BOARD="${PAIR%%=*}"
+            MSG="${BOARD} image not produced — this release carries no ${BOARD} asset."
+            echo "::warning::${MSG}"
+            { echo "### ${BOARD}"; echo "${MSG}"; } >> "$GITHUB_STEP_SUMMARY"
+          done
 
-      # firestarter_app's firmware.py looks for this exact asset name.
-      - name: Check the PY32F071 image
-        if: steps.arm.outcome == 'success'
+      # firestarter_app's firmware.py looks for these exact asset names:
+      # firestarter_<board>.hex, with the board name that the firmware reports.
+      - name: Check the PY32 images
+        if: steps.arm.outcome == 'success' || steps.arm_micropetal.outcome == 'success'
         env:
           TAG: ${{ github.ref_name }}
-          HEX_PATH: ${{ steps.arm.outputs.hex_path }}
-          SDK_SHA: ${{ steps.arm.outputs.sdk_sha }}
+          PY32_OUTCOME: ${{ steps.arm.outcome }}
+          PY32_HEX: ${{ steps.arm.outputs.hex_path }}
+          PY32_SDK: ${{ steps.arm.outputs.sdk_sha }}
+          MICROPETAL_OUTCOME: ${{ steps.arm_micropetal.outcome }}
+          MICROPETAL_HEX: ${{ steps.arm_micropetal.outputs.hex_path }}
+          MICROPETAL_SDK: ${{ steps.arm_micropetal.outputs.sdk_sha }}
         run: |
           set -euo pipefail
-          if [ -z "$HEX_PATH" ] || [ "$(basename "$HEX_PATH")" != firestarter_py32f071.hex ]; then
-            echo "::error::emitted asset '$HEX_PATH' is not firestarter_py32f071.hex"
-            exit 1
-          fi
           PINNED=$(sed -nE 's/^\s*GIT_TAG\s+([0-9a-f]{40})\s*$/\1/p' platform/py32f071/CMakeLists.txt | head -n1)
-          if [ -z "$PINNED" ] || [ "$SDK_SHA" != "$PINNED" ]; then
-            echo "::error::resolved SDK SHA '$SDK_SHA' does not match the declared GIT_TAG '$PINNED'"
-            exit 1
-          fi
-          arm-none-eabi-objcopy -I ihex -O binary "$HEX_PATH" "$RUNNER_TEMP/py32.bin"
-          if ! strings "$RUNNER_TEMP/py32.bin" | grep -Fq -- "$TAG:py32f071"; then
-            echo "::error::py32f071 image does not contain the version string '$TAG:py32f071'"
-            exit 1
-          fi
-          echo "PASS: firestarter_py32f071.hex carries $TAG, SDK $SDK_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          check_image() {
+            local BOARD="$1" OUTCOME="$2" HEX_PATH="$3" SDK_SHA="$4"
+            [ "$OUTCOME" = success ] || return 0
+            if [ -z "$HEX_PATH" ] || [ "$HEX_PATH" != "build/$BOARD/firestarter_$BOARD.hex" ]; then
+              echo "::error::emitted asset '$HEX_PATH' is not build/$BOARD/firestarter_$BOARD.hex"
+              exit 1
+            fi
+            if [ -z "$PINNED" ] || [ "$SDK_SHA" != "$PINNED" ]; then
+              echo "::error::$BOARD: resolved SDK SHA '$SDK_SHA' does not match the declared GIT_TAG '$PINNED'"
+              exit 1
+            fi
+            arm-none-eabi-objcopy -I ihex -O binary "$HEX_PATH" "$RUNNER_TEMP/$BOARD.bin"
+            if ! strings "$RUNNER_TEMP/$BOARD.bin" | grep -Fq -- "$TAG:$BOARD"; then
+              echo "::error::$BOARD image does not contain the version string '$TAG:$BOARD'"
+              exit 1
+            fi
+            echo "PASS: firestarter_$BOARD.hex carries $TAG, SDK $SDK_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+          check_image py32f071 "$PY32_OUTCOME" "$PY32_HEX" "$PY32_SDK"
+          check_image micropetal_uno "$MICROPETAL_OUTCOME" "$MICROPETAL_HEX" "$MICROPETAL_SDK"
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          # The second entry matches nothing on a stable release or a failed
+          # The PY32 entries match nothing on a stable release or a failed
           # ARM build. fail_on_unmatched_files stays false, so the asset is
           # simply absent.
           files: |
             .pio/build/**/firestarter_*.hex
-            build/py32f071/firestarter_*.hex
+            build/py32f071/firestarter_py32f071.hex
+            build/micropetal_uno/firestarter_micropetal_uno.hex
           prerelease: ${{ steps.tag.outputs.prerelease == 'true' }}
           make_latest: ${{ steps.tag.outputs.latest }}
           generate_release_notes: true
