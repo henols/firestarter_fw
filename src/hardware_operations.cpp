@@ -13,7 +13,9 @@
 #include "rurp_voltage_math.h"
 #include "version.h"
 
-bool hw_read_voltage(firestarter_handle_t* handle) {
+// noinline: LTO otherwise inlines the command handlers into main(). Their
+// local buffers then stay in main's stack frame under every operation.
+__attribute__((noinline)) bool hw_read_voltage(firestarter_handle_t* handle) {
     // State 0: Initialization. This runs only once per command.
     if (handle->operation_state == 0) {
         LOG_DEBUG_ID_SUB(DBG_INIT_READ_VOLTAGE);
@@ -86,7 +88,8 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
 // The only text-format emit: "OK: FW: <version>:<board>\r\n", kept in PROGMEM.
 static const char FW_VERSION_LINE[] PROGMEM = "OK: FW: " FW_VERSION "\r\n";
 
-bool fw_get_version(firestarter_handle_t* handle) {
+// noinline: see hw_read_voltage().
+__attribute__((noinline)) bool fw_get_version(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_FW_VERSION);
     // One bulk write, so that a USB transport sends the line in one packet.
     uint8_t line[sizeof(FW_VERSION_LINE) - 1];
@@ -97,7 +100,8 @@ bool fw_get_version(firestarter_handle_t* handle) {
 }
 
 #ifdef HARDWARE_REVISION
-bool hw_get_version(firestarter_handle_t* handle) {
+// noinline: see hw_read_voltage().
+__attribute__((noinline)) bool hw_get_version(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_HW_VERSION);
     rurp_configuration_t* rurp_config = rurp_get_config();
     uint8_t physical  = (uint8_t)rurp_get_physical_hardware_revision();
@@ -109,7 +113,8 @@ bool hw_get_version(firestarter_handle_t* handle) {
 }
 #endif
 
-bool hw_get_config(firestarter_handle_t* handle) {
+// noinline: see hw_read_voltage().
+__attribute__((noinline)) bool hw_get_config(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_CONFIG);
     rurp_configuration_t* rurp_config = rurp_get_config();
     // u32 r1 + u32 r2 + u8 override (0xFF = no override) + u16 bandgap_mv

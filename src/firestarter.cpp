@@ -113,7 +113,10 @@ bool parse_command(firestarter_handle_t* handle) {
     return true;
 }
 
-bool init_programmer_framed(firestarter_handle_t* handle) {
+// noinline: LTO otherwise inlines this function into main(). The ack buffer
+// and the CMD_CONFIG copy then stay in main's stack frame under every
+// operation, which costs 45 B of worst-case stack.
+__attribute__((noinline)) bool init_programmer_framed(firestarter_handle_t* handle) {
     handle->response_code = RESPONSE_CODE_OK;
     handle->operation_state = 0;
 
