@@ -121,8 +121,28 @@ static void fire_event(unsigned kind) {
         usbd_cdc_acm_set_dtr(0, true);
     }
 }
+static void host_send_packet(const uint8_t *data, size_t n);
+static unsigned mask_countdown;
+static const uint8_t *mask_packet;
+static size_t mask_packet_size;
 unsigned test_irq_state(void) { return irq_state; }
-void test_disable_irq(void) { assert(!irq_state); irq_state = 1; }
+void test_disable_irq(void) {
+    assert(!irq_state);
+    /* The ISR runs just before main masks IRQs: the host reopens the port and
+     * its next command completes on the armed OUT buffer. */
+    if (mask_countdown && --mask_countdown == 0) {
+        event_fired = true;
+        usbd_cdc_acm_set_dtr(0, false);
+        usbd_cdc_acm_set_dtr(0, true);
+        host_send_packet(mask_packet, mask_packet_size);
+    }
+    irq_state = 1;
+}
+/* Fire the reopen at the n-th IRQ mask from now. */
+void test_reopen_at_mask(unsigned n, const uint8_t *packet, size_t size) {
+    mask_countdown = n; mask_packet = packet; mask_packet_size = size;
+    event_fired = false;
+}
 void test_enable_irq(void) {
     assert(irq_state); irq_state = 0;
     if (unlock_event) { unsigned kind = unlock_event; unlock_event = 0; fire_event(kind); }
@@ -338,6 +358,7 @@ void test_assert_event_fired(void);
 void test_ring_reset_ownership(void);
 void test_arm_rx_interrupt(void);
 void test_dtr_edge_then_command(void);
+void test_reopen_at_mask(unsigned, const uint8_t *, size_t);
 int rurp_communication_tx_failed(void);
 }
 
@@ -473,6 +494,20 @@ int main() {
     assert(rurp_communication_read_data(decoded.data(), DATA_BUFFER_SIZE) < 0);
     test_assert_event_fired();
     assert(decode_from_usb(frame(good), decoded) == (int)good.size());
+
+    // The reopen and the next command arrive between the decoder's generation
+    // check and its read (the 4th mask: available, read, available, read).
+    // The read must not consume byte 0 of the kept command.
+    std::vector<uint8_t> kept = {'#'};
+    kept.insert(kept.end(), encoded.begin(), encoded.end());
+    test_feed_rx(encoded.data(), 2);
+    test_reopen_at_mask(4, kept.data(), kept.size());
+    assert(rurp_communication_read_data(decoded.data(), DATA_BUFFER_SIZE) < 0);
+    test_assert_event_fired();
+    assert(rurp_communication_available() == (int)kept.size());
+    assert(rurp_communication_read() == '#');
+    assert(rurp_communication_read_data(decoded.data(), DATA_BUFFER_SIZE) == (int)good.size());
+    assert(memcmp(decoded.data(), good.data(), good.size()) == 0);
     return 0;
 }
 ''')

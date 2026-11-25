@@ -335,13 +335,16 @@ int py32_usb_peek(void)
     return value;
 }
 
+/* A read that applies a session reset returns -1 and consumes nothing. The
+ * caller then sees the new generation before it takes a new-session byte. */
 int py32_usb_read(void)
 {
     const uint32_t state = __get_PRIMASK();
     __disable_irq();
+    const bool session_reset = reset_pending;
     usb_apply_session_reset();
     int value = -1;
-    if (rx_tail != rx_head)
+    if (!session_reset && rx_tail != rx_head)
     {
         value = rx_buffer[rx_tail];
         rx_tail = ring_next(rx_tail, FIRESTARTER_USB_RX_CAPACITY);
