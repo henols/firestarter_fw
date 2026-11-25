@@ -227,4 +227,12 @@ typedef struct firestarter_handle {
 
 } firestarter_handle_t;
 
+#if defined(RURP_PLATFORM_PY32F071)
+/* True when the USB session changed after the active command was read. The
+ * host reopened the port or the device was reconfigured. */
+bool fs_session_changed(void);
+#else
+static inline bool fs_session_changed(void) { return false; }
+#endif
+
 #endif  // __FIRESTARTER_H__

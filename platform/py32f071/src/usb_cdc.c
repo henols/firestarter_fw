@@ -311,6 +311,11 @@ uint32_t py32_usb_generation(void)
     return usb_generation;
 }
 
+uint32_t rurp_communication_session(void)
+{
+    return usb_generation;
+}
+
 int py32_usb_available(void)
 {
     const uint32_t state = __get_PRIMASK();

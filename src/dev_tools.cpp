@@ -66,6 +66,10 @@ bool dt_set_registers(firestarter_handle_t* handle) {
             return false;
         }
     }
+    /* After a reopen, the bytes are the new host's command, not registers. */
+    if (fs_session_changed()) {
+        return false;
+    }
 
     uint8_t msb = rurp_communication_read();
     uint8_t lsb = rurp_communication_read();

@@ -69,6 +69,12 @@ extern "C" void rurp_log_id_u16(uint8_t, uint16_t) { logged++; }
 extern "C" void rurp_log_id_u24(uint8_t, uint32_t) { logged++; }
 extern "C" void rurp_log_id_u32(uint8_t, uint32_t) { logged++; }
 extern "C" int rurp_communication_available() { return incoming.empty() ? 0 : 1; }
+#if defined(RURP_PLATFORM_PY32F071)
+// The USB session generation; a DTR edge changes it.
+static uint32_t usb_session = 1;
+extern "C" uint32_t rurp_communication_session(void) { return usb_session; }
+extern "C" int rurp_communication_tx_failed(void) { return 0; }
+#endif
 extern "C" int rurp_communication_read_data(char* buf, size_t capacity) {
     if (incoming.empty()) return 0;
     assert(incoming.size() <= capacity);
@@ -183,6 +189,26 @@ static void frame(const std::string& bytes) {
 static const std::string read_cmd = memory_frame(CMD_READ, 65536, 0, 28, 12500);
 
 int main() {
+#if defined(RURP_PLATFORM_PY32F071)
+    // The host reopens the port while a read runs and sends its next command
+    // at once. The read ends with the safe cleanup and the command is read.
+    // Only this case runs: the config bands of this platform are different.
+    reset();
+    frame(read_cmd);
+    assert(handle.cmd == CMD_READ && configured == 1);
+    arm();
+    ++usb_session;
+    frame(memory_frame(CMD_WRITE, 65536, 0, 28, 12500));
+    assert(reads == 0 && ce_level == 1);
+    for (int n : cleared) assert(n > 0);
+    assert(handle.cmd == CMD_WRITE && configured == 2);
+    // No reopen: the command runs.
+    loop();
+    assert(writes == 1);
+    assert_idle();
+    puts("PASS reopen ends command");
+    return 0;
+#endif
     reset();
     boot_order.clear();
     handle.cmd = CMD_READ;
@@ -300,8 +326,8 @@ int main() {
 """
 
 # AVR builds define HARDWARE_REVISION; the py32 build does not.
-@pytest.mark.parametrize("defines", [[], ["-DHARDWARE_REVISION"]],
-                         ids=["no-hw-revision", "hw-revision"])
+@pytest.mark.parametrize("defines", [[], ["-DHARDWARE_REVISION"], ["-DRURP_PLATFORM_PY32F071"]],
+                         ids=["no-hw-revision", "hw-revision", "py32"])
 def test_command_lifecycle_and_safe_cleanup(tmp_path: Path, defines: list[str]) -> None:
     (tmp_path / "Arduino.h").write_text(FAKE_ARDUINO_H)
     main = tmp_path / "driver.cpp"
@@ -326,6 +352,9 @@ def test_command_lifecycle_and_safe_cleanup(tmp_path: Path, defines: list[str]) 
     assert result.returncode == 0, (
         f"dispatcher integration test failed:\n{result.stdout}\n{result.stderr}"
     )
+    if "-DRURP_PLATFORM_PY32F071" in defines:
+        assert result.stdout.splitlines() == ["PASS reopen ends command"]
+        return
     assert set(result.stdout.splitlines()) == {
         "PASS boot order",
         "PASS watchdog reset",

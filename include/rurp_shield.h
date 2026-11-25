@@ -91,6 +91,8 @@ extern "C" {
 #if defined(RURP_PLATFORM_PY32F071)
     /* Result of the latest USB frame; cleared by a new session/frame. */
     int rurp_communication_tx_failed(void);
+    /* USB session generation. A DTR edge or SET_CONFIGURATION changes it. */
+    uint32_t rurp_communication_session(void);
 #else
     static inline int rurp_communication_tx_failed(void) { return 0; }
 #endif
