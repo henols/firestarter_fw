@@ -362,8 +362,15 @@ is one byte blob. Its length tells the host which fields it contains:
 `src/hardware_operations.cpp` and `src/dev_tools.cpp` send a short form that holds `buffer_size`
 only.
 
-- **`buffer_size`** — `DATA_BUFFER_SIZE`, 2 bytes. It is 1024 on `uno` and `uno328pb`, 1536 on `leonardo`, and 512 by default. The
-  host sizes its data chunks from this value.
+- **`buffer_size`** — the data chunk size for this command, 2 bytes. The host reads it from every
+  ack and sends chunks of exactly this size. `fs_ready_chunk_size()` in `include/ready_chunk.h`
+  sets it:
+  - `0x05`, `0x35`, `0x39` and `0x0D`: `DATA_BUFFER_SIZE` rounded down to whole pages. A chunk
+    then never splits a page. The `0x05` page write refuses a block that is not whole pages.
+  - All other protocols, and the short form: `DATA_BUFFER_SIZE`.
+
+  `DATA_BUFFER_SIZE` is 1280 on `uno` and `uno328pb`, 1792 on `leonardo`, and 512 by default. It
+  need not be a multiple of 512, but it must be at least 512, the largest page.
 - **`hw_revision` and `ver`** — the hardware-revision byte, then the firmware-version string. The
   string length changes with the board name. **Read `ver` at the offset that `ver_len` gives, never
   at a fixed index.** The host cannot connect to a firmware build that does not send this field.

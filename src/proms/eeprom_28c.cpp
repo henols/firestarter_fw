@@ -24,7 +24,7 @@
  * select the right value.
  *
  * AT28C_PAGE_SIZE_MAX is a board-INVARIANT validation ceiling, deliberately
- * not DATA_BUFFER_SIZE (1024 on uno/uno328pb, 1536 on leonardo, 512 on
+ * not DATA_BUFFER_SIZE (1280 on uno/uno328pb, 1792 on leonardo, 512 on
  * native), so the validation rule is the same on every build. It sits above
  * the largest page any database row carries. */
 #define AT28C_PAGE_SIZE_FALLBACK 64
