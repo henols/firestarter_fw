@@ -28,7 +28,6 @@
 extern "C" {
 #endif
 
-void rurp_communication_begin(void);
 void rurp_timing_init(void);
 
 #ifdef __cplusplus

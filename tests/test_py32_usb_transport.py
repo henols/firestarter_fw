@@ -37,6 +37,8 @@ void test_enable_irq(void);
 #include <stdint.h>
 uint32_t test_millis(void);
 #define RURP_MILLIS() test_millis()
+#define RURP_DELAY_MS(value) ((void)(value))
+#define RURP_DELAY_US(value) ((void)(value))
 ''')
     (tmp_path / 'usbd_cdc.h').write_text('#include "usbd_core.h"\n')
     (tmp_path / 'usbd_core.h').write_text('''
@@ -72,7 +74,6 @@ static inline void USBD_IRQHandler(void) {}
     # Only replace platform wiring / serial adapters, never the code under test.
     (tmp_path / 'rurp_serial_utils.h').write_text('''
 #pragma once
-#define SERIAL_PORT Serial
 #define TIMEOUT_MS 1000
 void _firestarter_emit_frame_wide(uint8_t id, const uint8_t *params, uint16_t param_count);
 static inline void _firestarter_emit_frame(uint8_t id, const uint8_t *params, uint8_t param_count) {
@@ -271,23 +272,7 @@ void test_arm_rx_interrupt(void);
 int rurp_communication_tx_failed(void);
 }
 
-struct SerialMock {
-    void begin(unsigned long) {}
-    void end() {}
-    explicit operator bool() const { return true; }
-    int available() const { return py32_usb_available(); }
-    int read() { return py32_usb_read(); }
-    int peek() const { return py32_usb_peek(); }
-    size_t readBytes(char *out, size_t n) { return py32_usb_read_bytes(out, n); }
-    size_t write(uint8_t b) { return py32_usb_write(&b, 1); }
-    size_t write(const uint8_t *p, size_t n) { return py32_usb_write(p, n); }
-    void flush() { py32_usb_flush(); }
-} Serial;
-
-unsigned long millis() { return test_millis(); }
-void delay(unsigned long) {}
-void delayMicroseconds(unsigned long) {}
-
+#include "platform/py32f071/src/serial_port.cpp"
 #include "src/boards/rurp_serial_utils.cpp"
 
 static std::vector<uint8_t> frame(const std::vector<uint8_t>& payload, bool wrong_crc = false) {
@@ -410,6 +395,7 @@ int main() {
     compile_ok([host_cc(), '-std=c11',
                 *transport_defines('platform/py32f071/src/usb_cdc.c'),
                 '-UNDEBUG', '-I', tmp_path, '-I', REPO_ROOT,
+                '-I', REPO_ROOT / 'include',
                 '-c', backend, '-o', backend_obj])
     binary = tmp_path / 'transport'
     compile_ok([host_cxx(), '-std=c++17',

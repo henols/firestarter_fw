@@ -1,6 +1,6 @@
 #include "hardware_operations.h"
 
-#include <Arduino.h>
+#include "rurp_platform.h"
 #include <stdlib.h>
 
 #include "firestarter.h"
@@ -13,7 +13,9 @@
 #include "rurp_voltage_math.h"
 #include "version.h"
 
-bool hw_read_voltage(firestarter_handle_t* handle) {
+// noinline: LTO otherwise inlines the command handlers into main(). Their
+// local buffers then stay in main's stack frame under every operation.
+__attribute__((noinline)) bool hw_read_voltage(firestarter_handle_t* handle) {
     // State 0: Initialization. This runs only once per command.
     if (handle->operation_state == 0) {
         LOG_DEBUG_ID_SUB(DBG_INIT_READ_VOLTAGE);
@@ -35,7 +37,7 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
             LOG_ERROR_ID(MSG_ERR_CMD);
             return true;  // Finish command with an error.
         }
-        delay(100);                     // Allow voltage to stabilize.
+        RURP_DELAY_MS(100);              // Allow voltage to stabilize.
         rurp_set_communication_mode();  // Switch back to communication mode to send the ready signal.
         handle->operation_state = 1;    // Transition to the reading state.
 
@@ -64,7 +66,7 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
         // Returning false keeps the command active without doing anything.
         return false;
     }
-    delay(500);
+    RURP_DELAY_MS(500);
 
     // An ACK was received. Proceed with taking a measurement.
     uint16_t vcc_mv = rurp_read_vcc_mv();
@@ -83,17 +85,23 @@ bool hw_read_voltage(firestarter_handle_t* handle) {
     return false;
 }
 
-bool fw_get_version(firestarter_handle_t* handle) {
+// The only text-format emit: "OK: FW: <version>:<board>\r\n", kept in PROGMEM.
+static const char FW_VERSION_LINE[] PROGMEM = "OK: FW: " FW_VERSION "\r\n";
+
+// noinline: see hw_read_voltage().
+__attribute__((noinline)) bool fw_get_version(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_FW_VERSION);
-    // The only text-format emit. F("OK: FW: ") keeps the literal in PROGMEM.
-    SERIAL_PORT.print(F("OK: FW: "));
-    SERIAL_PORT.println(FW_VERSION);
-    SERIAL_PORT.flush();
+    // One bulk write, so that a USB transport sends the line in one packet.
+    uint8_t line[sizeof(FW_VERSION_LINE) - 1];
+    memcpy_P(line, FW_VERSION_LINE, sizeof(line));
+    rurp_serial_port_write(line, sizeof(line));
+    rurp_serial_port_flush();
     return true;
 }
 
 #ifdef HARDWARE_REVISION
-bool hw_get_version(firestarter_handle_t* handle) {
+// noinline: see hw_read_voltage().
+__attribute__((noinline)) bool hw_get_version(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_HW_VERSION);
     rurp_configuration_t* rurp_config = rurp_get_config();
     uint8_t physical  = (uint8_t)rurp_get_physical_hardware_revision();
@@ -105,7 +113,8 @@ bool hw_get_version(firestarter_handle_t* handle) {
 }
 #endif
 
-bool hw_get_config(firestarter_handle_t* handle) {
+// noinline: see hw_read_voltage().
+__attribute__((noinline)) bool hw_get_config(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_GET_CONFIG);
     rurp_configuration_t* rurp_config = rurp_get_config();
     // u32 r1 + u32 r2 + u8 override (0xFF = no override) + u16 bandgap_mv

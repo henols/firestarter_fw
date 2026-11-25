@@ -6,7 +6,7 @@
  */
 
 #include "flash_utils.h"
-#include <Arduino.h>
+#include "rurp_platform.h"
 #include "memory_utils.h"
 #include "rurp_shield.h"
 #include "rurp_pinout.h"
@@ -84,7 +84,7 @@ void flash_util_byte_flipping(firestarter_handle_t* handle, const byte_flip_t* b
 }
 
 bool flash_util_wait_ready(firestarter_handle_t* handle, uint32_t address, uint8_t expected, uint16_t timeout_ms) {
-    const uint32_t started_ms = (uint32_t)millis();
+    const uint32_t started_ms = (uint32_t)RURP_MILLIS();
     uint8_t matches = 0;
     do {
         rurp_watchdog_reset();  // A chip erase can poll for longer than the period.
@@ -95,7 +95,7 @@ bool flash_util_wait_ready(firestarter_handle_t* handle, uint32_t address, uint8
         } else {
             matches = 0;
         }
-    } while (!fs_timeout_expired(started_ms, timeout_ms, (uint32_t)millis()));
+    } while (!fs_timeout_expired(started_ms, timeout_ms, (uint32_t)RURP_MILLIS()));
     return false;
 }
 
@@ -142,7 +142,7 @@ bool flash_util_wait_erase(firestarter_handle_t* handle, uint32_t address) {
 void flash_util_chip_erase(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CHIP_ERASE);
     flash_execute_command(FLASH_ERASE);
-    delay(FLASH_CHIP_ERASE_MIN_MS);
+    RURP_DELAY_MS(FLASH_CHIP_ERASE_MIN_MS);
     flash_util_wait_erase(handle, 0);
 }
 

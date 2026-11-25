@@ -7,7 +7,7 @@
 
 #include "memory.h"
 
-#include <Arduino.h>
+#include "rurp_platform.h"
 #include <stdint.h>
 
 #include "eprom.h"
@@ -271,10 +271,10 @@ void mem_util_delay_us(uint32_t us) {
     uint16_t rem;
     mem_util_split_delay(us, &ms, &rem);
     if (ms) {
-        delay(ms);  // unsigned long -- 32-bit safe
+        RURP_DELAY_MS(ms);  // unsigned long -- 32-bit safe
     }
     if (rem) {
-        delayMicroseconds(rem);
+        RURP_DELAY_US(rem);
     }
 }
 
@@ -331,7 +331,7 @@ uint8_t memory_get_data(firestarter_handle_t* handle, uint32_t address) {
      */
     if (handle->read_settling_us) {
         uint32_t settling = handle->read_settling_us > 1000UL ? 1000UL : handle->read_settling_us;
-        delayMicroseconds(settling);
+        RURP_DELAY_US(settling);
     }
 
     rurp_chip_enable();
@@ -345,7 +345,7 @@ uint8_t memory_get_data(firestarter_handle_t* handle, uint32_t address) {
      */
     uint32_t strobe = handle->read_strobe_us ? handle->read_strobe_us : 3UL;
     if (strobe > 1000UL) strobe = 1000UL;   /* read-timing secondary guard */
-    delayMicroseconds(strobe);
+    RURP_DELAY_US(strobe);
 
     uint8_t data = rurp_read_data_buffer();
     rurp_chip_disable();
@@ -372,7 +372,7 @@ void memory_set_data(firestarter_handle_t* handle, uint32_t address, uint8_t dat
 
     handle->firestarter_set_address(handle, address);
     rurp_write_data_buffer(data);
-    delayMicroseconds(3);  // Needed for slower address changes like slow ROMs and "Power through address lines"
+    RURP_DELAY_US(3);  // Needed for slower address changes like slow ROMs and "Power through address lines"
     rurp_chip_enable();
     mem_util_delay_us(handle->pulse_delay);
     rurp_chip_disable();
@@ -473,9 +473,9 @@ void mem_util_set_read_high_mask(firestarter_handle_t* handle) {
 /* Wait until VPE has fallen from the last regulator-on level to the idle level,
  * so a read that switches VPE onto pin 1 never puts a programming voltage there. */
 void mem_util_wait_vpe_discharged(void) {
-    uint32_t elapsed = (uint32_t)millis() - rurp_get_regulator_off_ms();
+    uint32_t elapsed = (uint32_t)RURP_MILLIS() - rurp_get_regulator_off_ms();
     if (elapsed < RURP_VPE_DISCHARGE_MS) {
-        delay(RURP_VPE_DISCHARGE_MS - elapsed);
+        RURP_DELAY_MS(RURP_VPE_DISCHARGE_MS - elapsed);
     }
 }
 

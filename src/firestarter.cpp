@@ -7,7 +7,7 @@
 
 #include "firestarter.h"
 
-#include <Arduino.h>
+#include "rurp_platform.h"
 #include <stdlib.h>
 
 #include "eprom_operations.h"
@@ -16,6 +16,7 @@
 #include "logging_id.h"
 #include "memory.h"
 #include "operation_utils.h"
+#include "ready_chunk.h"
 #include "rurp_shield.h"
 #include "rurp_config_migrate.h"
 #include "version.h"
@@ -113,7 +114,10 @@ bool parse_command(firestarter_handle_t* handle) {
     return true;
 }
 
-bool init_programmer_framed(firestarter_handle_t* handle) {
+// noinline: LTO otherwise inlines this function into main(). The ack buffer
+// and the CMD_CONFIG copy then stay in main's stack frame under every
+// operation, which costs 45 B of worst-case stack.
+__attribute__((noinline)) bool init_programmer_framed(firestarter_handle_t* handle) {
     handle->response_code = RESPONSE_CODE_OK;
     handle->operation_state = 0;
 
@@ -157,8 +161,14 @@ bool init_programmer_framed(firestarter_handle_t* handle) {
         uint8_t _vlen = (uint8_t)strlen(_ver);
         if (_vlen > 32) _vlen = 32;
         uint8_t _ready[4 + 32];
-        _ready[0] = (uint8_t)(((uint16_t)DATA_BUFFER_SIZE >> 8) & 0xFF);
-        _ready[1] = (uint8_t)((uint16_t)DATA_BUFFER_SIZE & 0xFF);
+        // buffer_size is the chunk size for THIS command: page families get
+        // whole pages only (ready_chunk.h). The host reads it from every ack.
+        static_assert(DATA_BUFFER_SIZE >= READY_CHUNK_PAGE_MAX,
+                      "DATA_BUFFER_SIZE must hold the largest page");
+        const uint16_t _chunk =
+            fs_ready_chunk_size((uint16_t)DATA_BUFFER_SIZE, handle->protocol, handle->page_size);
+        _ready[0] = (uint8_t)((_chunk >> 8) & 0xFF);
+        _ready[1] = (uint8_t)(_chunk & 0xFF);
 #ifdef HARDWARE_REVISION
         _ready[2] = (uint8_t)rurp_get_hardware_revision();
 #else
@@ -185,7 +195,7 @@ void command_done(firestarter_handle_t* handle) {
 
 void loop() {
     rurp_watchdog_reset();
-    if (handle.cmd != CMD_IDLE && fs_timeout_expired(timeout_started_ms, TIMEOUT_MS, (uint32_t)millis())) {
+    if (handle.cmd != CMD_IDLE && fs_timeout_expired(timeout_started_ms, TIMEOUT_MS, (uint32_t)RURP_MILLIS())) {
         LOG_ERROR_ID_U8(MSG_ERR_CMD_TIMEOUT, handle.cmd);
         command_done(&handle);
     } else if (handle.cmd == CMD_IDLE) {
@@ -286,5 +296,5 @@ void loop() {
 }
 
 void op_reset_timeout() {
-    timeout_started_ms = (uint32_t)millis();
+    timeout_started_ms = (uint32_t)RURP_MILLIS();
 }

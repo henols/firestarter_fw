@@ -76,11 +76,6 @@
 #define sprintf_P sprintf
 #endif
 
-/* Arduino cores provide their own F() definition. Native builds do not. */
-#if !defined(ARDUINO) && !defined(F)
-#define F(value) (value)
-#endif
-
 #endif /* __AVR__ */
 
 #endif /* __RURP_PLATFORM_COMPAT_H__ */

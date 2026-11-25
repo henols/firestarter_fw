@@ -3,11 +3,7 @@
 
 #include "firestarter.h"
 #include "rurp_platform_compat.h"
-
-#ifndef SERIAL_PORT
-#include <Arduino.h>
-#define SERIAL_PORT Serial
-#endif
+#include "rurp_serial_port.h"
 
 // Board-agnostic ID-encoded frame emitter, defined in rurp_serial_utils.cpp.
 // param_count is uint16_t so a MSG_DATA_CHUNK payload (512 / 1024 bytes) fits;

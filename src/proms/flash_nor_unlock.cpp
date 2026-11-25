@@ -7,7 +7,7 @@
 
 #include "flash_nor_unlock.h"
 
-#include <Arduino.h>
+#include "rurp_platform.h"
 #include "memory_utils.h"
 #include "flash_utils.h"
 #include "firestarter.h"

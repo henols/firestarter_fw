@@ -7,7 +7,7 @@
 
 #include "flash_intel.h"
 
-#include <Arduino.h>
+#include "rurp_platform.h"
 
 #include "firestarter.h"
 #include "logging_id.h"
@@ -45,7 +45,7 @@ static bool flash_intel_vpp_up(firestarter_handle_t* handle) {
         LOG_WARN_ID(MSG_WARN_REV0_VPP_UNSUPPORTED);
         handle->response_code = RESPONSE_CODE_WARNING;
         handle->firestarter_set_control_register(handle, FLASH_INTEL_HV_MASK, 1);
-        delay(500);
+        RURP_DELAY_MS(500);
         return true;
     }
 #endif
@@ -56,7 +56,7 @@ static bool flash_intel_vpp_up(firestarter_handle_t* handle) {
     }
     mem_util_warn_if_uncalibrated(handle);  // see eprom_check_vpp for why
     handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE, 1);
-    delay(500);
+    RURP_DELAY_MS(500);
     uint16_t vpp_mv = rurp_read_voltage_mv();
     LOG_DEBUG_ID_SUB_U16(DBG_CHECKING_VPP_VOLTAGE, vpp_mv);
     mem_util_check_vpp_window(handle, vpp_mv);
@@ -155,9 +155,9 @@ void flash_intel_cleanup(firestarter_handle_t* handle) {
 #define INTEL_CMD_READ_ARRAY 0xFF
 
 static bool flash_intel_poll_sr(firestarter_handle_t* handle, uint16_t timeout_ms) {
-    const uint32_t started_ms = (uint32_t)millis();
+    const uint32_t started_ms = (uint32_t)RURP_MILLIS();
     uint8_t msg_id = MSG_ERR_INTEL_SR_TIMEOUT;
-    while (!fs_timeout_expired(started_ms, (uint32_t)timeout_ms, (uint32_t)millis())) {
+    while (!fs_timeout_expired(started_ms, (uint32_t)timeout_ms, (uint32_t)RURP_MILLIS())) {
         rurp_watchdog_reset();  // An erase can poll for longer than the period.
         uint8_t sr = handle->firestarter_get_data(handle, 0);
         if (sr & INTEL_SR_READY) {

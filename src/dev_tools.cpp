@@ -8,7 +8,7 @@
 #if DEV_TOOLS
 #include "dev_tools.h"
 
-#include <Arduino.h>
+#include "rurp_platform.h"
 
 #include "firestarter.h"
 #include "logging_id.h"
@@ -30,13 +30,13 @@ extern "C" const uint8_t firestarter_dev_tools_image PROGMEM __attribute__((used
 #define DT_BUTTON_WAIT_MS 30000UL
 
 static bool dt_wait_for_button(void) {
-    unsigned long start = millis();
+    unsigned long start = RURP_MILLIS();
     while (!rurp_user_button_pressed()) {
         rurp_watchdog_reset();
-        if ((unsigned long)(millis() - start) >= DT_BUTTON_WAIT_MS) {
+        if ((unsigned long)(RURP_MILLIS() - start) >= DT_BUTTON_WAIT_MS) {
             return false;
         }
-        delay(200);
+        RURP_DELAY_MS(200);
     }
     return true;
 }
@@ -54,15 +54,17 @@ static void dt_report_registers(uint8_t msb, uint8_t lsb, uint16_t ctrl, uint8_t
     LOG_ID_BYTES(MSG_INFO_REGISTERS, _b, 6);
 }
 
-bool dt_set_registers(firestarter_handle_t* handle) {
+// noinline: LTO otherwise inlines the command handlers into main(). Their
+// local buffers then stay in main's stack frame under every operation.
+__attribute__((noinline)) bool dt_set_registers(firestarter_handle_t* handle) {
     // Wait for an ACK message that precedes the register data
     if (op_get_message(handle) != OP_MSG_ACK) {
         return false;
     };
 
-    unsigned long payload_deadline = millis() + TIMEOUT_MS;
+    unsigned long payload_deadline = RURP_MILLIS() + TIMEOUT_MS;
     while (rurp_communication_available() < 4) {
-        if ((long)(millis() - payload_deadline) >= 0) {
+        if ((long)(RURP_MILLIS() - payload_deadline) >= 0) {
             return false;
         }
     }
@@ -111,7 +113,8 @@ bool dt_set_registers(firestarter_handle_t* handle) {
     return true;
 }
 
-bool dt_set_address(firestarter_handle_t* handle) {
+// noinline: see dt_set_registers().
+__attribute__((noinline)) bool dt_set_address(firestarter_handle_t* handle) {
     {
         uint8_t _b[2] = {
             (uint8_t)is_flag_set(FLAG_CHIP_ENABLE),
@@ -197,7 +200,7 @@ static void dt_sample_adc(dt_adc_sample_t* out, rurp_register_t ctrl) {
     // sets it, and CMD_DEV_ADC is deliberately not a memory command.
     rurp_write_to_register(CONTROL_REGISTER, ctrl);
     if (ctrl != 0) {
-        delay(DT_ADC_SETTLE_MS);
+        RURP_DELAY_MS(DT_ADC_SETTLE_MS);
     }
 
     // EXACTLY ONE sample of each channel, and every figure below derived from
@@ -233,7 +236,8 @@ static void dt_sample_adc(dt_adc_sample_t* out, rurp_register_t ctrl) {
  * inside that window would be silently lost on exactly the boards the bench
  * session may use.
  */
-bool dt_read_adc(firestarter_handle_t* handle) {
+// noinline: see dt_set_registers().
+__attribute__((noinline)) bool dt_read_adc(firestarter_handle_t* handle) {
     dt_adc_sample_t samples[3];
     uint8_t i;
     rurp_configuration_t* cfg;

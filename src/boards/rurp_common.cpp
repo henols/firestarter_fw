@@ -37,7 +37,7 @@ void rurp_watchdog_reset() {
     // The USB core asks for the bootloader (fw --install) by arming a 120 ms
     // watchdog when the host closes the port at 1200 baud. A reset here would
     // cancel that request, so let the watchdog expire.
-    if (SERIAL_PORT.baud() == 1200 && !SERIAL_PORT.dtr()) {
+    if (Serial.baud() == 1200 && !Serial.dtr()) {
         return;
     }
 #endif

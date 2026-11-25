@@ -37,8 +37,9 @@
 #define CMD_FRAME_MAX DATA_BUFFER_SIZE
 
 /* FW identity string: "<version>:<board>" only.
- * Buffer capacity (DATA_BUFFER_SIZE) is advertised as a u16 bytes param on
- * every MSG_OK_READY ack. */
+ * The chunk size for the command (DATA_BUFFER_SIZE, rounded down to whole
+ * pages for page families; see ready_chunk.h) is advertised as a u16 bytes
+ * param on every MSG_OK_READY ack. */
 #define FW_VERSION VERSION ":" RURP_BOARD_NAME
 
 #define TIMEOUT_MS 1000

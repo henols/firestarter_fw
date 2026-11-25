@@ -291,7 +291,7 @@ The erase uses the same timed write function as the SDP sequences:
 
 1. An SDP-disable sequence runs first.
 2. The six-byte erase sequence runs.
-3. An unconditional `delay(AT28C_TEC_MAX_MS)` follows. This is the 20 ms `tEC`, with no poll.
+3. An unconditional `RURP_DELAY_MS(AT28C_TEC_MAX_MS)` follows. This is the 20 ms `tEC`, with no poll.
 
 The six writes are inline, not a `.data` table, so the erase uses 0 bytes of RAM. No sector erase
 exists.
@@ -362,8 +362,15 @@ is one byte blob. Its length tells the host which fields it contains:
 `src/hardware_operations.cpp` and `src/dev_tools.cpp` send a short form that holds `buffer_size`
 only.
 
-- **`buffer_size`** — `DATA_BUFFER_SIZE`, 2 bytes. It is 1024 on `uno` and `uno328pb`, 1536 on `leonardo`, and 512 by default. The
-  host sizes its data chunks from this value.
+- **`buffer_size`** — the data chunk size for this command, 2 bytes. The host reads it from every
+  ack and sends chunks of exactly this size. `fs_ready_chunk_size()` in `include/ready_chunk.h`
+  sets it:
+  - `0x05`, `0x35`, `0x39` and `0x0D`: `DATA_BUFFER_SIZE` rounded down to whole pages. A chunk
+    then never splits a page. The `0x05` page write refuses a block that is not whole pages.
+  - All other protocols, and the short form: `DATA_BUFFER_SIZE`.
+
+  `DATA_BUFFER_SIZE` is 1280 on `uno` and `uno328pb`, 1792 on `leonardo`, and 512 by default. It
+  need not be a multiple of 512, but it must be at least 512, the largest page.
 - **`hw_revision` and `ver`** — the hardware-revision byte, then the firmware-version string. The
   string length changes with the board name. **Read `ver` at the offset that `ver_len` gives, never
   at a fixed index.** The host cannot connect to a firmware build that does not send this field.
@@ -395,6 +402,22 @@ voltage measurement is taken in that mode. `firestarter cal --vcc` calculates
 `bandgap_mv = meter_mv * count / 1024`, refuses a result outside 1000–1200 mV, and writes the result
 with the config `bg` value. The firmware refuses a stored bandgap outside the same window
 (`rurp_config_commit`). On py32f071 the count is 0, and the decoder refuses `bg`.
+
+### Platform Layer
+
+Shared code (`src/proms/`, the `src/*.cpp` files and `src/boards/rurp_serial_utils.cpp`) must not
+include `<Arduino.h>`. It uses two seams:
+
+- **Timing:** `RURP_MILLIS()`, `RURP_MICROS()`, `RURP_DELAY_MS()` and `RURP_DELAY_US()` from
+  `include/rurp_platform.h`.
+- **Serial:** the `rurp_serial_port_*` functions in `include/rurp_serial_port.h`.
+
+Arduino is the AVR backend only. It stays in the AVR board files, in
+`src/boards/rurp_serial_port_arduino.cpp` and in the AVR branch of `include/rurp_revision_adc.h`.
+The py32f071 backend is `platform/py32f071/src/serial_port.cpp` and `timing.cpp`.
+
+On host builds, `rurp_platform.h` includes `<Arduino.h>`, which is a test fake there. The `RURP_*`
+macros then call `millis()`, `delay()` and the other Arduino names, so ArduinoFake can stub them.
 
 ### Key Files
 

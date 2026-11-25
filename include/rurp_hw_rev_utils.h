@@ -6,7 +6,6 @@
 #include "rurp_shield.h"
 #include "rurp_pinout.h"
 #include "logging_id.h"
-#include <Arduino.h>
 #include <stdint.h>
 #include <string.h>
 
