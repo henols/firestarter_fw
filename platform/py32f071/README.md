@@ -63,12 +63,13 @@ for the guards, RAM budget and conditions for enabling socket operations.
 Run from the repository root:
 
 ```sh
-cmake -S platform/py32f071 -B build/py32f071 -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake -S platform/py32f071 -B build/py32f071 -G Ninja -DCMAKE_BUILD_TYPE=Release -DRURP_BOARD=py32f071
 cmake --build build/py32f071
 ```
 
-The build writes an ELF, BIN, HEX, linker map and size report to `build/py32f071/`. Only
-`firestarter_py32f071.hex` goes into a release. The host installer finds a release asset by the
+Use one build directory per board: `-DRURP_BOARD=micropetal_uno` builds into
+`build/micropetal_uno`. The build writes an ELF, BIN, HEX, linker map and size report to
+`build/<board>/`. Only the `firestarter_<board>.hex` image goes into a release. The host installer finds a release asset by the
 name `firestarter_<board>.hex`. `<board>` is the board name that the firmware reports, `py32f071`.
 
 ## Install over USB DFU
