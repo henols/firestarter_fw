@@ -54,7 +54,9 @@ static void dt_report_registers(uint8_t msb, uint8_t lsb, uint16_t ctrl, uint8_t
     LOG_ID_BYTES(MSG_INFO_REGISTERS, _b, 6);
 }
 
-bool dt_set_registers(firestarter_handle_t* handle) {
+// noinline: LTO otherwise inlines the command handlers into main(). Their
+// local buffers then stay in main's stack frame under every operation.
+__attribute__((noinline)) bool dt_set_registers(firestarter_handle_t* handle) {
     // Wait for an ACK message that precedes the register data
     if (op_get_message(handle) != OP_MSG_ACK) {
         return false;
@@ -111,7 +113,8 @@ bool dt_set_registers(firestarter_handle_t* handle) {
     return true;
 }
 
-bool dt_set_address(firestarter_handle_t* handle) {
+// noinline: see dt_set_registers().
+__attribute__((noinline)) bool dt_set_address(firestarter_handle_t* handle) {
     {
         uint8_t _b[2] = {
             (uint8_t)is_flag_set(FLAG_CHIP_ENABLE),
@@ -233,7 +236,8 @@ static void dt_sample_adc(dt_adc_sample_t* out, rurp_register_t ctrl) {
  * inside that window would be silently lost on exactly the boards the bench
  * session may use.
  */
-bool dt_read_adc(firestarter_handle_t* handle) {
+// noinline: see dt_set_registers().
+__attribute__((noinline)) bool dt_read_adc(firestarter_handle_t* handle) {
     dt_adc_sample_t samples[3];
     uint8_t i;
     rurp_configuration_t* cfg;
