@@ -86,6 +86,11 @@ static volatile uint16_t tx_tail;
 static volatile bool tx_busy;
 /* Counts IN completions, ZLPs included. A change means the host is reading. */
 static volatile uint32_t tx_in_completions;
+/* Set while a frame is emitted: send full packets only. Flush and frame end
+ * clear it and send the rest. */
+static volatile bool tx_batching;
+/* The last IN packet was full. The transfer needs a ZLP if no data follows. */
+static volatile bool tx_zlp_due;
 static volatile bool rx_armed;
 /* ISR publishes session changes, main owns all ring resets. A frame keeps
  * its generation across every Serial.write call in the frame. */
@@ -138,6 +143,7 @@ static void usb_apply_session_reset(void)
         rx_armed = false;
     }
     endpoint_reset_pending = false;
+    tx_zlp_due = false;
     reset_pending = false;
     applied_generation = usb_generation;
     tx_failed = false;
@@ -151,12 +157,19 @@ static void usb_restore_irq(uint32_t state)
 
 static void usb_start_next_transmit(void)
 {
-    if (reset_pending || tx_failed || tx_busy || tx_head == tx_tail ||
-        !usb_device_is_configured())
+    if (reset_pending || tx_failed || tx_busy || !usb_device_is_configured())
+    {
+        return;
+    }
+    const uint16_t queued = (uint16_t)((tx_head + FIRESTARTER_USB_TX_CAPACITY - tx_tail) %
+                                       FIRESTARTER_USB_TX_CAPACITY);
+    if (tx_batching ? queued < FIRESTARTER_CDC_MAX_PACKET_SIZE
+                    : queued == 0U && !tx_zlp_due)
     {
         return;
     }
 
+    /* With no data queued, count stays 0 and this sends the ZLP. */
     size_t count = 0U;
     while (count < sizeof(cdc_in_packet) && tx_tail != tx_head)
     {
@@ -164,6 +177,7 @@ static void usb_start_next_transmit(void)
         tx_tail = ring_next(tx_tail, FIRESTARTER_USB_TX_CAPACITY);
     }
 
+    tx_zlp_due = false;
     tx_busy = true;
     packet_generation = usb_generation;
     if (usbd_ep_start_write(FIRESTARTER_CDC_IN_EP, cdc_in_packet, count) != 0)
@@ -222,13 +236,9 @@ static void firestarter_cdc_bulk_in(uint8_t endpoint, uint32_t byte_count)
         tx_busy = false;
         return;
     }
-    if (byte_count != 0U &&
-        (byte_count % FIRESTARTER_CDC_MAX_PACKET_SIZE) == 0U)
-    {
-        usbd_ep_start_write(FIRESTARTER_CDC_IN_EP, NULL, 0U);
-        return;
-    }
-
+    /* A transfer that ends on a full packet needs a ZLP. Send it only when
+     * no more data follows: queued data continues the transfer. */
+    tx_zlp_due = byte_count == FIRESTARTER_CDC_MAX_PACKET_SIZE;
     tx_busy = false;
     usb_start_next_transmit();
 }
@@ -335,11 +345,15 @@ void py32_usb_frame_begin(void)
     frame_active = true;
     frame_generation = applied_generation;
     frame_failed = tx_failed || !usb_device_is_configured();
+    tx_batching = true;
     usb_restore_irq(state);
 }
 
 void py32_usb_frame_end(void)
 {
+    /* A frame that stopped before its flush must not hold back queued bytes. */
+    tx_batching = false;
+    usb_start_next_transmit_safe();
     frame_failed = frame_failed || tx_failed || frame_generation != usb_generation;
     frame_active = false;
 }
@@ -426,8 +440,9 @@ void py32_usb_flush(void)
     const uint32_t generation = frame_active ? frame_generation : usb_generation;
     uint32_t deadline = RURP_MILLIS() + FIRESTARTER_USB_TIMEOUT_MS;
     uint32_t completions = tx_in_completions;
+    tx_batching = false;
     usb_start_next_transmit_safe();
-    while (tx_head != tx_tail || tx_busy)
+    while (tx_head != tx_tail || tx_busy || tx_zlp_due)
     {
         if (generation != usb_generation)
         {

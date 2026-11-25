@@ -380,8 +380,10 @@ static uint8_t crc8_ccitt(uint8_t crc, uint8_t b) {
     return pgm_read_byte(&CRC8_TABLE[crc ^ b]);
 }
 
-// Board-agnostic frame emitter: packet-batched on PY32, byte writes on AVR.
-// All targets flush at the end. It does
+// Board-agnostic frame emitter: single-byte writes, .flush() at end. On PY32,
+// the USB transport puts the bytes into full packets. When the frame fails,
+// the emitter stops. On other targets, rurp_communication_tx_failed() is 0.
+// It does
 // not consult com_mode; the Uno strong override of rurp_log_id gates the call.
 // The narrow _firestarter_emit_frame in rurp_serial_utils.h calls this one, so
 // every frame has the same bytes whatever its parameter count type.
@@ -395,63 +397,40 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
 
 #if defined(RURP_PLATFORM_PY32F071)
     py32_usb_frame_begin();
-    // Fill full USB packets before handing bytes to the TX ring. Single-byte
-    // Serial.write calls otherwise start tiny transfers even for wide frames.
-    // A short write means the frame has already failed (reconnect or TX
-    // timeout), so stop building and sending the rest of it.
-    uint8_t packet[64];
-    size_t packet_size = 0;
-    bool stopped = false;
-    const auto emit_byte = [&](uint8_t value) {
-        if (stopped) return;
-        packet[packet_size++] = value;
-        if (packet_size == sizeof(packet)) {
-            stopped = SERIAL_PORT.write(packet, packet_size) != packet_size;
-            packet_size = 0;
-        }
-    };
-#else
-    const bool stopped = false;
-    const auto emit_byte = [&](uint8_t value) { SERIAL_PORT.write(value); };
 #endif
     // Magic preamble (4 bytes from PROGMEM).
-    emit_byte((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[0]));
-    emit_byte((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[1]));
-    emit_byte((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[2]));
-    emit_byte((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[3]));
+    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[0]));
+    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[1]));
+    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[2]));
+    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[3]));
 
     // Length field (u16 big-endian): counts id + params + crc; excludes the
     // len field itself and the trailing 0x0A anchor.
     uint16_t len_u16 = (uint16_t)(1 + param_count + 1);
-    emit_byte((uint8_t)(len_u16 >> 8));    // MSB
-    emit_byte((uint8_t)(len_u16 & 0xFF));  // LSB
+    SERIAL_PORT.write((uint8_t)(len_u16 >> 8));    // MSB
+    SERIAL_PORT.write((uint8_t)(len_u16 & 0xFF));  // LSB
 
     // CRC8 accumulator over [id, params].
     uint8_t crc = 0;
 
     // ID.
-    emit_byte(id);
+    SERIAL_PORT.write(id);
     crc = crc8_ccitt(crc, id);
 
     // Params.
-    for (uint16_t i = 0; i < param_count && !stopped; i++) {
+    for (uint16_t i = 0; i < param_count && !rurp_communication_tx_failed(); i++) {
         uint8_t b = params[i];
-        emit_byte(b);
+        SERIAL_PORT.write(b);
         crc = crc8_ccitt(crc, b);
     }
 
     // CRC byte.
-    emit_byte(crc);
+    if (!rurp_communication_tx_failed()) SERIAL_PORT.write(crc);
 
     // 0x0A re-sync anchor.
-    emit_byte((uint8_t)0x0A);
+    if (!rurp_communication_tx_failed()) SERIAL_PORT.write((uint8_t)0x0A);
 
-#if defined(RURP_PLATFORM_PY32F071)
-    if (!stopped && packet_size != 0) {
-        stopped = SERIAL_PORT.write(packet, packet_size) != packet_size;
-    }
-#endif
-    if (!stopped) SERIAL_PORT.flush();
+    if (!rurp_communication_tx_failed()) SERIAL_PORT.flush();
 #if defined(RURP_PLATFORM_PY32F071)
     py32_usb_frame_end();
 #endif

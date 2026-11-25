@@ -94,6 +94,7 @@ static uint8_t received[DATA_BUFFER_SIZE + 3000U + 32U];
 static uint8_t pending_packet[64];
 static size_t received_count;
 static size_t packet_count;
+static size_t zlp_count;
 static size_t pending_size;
 static bool pending;
 static bool paused;
@@ -165,7 +166,7 @@ void fake_ep_write(uint8_t ep, const uint8_t *data, size_t count) {
     assert(!pending);
     if (count) memcpy(pending_packet, data, count);
     pending_size = count;
-    if (count) ++packet_count;
+    if (count) ++packet_count; else ++zlp_count;
     pending = true;
 }
 
@@ -233,6 +234,7 @@ void test_prepare_tx(int hold) {
     pending = false;
     received_count = 0U;
     packet_count = 0U;
+    zlp_count = 0U;
     paused = hold != 0;
     now_ms = 0U;
     host_out_armed = false; /* SET_CONFIGURATION cancels the pending OUT read. */
@@ -256,6 +258,7 @@ void test_measure_critical_sections(void) { measure_cs = true; max_cs_bytes = 0U
 size_t test_max_critical_section_bytes(void) { return max_cs_bytes; }
 uint32_t test_now(void) { return now_ms; }
 size_t test_packet_count(void) { return packet_count; }
+size_t test_zlp_count(void) { return zlp_count; }
 size_t test_tx_length(void) { return received_count; }
 const uint8_t *test_tx_bytes(void) { return received; }
 ''')
@@ -281,6 +284,7 @@ void test_measure_critical_sections(void);
 size_t test_max_critical_section_bytes(void);
 uint32_t test_now(void);
 size_t test_packet_count(void);
+size_t test_zlp_count(void);
 size_t test_tx_length(void);
 const uint8_t *test_tx_bytes(void);
 uint32_t test_millis(void);
@@ -388,6 +392,8 @@ int main() {
     expected.push_back(ref_crc8(checksum_input.data(), checksum_input.size()));
     expected.push_back(0x0A);
     assert(test_packet_count() == (expected.size() + 63) / 64);
+    // A ZLP only after a last packet that is full, never between packets.
+    assert(test_zlp_count() == (expected.size() % 64 == 0 ? 1U : 0U));
     assert(test_tx_length() == expected.size());
     assert(memcmp(test_tx_bytes(), expected.data(), expected.size()) == 0);
 
@@ -411,6 +417,7 @@ int main() {
         assert(!rurp_communication_tx_failed());
         assert(test_tx_length() == bulk.size());
         assert(memcmp(test_tx_bytes(), bulk.data(), bulk.size()) == 0);
+        assert(bulk.size() % 64 != 0 && test_zlp_count() == 0);
     }
 
     // A frame that ends on a packet boundary needs a ZLP after its last
@@ -424,11 +431,12 @@ int main() {
         assert(!rurp_communication_tx_failed());
         assert(test_now() > 3 * 75);
         assert(test_tx_length() == 3 * 64);
+        assert(test_zlp_count() == 1);
         assert(memcmp(test_tx_bytes() + 7, mixed.data(), params) == 0);
     }
 
     // Stalled USB IN endpoint: the write is incomplete and fails closed, and
-    // the emitter stops writing or flushing as soon as a write comes up short.
+    // the emitter stops writing or flushing as soon as the frame fails.
     test_prepare_tx(1);
     writes_after_failure = 0;
     rurp_log_id_wide(id, mixed.data(), (uint16_t)mixed.size());
