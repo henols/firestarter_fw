@@ -84,6 +84,8 @@ static volatile uint16_t rx_tail;
 static volatile uint16_t tx_head;
 static volatile uint16_t tx_tail;
 static volatile bool tx_busy;
+/* Counts IN completions, ZLPs included. A change means the host is reading. */
+static volatile uint32_t tx_in_completions;
 static volatile bool rx_armed;
 /* ISR publishes session changes, main owns all ring resets. A frame keeps
  * its generation across every Serial.write call in the frame. */
@@ -213,6 +215,7 @@ static void firestarter_cdc_bulk_out(uint8_t endpoint, uint32_t byte_count)
 static void firestarter_cdc_bulk_in(uint8_t endpoint, uint32_t byte_count)
 {
     (void)endpoint;
+    ++tx_in_completions;
 
     if (reset_pending || packet_generation != usb_generation)
     {
@@ -364,6 +367,7 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
     const uint32_t generation = frame_active ? frame_generation : usb_generation;
     size_t count = 0U;
     uint32_t deadline = RURP_MILLIS() + FIRESTARTER_USB_TIMEOUT_MS;
+    uint32_t completions = tx_in_completions;
     while (count < length)
     {
         const uint32_t state = __get_PRIMASK();
@@ -397,9 +401,13 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
         usb_start_next_transmit();
         usb_restore_irq(state);
         const uint32_t now = RURP_MILLIS();
-        /* A slow host that keeps draining the ring is progress. Time out only
-         * after FIRESTARTER_USB_TIMEOUT_MS without a single accepted byte. */
-        if (count != before) deadline = now + FIRESTARTER_USB_TIMEOUT_MS;
+        /* An accepted byte or an IN completion is progress. Time out only
+         * after FIRESTARTER_USB_TIMEOUT_MS without progress. */
+        if (count != before || completions != tx_in_completions)
+        {
+            completions = tx_in_completions;
+            deadline = now + FIRESTARTER_USB_TIMEOUT_MS;
+        }
         else if ((int32_t)(now - deadline) >= 0)
         {
             frame_failed = tx_failed = true;
@@ -407,7 +415,7 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
         }
         else
         {
-            for (volatile unsigned n = 0; n < 1000; ++n) { __NOP(); }
+            RURP_DELAY_US(10);
         }
     }
     return count;
@@ -417,8 +425,8 @@ void py32_usb_flush(void)
 {
     const uint32_t generation = frame_active ? frame_generation : usb_generation;
     uint32_t deadline = RURP_MILLIS() + FIRESTARTER_USB_TIMEOUT_MS;
+    uint32_t completions = tx_in_completions;
     usb_start_next_transmit_safe();
-    uint16_t last_tail = tx_tail;
     while (tx_head != tx_tail || tx_busy)
     {
         if (generation != usb_generation)
@@ -427,11 +435,11 @@ void py32_usb_flush(void)
             return;
         }
         const uint32_t now = RURP_MILLIS();
-        /* Dequeuing a packet means the previous IN transfer completed. A
-         * slow but draining host must not time out on total frame duration. */
-        if (tx_tail != last_tail)
+        /* Each IN completion, ZLP included, is progress. A slow host that
+         * keeps reading must not time out on the total frame duration. */
+        if (completions != tx_in_completions)
         {
-            last_tail = tx_tail;
+            completions = tx_in_completions;
             deadline = now + FIRESTARTER_USB_TIMEOUT_MS;
         }
         if (tx_failed || (int32_t)(now - deadline) >= 0)

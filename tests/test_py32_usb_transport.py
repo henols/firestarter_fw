@@ -38,6 +38,7 @@ void test_enable_irq(void);
 #include <stdint.h>
 uint32_t test_millis(void);
 #define RURP_MILLIS() test_millis()
+#define RURP_DELAY_US(value) ((void)(value))
 ''')
     (tmp_path / 'usbd_cdc.h').write_text('#include "usbd_core.h"\n')
     (tmp_path / 'usbd_core.h').write_text('''
@@ -391,13 +392,15 @@ int main() {
     assert(memcmp(test_tx_bytes(), expected.data(), expected.size()) == 0);
 
     // A slow but steady host keeps the TX ring full for much longer than the
-    // timeout. Each accepted byte is progress, so the write must complete.
-    // Interrupts are re-enabled after at most one USB packet of copying.
-    {
+    // timeout. Each accepted byte or IN completion is progress, so the write
+    // must complete. 75 ms is below the timeout for one IN completion, but
+    // above it for two. Interrupts are re-enabled after at most one USB
+    // packet of copying.
+    for (uint32_t period : {20U, 75U}) {
         std::vector<uint8_t> bulk(3000);
         for (size_t i = 0; i < bulk.size(); ++i) bulk[i] = uint8_t(i * 7 + 1);
         test_prepare_tx(0);
-        test_slow_host(20);
+        test_slow_host(period);
         test_measure_critical_sections();
         assert(py32_usb_write(bulk.data(), bulk.size()) == bulk.size());
         assert(!rurp_communication_tx_failed());
@@ -408,6 +411,20 @@ int main() {
         assert(!rurp_communication_tx_failed());
         assert(test_tx_length() == bulk.size());
         assert(memcmp(test_tx_bytes(), bulk.data(), bulk.size()) == 0);
+    }
+
+    // A frame that ends on a packet boundary needs a ZLP after its last
+    // packet. The ZLP completion is progress, so a slow host does not fail
+    // the flush.
+    {
+        test_prepare_tx(0);
+        test_slow_host(75);
+        const uint16_t params = 3 * 64 - 9;
+        rurp_log_id_wide(id, mixed.data(), params);
+        assert(!rurp_communication_tx_failed());
+        assert(test_now() > 3 * 75);
+        assert(test_tx_length() == 3 * 64);
+        assert(memcmp(test_tx_bytes() + 7, mixed.data(), params) == 0);
     }
 
     // Stalled USB IN endpoint: the write is incomplete and fails closed, and
