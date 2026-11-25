@@ -147,6 +147,17 @@ bool socket_output_allowed()
     return !RURP_PINMAP_PROVISIONAL;
 }
 
+/* Preload inactive levels before enabling output drivers.
+ * No provisional check: safe idle must also drive these pins. */
+void configure_control_outputs()
+{
+    configure_output(RURP_PY32F071_CE_PORT, RURP_PY32F071_CE_PIN, GPIO_PIN_SET);
+    configure_output(RURP_PY32F071_OE_PORT, RURP_PY32F071_OE_PIN, GPIO_PIN_SET);
+    configure_output(RURP_PY32F071_LSB_PORT, RURP_PY32F071_LSB_PIN, GPIO_PIN_RESET);
+    configure_output(RURP_PY32F071_MSB_PORT, RURP_PY32F071_MSB_PIN, GPIO_PIN_RESET);
+    configure_output(RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_RESET);
+}
+
 void configure_socket_outputs()
 {
 #if defined(RURP_BOARD_MICROPETAL_UNO)
@@ -154,13 +165,17 @@ void configure_socket_outputs()
     return;
 #endif
     if (!socket_output_allowed()) return;
-    /* Preload inactive levels before enabling output drivers. */
-    configure_output(RURP_PY32F071_CE_PORT, RURP_PY32F071_CE_PIN, GPIO_PIN_SET);
-    configure_output(RURP_PY32F071_OE_PORT, RURP_PY32F071_OE_PIN, GPIO_PIN_SET);
-    configure_output(RURP_PY32F071_LSB_PORT, RURP_PY32F071_LSB_PIN, GPIO_PIN_RESET);
-    configure_output(RURP_PY32F071_MSB_PORT, RURP_PY32F071_MSB_PIN, GPIO_PIN_RESET);
-    configure_output(RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_RESET);
+    configure_control_outputs();
 }
+
+#if defined(RURP_BOARD_MICROPETAL_UNO)
+/* Conservative latch setup, pulse and hold delay at any supported clock.
+ * Does not use TIM3. */
+void settle()
+{
+    for (volatile unsigned n = 0; n < 64; ++n) { __NOP(); }
+}
+#endif
 }
 
 #if defined(RURP_BOARD_MICROPETAL_UNO)
@@ -182,34 +197,27 @@ extern "C" bool rurp_read_revision_adc10(bool divider, uint16_t *out)
  */
 extern "C" void rurp_board_safe_idle(void)
 {
-#if defined(RURP_BOARD_MICROPETAL_UNO)
     RURP_PY32F071_ENABLE_GPIO_CLOCKS();
-    configure_output(RURP_PY32F071_CE_PORT, RURP_PY32F071_CE_PIN, GPIO_PIN_SET);
-    configure_output(RURP_PY32F071_OE_PORT, RURP_PY32F071_OE_PIN, GPIO_PIN_SET);
-    configure_output(RURP_PY32F071_LSB_PORT, RURP_PY32F071_LSB_PIN, GPIO_PIN_RESET);
-    configure_output(RURP_PY32F071_MSB_PORT, RURP_PY32F071_MSB_PIN, GPIO_PIN_RESET);
-    configure_output(RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_RESET);
+#if defined(RURP_BOARD_MICROPETAL_UNO)
+    configure_control_outputs();
 
     // Preload zero before driving the data bus. Clear an already-random latch,
     // not just its enable pin; /CE and /OE stay inactive throughout.
     configure_output(RURP_PY32F071_DATA_PORT, data_pin_mask(), GPIO_PIN_RESET);
-    // Conservative setup/pulse/hold delays at any supported clock, without TIM3.
-    for (volatile unsigned n = 0; n < 64; ++n) { __NOP(); }
+    settle();
     HAL_GPIO_WritePin(RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_SET);
-    for (volatile unsigned n = 0; n < 64; ++n) { __NOP(); }
+    settle();
     HAL_GPIO_WritePin(RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_RESET);
-    for (volatile unsigned n = 0; n < 64; ++n) { __NOP(); }
-    rurp_set_data_input();
+    settle();
 #endif
+    rurp_set_data_input();
 }
 
 extern "C" void rurp_board_setup(void)
 {
-    RURP_PY32F071_ENABLE_GPIO_CLOCKS();
-
+    // main() already called safe idle. Apply it again: it is idempotent.
     rurp_board_safe_idle();
     configure_socket_outputs();
-    rurp_set_data_input();
 
 #if RURP_PY32F071_HAS_USER_BUTTON
     GPIO_InitTypeDef button = {};
@@ -351,7 +359,7 @@ extern "C" uint16_t rurp_read_voltage_mv(void)
         vcc_mv *
         (configuration->r1 + configuration->r2);
     const uint64_t denominator =
-        static_cast<uint64_t>(4095U) * configuration->r2;
+        static_cast<uint64_t>(RURP_ADC_FULL_SCALE) * configuration->r2;
 
     const uint64_t measured_mv =
         (numerator + denominator / 2U) / denominator;

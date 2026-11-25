@@ -4,9 +4,6 @@
 #ifndef RURP_MICROPETAL_ROM_TOUCH
 #define RURP_MICROPETAL_ROM_TOUCH 0
 #endif
-#if RURP_MICROPETAL_ROM_TOUCH && !defined(RURP_BOARD_MICROPETAL_UNO)
-#error "ROM USB touch is an opt-in MicroPetal experiment"
-#endif
 
 /* CDC callbacks run in IRQ context. Request only; main performs the handoff.
  * Require 1200 baud plus DTR high->low, not an ordinary close at 250000 baud.

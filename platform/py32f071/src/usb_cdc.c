@@ -253,6 +253,8 @@ void usbd_cdc_acm_set_line_coding(uint8_t interface_number, struct cdc_line_codi
 bool py32_usb_take_rom_request(void)
 {
 #if RURP_MICROPETAL_ROM_TOUCH
+    // Main loop calls this on each pass. Mask IRQs only when a request is set.
+    if (!rom_touch.pending) return false;
     const uint32_t irq = __get_PRIMASK();
     __disable_irq();
     const bool pending = rom_touch.pending;
