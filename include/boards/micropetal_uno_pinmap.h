@@ -16,6 +16,11 @@
  * Startup must still drive latch enables low, /CE and /OE high, and clear
  * the physical control latch: floating controls are not electrically safe.
  */
+/* 1: rurp_board_safe_idle() drives the controls and clears the latches. */
+#define RURP_PY32F071_SAFE_IDLE_AT_RESET 1
+/* 1: the 1200-baud touch can enter the factory ROM USB loader (PA12 D+ has
+ * a fixed pull-up, BOOT0 is on PF8). */
+#define RURP_PY32F071_HAS_ROM_TOUCH 1
 #define RURP_PY32F071_LSB_PORT GPIOB
 #define RURP_PY32F071_LSB_PIN GPIO_PIN_8
 #define RURP_PY32F071_MSB_PORT GPIOB
@@ -27,6 +32,7 @@
 #define RURP_PY32F071_VPP_ADC_PORT GPIOA
 #define RURP_PY32F071_VPP_ADC_PIN GPIO_PIN_2
 #define RURP_PY32F071_VPP_ADC_CHANNEL ADC_CHANNEL_2
+#define RURP_PY32F071_HAS_REVISION_ADC 1
 #define RURP_PY32F071_REV_ADC_PORT GPIOA
 #define RURP_PY32F071_REV_ADC_PIN GPIO_PIN_3
 #define RURP_PY32F071_REV_ADC_CHANNEL ADC_CHANNEL_3

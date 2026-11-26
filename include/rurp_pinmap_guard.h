@@ -27,8 +27,9 @@
  * provisional. CMD_READ_VPP/CMD_READ_VPE stay allowed too, but their handlers request
  * regulator control writes. Provisional PY32 backends therefore suppress the
  * socket GPIO output writes, independently of this memory-command gate.
- * One exception: on MicroPetal, rurp_board_safe_idle() drives /CE, /OE, LSB,
- * MSB, CTRL and the data bus to clear the latches to the all-off state.
+ * One exception: if the pin map sets RURP_PY32F071_SAFE_IDLE_AT_RESET (MicroPetal),
+ * rurp_board_safe_idle() drives /CE, /OE, LSB, MSB, CTRL and the data bus to
+ * clear the latches to the all-off state.
  *
  * The `#if` MUST live here, never inside is_memory_cmd()'s body, so that
  * predicate's truth table is the same in every env. static inline in a header for the same reason

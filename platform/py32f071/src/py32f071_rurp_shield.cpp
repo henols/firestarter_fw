@@ -79,7 +79,7 @@ void configure_adc()
     analog_input.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(RURP_PY32F071_VPP_ADC_PORT, &analog_input);
 
-#if defined(RURP_BOARD_MICROPETAL_UNO)
+#if RURP_PY32F071_HAS_REVISION_ADC
     analog_input.Pin = RURP_PY32F071_REV_ADC_PIN;
     HAL_GPIO_Init(RURP_PY32F071_REV_ADC_PORT, &analog_input);
 #endif
@@ -160,7 +160,7 @@ void configure_control_outputs()
 
 void configure_socket_outputs()
 {
-#if defined(RURP_BOARD_MICROPETAL_UNO)
+#if RURP_PY32F071_SAFE_IDLE_AT_RESET
     // safe_idle already configures these pins and clears the physical latch.
     return;
 #endif
@@ -168,7 +168,7 @@ void configure_socket_outputs()
     configure_control_outputs();
 }
 
-#if defined(RURP_BOARD_MICROPETAL_UNO)
+#if RURP_PY32F071_SAFE_IDLE_AT_RESET
 /* Conservative latch setup, pulse and hold delay at any supported clock.
  * Does not use TIM3. */
 void settle()
@@ -178,7 +178,7 @@ void settle()
 #endif
 }
 
-#if defined(RURP_BOARD_MICROPETAL_UNO)
+#if RURP_PY32F071_HAS_REVISION_ADC
 extern "C" bool rurp_read_revision_adc10(bool divider, uint16_t *out)
 {
     const uint32_t channel = divider ? RURP_PY32F071_VPP_ADC_CHANNEL : RURP_PY32F071_REV_ADC_CHANNEL;
@@ -198,7 +198,7 @@ extern "C" bool rurp_read_revision_adc10(bool divider, uint16_t *out)
 extern "C" void rurp_board_safe_idle(void)
 {
     RURP_PY32F071_ENABLE_GPIO_CLOCKS();
-#if defined(RURP_BOARD_MICROPETAL_UNO)
+#if RURP_PY32F071_SAFE_IDLE_AT_RESET
     configure_control_outputs();
 
     // Preload zero before driving the data bus. Clear an already-random latch,

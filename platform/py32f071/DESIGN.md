@@ -378,6 +378,8 @@ enables output drivers. It then writes zero to the physical control latch
 with the data bus actively driven, and releases the data bus. This runs
 before clock, ADC and USB initialization, independently of operation refusal.
 It cannot protect reset or ROM-loader intervals; those require hardware bias.
+The pin-map flag `RURP_PY32F071_SAFE_IDLE_AT_RESET 1` selects this sequence.
+The board header refuses a pin map that does not define the flag.
 
 ### Experimental full operations and ROM entry
 
@@ -392,6 +394,7 @@ the cache: give it again at each configure.
 `RURP_MICROPETAL_ROM_TOUCH=ON` enables a 1200-baud DTR close request. Main
 checks BOOT0 low and ROM vectors, clears shield controls, resets USB, holds
 fixed-pull-up D+ low for 100 ms, resets clocks/interrupt state, and jumps to
-ROM. The socket must be empty. A successful physical attempt and a later
+ROM. The pin map must set `RURP_PY32F071_HAS_ROM_TOUCH 1`.
+The socket must be empty. A successful physical attempt and a later
 failed re-enumeration were observed: keep hardware BOOT/RESET recovery and
 do not present this opt-in experiment as reliable unattended installation.

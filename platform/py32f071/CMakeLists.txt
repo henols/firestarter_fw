@@ -32,6 +32,10 @@ if(NOT RURP_BOARD IN_LIST RURP_BOARDS)
 endif()
 set(RURP_PROVISIONAL_py32f071 1)
 set(RURP_PROVISIONAL_micropetal_uno 1)
+# 1 when the board reads the shield revision on an ADC input. The pin map must
+# then set RURP_PY32F071_HAS_REVISION_ADC 1; the board header checks this.
+set(RURP_HARDWARE_REVISION_py32f071 0)
+set(RURP_HARDWARE_REVISION_micropetal_uno 1)
 option(RURP_MICROPETAL_ROM_TOUCH "Experimental 1200-baud touch into factory ROM USB loader" OFF)
 if(RURP_MICROPETAL_ROM_TOUCH AND NOT RURP_BOARD STREQUAL "micropetal_uno")
     message(FATAL_ERROR "ROM touch requires MicroPetal")
@@ -175,8 +179,8 @@ target_compile_definitions(
         RURP_HAS_VPP_DAC=0
 )
 
-if(RURP_BOARD STREQUAL "micropetal_uno")
-    target_compile_definitions(${TARGET_NAME} PRIVATE RURP_BOARD_MICROPETAL_UNO=1 HARDWARE_REVISION=1)
+if(RURP_HARDWARE_REVISION_${RURP_BOARD})
+    target_compile_definitions(${TARGET_NAME} PRIVATE HARDWARE_REVISION=1)
 endif()
 
 if(RURP_DEV_TOOLS)
