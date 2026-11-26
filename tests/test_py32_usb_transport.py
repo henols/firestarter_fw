@@ -82,7 +82,23 @@ static inline void _firestarter_emit_frame(uint8_t id, const uint8_t *params, ui
     _firestarter_emit_frame_wide(id, params, param_count);
 }
 ''')
-    (tmp_path / 'rurp_shield.h').write_text('#pragma once\n')
+    # The board API with RURP_HAS_HOST_SESSIONS 1: the serial layer calls
+    # the session hooks, and the production usb_cdc.c defines them. Both the
+    # C backend and the C++ serial layer include it.
+    (tmp_path / 'rurp_shield.h').write_text('''
+#pragma once
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+uint32_t rurp_communication_session(void);
+int rurp_communication_tx_failed(void);
+void rurp_communication_frame_begin(void);
+void rurp_communication_frame_end(void);
+#ifdef __cplusplus
+}
+#endif
+''')
 
     backend = tmp_path / 'usb_backend.c'
     backend.write_text(r'''
@@ -362,9 +378,9 @@ int py32_usb_read(void);
 size_t py32_usb_read_bytes(char *, size_t);
 size_t py32_usb_write(const uint8_t *, size_t);
 void py32_usb_flush(void);
-void py32_usb_frame_begin(void);
-void py32_usb_frame_end(void);
-uint32_t py32_usb_generation(void);
+void rurp_communication_frame_begin(void);
+void rurp_communication_frame_end(void);
+uint32_t rurp_communication_session(void);
 void test_reopen(void);
 void test_event_during_frame(unsigned);
 void test_event_after(unsigned, uint32_t);
@@ -613,13 +629,13 @@ int main() {
     // A bus reset with bytes still queued: the flush fails at once.
     {
         test_prepare_tx(1);
-        py32_usb_frame_begin();
+        rurp_communication_frame_begin();
         assert(py32_usb_write(mixed.data(), 30) == 30);
         test_bus_reset();
         const uint32_t start = test_now();
         py32_usb_flush();
         assert(test_now() - start < 5U);
-        py32_usb_frame_end();
+        rurp_communication_frame_end();
         assert(rurp_communication_tx_failed());
         assert(!test_tx_batching());
     }

@@ -9,6 +9,8 @@
  */
 
 #include "rurp_register_utils.h"
+/* The real revision-ADC reader (AVR source, compiled into this TU). */
+#include "../../../../src/boards/rurp_revision_adc.cpp"
 
 /* Seeds the production register cache, so a test starts from a known
  * latched state. */

@@ -5,6 +5,7 @@
 
 #include "boards/py32f071_rurp_shield.h"
 #include "rurp_platform.h"
+#include "rurp_shield.h"
 #include "usbd_cdc.h"
 #include "usbd_core.h"
 
@@ -293,7 +294,7 @@ void rurp_communication_begin(void)
     usb_initialized = true;
 }
 
-uint32_t py32_usb_generation(void)
+uint32_t rurp_communication_session(void)
 {
     return usb_generation;
 }
@@ -339,7 +340,7 @@ int py32_usb_read(void)
 }
 
 /* Each log frame owns one generation; a reconnect cannot resume its tail. */
-void py32_usb_frame_begin(void)
+void rurp_communication_frame_begin(void)
 {
     const uint32_t state = __get_PRIMASK();
     __disable_irq();
@@ -351,7 +352,7 @@ void py32_usb_frame_begin(void)
     usb_restore_irq(state);
 }
 
-void py32_usb_frame_end(void)
+void rurp_communication_frame_end(void)
 {
     /* A frame that stopped before its flush must not hold back queued bytes. */
     tx_batching = false;
