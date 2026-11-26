@@ -10,7 +10,9 @@
 #error "py32f071_rurp_shield.h included for the wrong platform"
 #endif
 
-/* CMake selects one board and one safety flag for every translation unit. */
+/* CMake selects one board and one safety flag for every translation unit.
+ * RURP_PINMAP_PROVISIONAL comes only from CMake (RURP_PROVISIONAL_<board>);
+ * a pin-map header must not define it. See rurp_pinmap_guard.h. */
 #include "py32f071_pinmap_guard.h"
 #ifndef RURP_PINMAP_PROVISIONAL
 #error "Set RURP_PINMAP_PROVISIONAL explicitly for this board"
