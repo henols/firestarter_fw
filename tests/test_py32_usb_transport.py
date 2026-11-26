@@ -75,6 +75,7 @@ static inline void USBD_IRQHandler(void) {}
 #define SERIAL_PORT Serial
 #define TIMEOUT_MS 1000
 void _firestarter_emit_frame_wide(uint8_t id, const uint8_t *params, uint16_t param_count);
+bool fs_session_changed(void);
 static inline void _firestarter_emit_frame(uint8_t id, const uint8_t *params, uint8_t param_count) {
     _firestarter_emit_frame_wide(id, params, param_count);
 }
@@ -360,7 +361,14 @@ void test_arm_rx_interrupt(void);
 void test_dtr_edge_then_command(void);
 void test_reopen_at_mask(unsigned, const uint8_t *, size_t);
 int rurp_communication_tx_failed(void);
+uint32_t rurp_communication_session(void);
 }
+
+// firestarter.cpp keeps the session of the active command. Each scenario that
+// stands for a command of the current session calls new_command() first.
+static uint32_t command_session;
+bool fs_session_changed(void) { return command_session != rurp_communication_session(); }
+static void new_command(void) { command_session = rurp_communication_session(); }
 
 struct SerialMock {
     void begin(unsigned long) {}
@@ -434,6 +442,7 @@ int main() {
     // Real shared MSG_DATA_CHUNK emitter -> USB backend -> fake host.
     const uint8_t id = MSG_DATA_CHUNK;
     test_prepare_tx(0);
+    new_command();
     rurp_log_id_wide(id, mixed.data(), (uint16_t)mixed.size());
     assert(!rurp_communication_tx_failed());
     std::vector<uint8_t> expected = {0xAA, 0x55, 0xAA, 0x55};
@@ -451,12 +460,14 @@ int main() {
 
     // Stalled USB IN endpoint: the write is incomplete and fails closed.
     test_prepare_tx(1);
+    new_command();
     rurp_log_id_wide(id, mixed.data(), (uint16_t)mixed.size());
     assert(rurp_communication_tx_failed());
     assert(py32_usb_write(mixed.data(), 1) == 0);
 
     // Reopening the port, without SET_CONFIGURATION, recovers a stalled link.
     test_reopen();
+    new_command();
     const std::vector<uint8_t> small = {3, 0, 5};
     rurp_log_id_wide(id, small.data(), (uint16_t)small.size());
     assert(!rurp_communication_tx_failed());
@@ -467,12 +478,14 @@ int main() {
     // no remainder of the old frame may enter the new session's TX queue.
     for (unsigned event : {1U, 2U}) {
         test_prepare_tx(0);
+        new_command();
         test_event_during_frame(event);
         rurp_log_id_wide(id, mixed.data(), (uint16_t)mixed.size());
         test_assert_event_fired();
         assert(rurp_communication_tx_failed());
         const size_t before = test_tx_length();
         assert(before <= 1064); // at most pre-event bytes + one hardware packet
+        new_command();
         rurp_log_id_wide(id, small.data(), (uint16_t)small.size());
         assert(!rurp_communication_tx_failed());
         // DTR may deliver one packet already handed to the USB controller.
@@ -483,6 +496,38 @@ int main() {
         assert(tail[0] == 0xAA && tail[1] == 0x55 && tail[6] == id);
         assert(memcmp(tail + 7, small.data(), small.size()) == 0);
     }
+    // The host reopens the port while a command runs, and main applies the
+    // session reset before the command starts its next frame. No frame of
+    // the old command may reach the new host: here a read step, the
+    // MSG_DATA_SENDING frame and its MSG_DATA_CHUNK.
+    test_prepare_tx(0);
+    new_command();
+    rurp_log_id_wide(id, small.data(), (uint16_t)small.size());
+    assert(!rurp_communication_tx_failed() && test_tx_length() == small.size() + 9);
+    test_reopen();
+    assert(rurp_communication_available() == 0);  // main applied the reset
+    rurp_log_id(MSG_DATA_SENDING, nullptr, 0);
+    rurp_log_id_wide(id, mixed.data(), (uint16_t)mixed.size());
+    for (int i = 0; i < 100; ++i) (void)test_millis();
+    assert(test_tx_length() == 0);
+    // The new session's command gets its frames.
+    new_command();
+    rurp_log_id_wide(id, small.data(), (uint16_t)small.size());
+    assert(!rurp_communication_tx_failed());
+    assert(test_tx_length() == small.size() + 9 && test_tx_bytes()[6] == id);
+
+    // The reopen and the next command arrive just before the frame start
+    // masks IRQs. The frame is dropped and the command is kept.
+    test_prepare_tx(0);
+    new_command();
+    const uint8_t next_cmd[] = {'#', 0x02, 0x07, 0x00};
+    test_reopen_at_mask(1, next_cmd, sizeof(next_cmd));
+    rurp_log_id_wide(id, small.data(), (uint16_t)small.size());
+    test_assert_event_fired();
+    for (int i = 0; i < 100; ++i) (void)test_millis();
+    assert(test_tx_length() == 0);
+    assert(rurp_communication_available() == (int)sizeof(next_cmd));
+
     test_prepare_tx(0);
     test_ring_reset_ownership();
 

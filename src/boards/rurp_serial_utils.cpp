@@ -394,6 +394,13 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
 
 #if defined(RURP_PLATFORM_PY32F071)
     py32_usb_frame_begin();
+    // A frame of a command from an earlier USB session is dropped. The check
+    // comes after frame_begin: an edge before it is seen here, an edge after
+    // it fails the frame in the transport.
+    if (fs_session_changed()) {
+        py32_usb_frame_end();
+        return;
+    }
 #endif
     // Magic preamble (4 bytes from PROGMEM).
     SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[0]));

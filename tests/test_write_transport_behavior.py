@@ -113,6 +113,7 @@ void rurp_log_id_wide(uint8_t id, const uint8_t*, uint16_t n) {
 
 #if defined(RURP_PLATFORM_PY32F071)
 static bool reopened = false;  // the host reopened the USB port
+static bool reopen_in_read = false;  // the host reopens it during a chip read
 bool fs_session_changed(void) { return reopened; }
 #endif
 
@@ -122,6 +123,9 @@ static void write_main(firestarter_handle_t* h) {
 }
 
 static void read_main(firestarter_handle_t* h) {
+#if defined(RURP_PLATFORM_PY32F071)
+    if (reopen_in_read) reopened = true;
+#endif
     uint32_t remaining = h->mem_size - h->address;
     h->data_size = remaining < 64 ? remaining : 64;  // a 64-byte buffer
     memset(h->data_buffer, 0x5A, h->data_size);
@@ -178,9 +182,24 @@ static bool has_error() {
 
 int main() {
 #if defined(RURP_PLATFORM_PY32F071)
+    // Only the reopen cases run on this platform.
+    // The host reopens the port during a chip read. The read ends before it
+    // sends a frame of that step, and does not wait for an ack.
+    reset(CMD_READ, 0, 1024, 0);
+    for (int i = 0; i < 10 && chunks.empty(); i++) {
+        handle.response_code = RESPONSE_CODE_OK;
+        assert(!eprom_read(&handle));
+    }
+    assert(chunks.size() == 1 && count(MSG_DATA_SENDING) == 1);
+    reopen_in_read = true;
+    handle.response_code = RESPONSE_CODE_OK;
+    assert(eprom_read(&handle));
+    assert(chunks.size() == 1 && count(MSG_DATA_SENDING) == 1 && fake_ms < 1000);
+    reopen_in_read = reopened = false;
+    puts("PASS reopen ends read");
+
     // The host reopens the port during a write and sends its next command.
     // The write ends at once and does not read the command bytes.
-    // Only this case runs on this platform.
     reset(CMD_WRITE, 0, 1024, 64);
     host_file = 32;
     for (int i = 0; i < 100 && written.size() < 32; i++) {
@@ -299,7 +318,7 @@ def test_write_and_read_transfer_loops(tmp_path: Path, defines: list[str]) -> No
         f"transfer loop test failed:\n{result.stdout}\n{result.stderr}"
     )
     if defines:
-        assert result.stdout.splitlines() == ["PASS reopen ends write"]
+        assert result.stdout.splitlines() == ["PASS reopen ends read", "PASS reopen ends write"]
         return
     assert result.stdout.splitlines() == [
         "PASS bounded write ends at region end",
