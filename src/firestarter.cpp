@@ -32,6 +32,15 @@ firestarter_handle_t handle;
 
 uint32_t timeout_started_ms = 0;
 
+#if RURP_HAS_HOST_SESSIONS
+/* The host session that sent the active command. */
+static uint32_t command_session;
+
+bool fs_session_changed(void) {
+    return command_session != rurp_communication_session();
+}
+#endif
+
 void setup() {
     // Board setup first: until it runs, the pins are high-Z and the shield
     // latches keep their last value, which can have an HV route on. It writes
@@ -185,11 +194,19 @@ void command_done(firestarter_handle_t* handle) {
 
 void loop() {
     rurp_watchdog_reset();
+    if (handle.cmd != CMD_IDLE && fs_session_changed()) {
+        /* The host reopened the port, so no host waits for this command. End
+         * it now, so that the new session's first command is read. */
+        command_done(&handle);
+    }
     if (handle.cmd != CMD_IDLE && fs_timeout_expired(timeout_started_ms, TIMEOUT_MS, (uint32_t)millis())) {
         LOG_ERROR_ID_U8(MSG_ERR_CMD_TIMEOUT, handle.cmd);
         command_done(&handle);
     } else if (handle.cmd == CMD_IDLE) {
         if (rurp_communication_available() > 0) {
+#if RURP_HAS_HOST_SESSIONS
+            command_session = rurp_communication_session();
+#endif
             /* The transport reads complete COBS frames and checks CRC8 before command decoding.
  * It drains invalid frames to the next delimiter for bounded recovery;
  * a decoded payload must have positive length to become a command. */

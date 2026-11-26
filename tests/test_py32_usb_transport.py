@@ -78,6 +78,7 @@ static inline void USBD_IRQHandler(void) {}
 #define SERIAL_PORT Serial
 #define TIMEOUT_MS 1000
 void _firestarter_emit_frame_wide(uint8_t id, const uint8_t *params, uint16_t param_count);
+bool fs_session_changed(void);
 static inline void _firestarter_emit_frame(uint8_t id, const uint8_t *params, uint8_t param_count) {
     _firestarter_emit_frame_wide(id, params, param_count);
 }
@@ -164,8 +165,29 @@ static void fire_event(unsigned kind) {
         usbd_cdc_acm_set_dtr(0, true);
     }
 }
+static void host_send_packet(const uint8_t *data, size_t n);
+static unsigned mask_countdown;
+static const uint8_t *mask_packet;
+static size_t mask_packet_size;
 unsigned test_irq_state(void) { return irq_state; }
-void test_disable_irq(void) { assert(!irq_state); irq_state = 1; cs_tx_head = tx_head; }
+void test_disable_irq(void) {
+    assert(!irq_state);
+    /* The ISR runs just before main masks IRQs: the host reopens the port and
+     * its next command completes on the armed OUT buffer. */
+    if (mask_countdown && --mask_countdown == 0) {
+        event_fired = true;
+        usbd_cdc_acm_set_dtr(0, false);
+        usbd_cdc_acm_set_dtr(0, true);
+        host_send_packet(mask_packet, mask_packet_size);
+    }
+    irq_state = 1;
+    cs_tx_head = tx_head;
+}
+/* Fire the reopen at the n-th IRQ mask from now. */
+void test_reopen_at_mask(unsigned n, const uint8_t *packet, size_t size) {
+    mask_countdown = n; mask_packet = packet; mask_packet_size = size;
+    event_fired = false;
+}
 void test_enable_irq(void) {
     assert(irq_state); irq_state = 0;
     if (measure_cs) {
@@ -205,6 +227,75 @@ void test_ring_reset_ownership(void) {
     assert(py32_usb_available() == 0 && py32_usb_read() == -1);
 }
 void test_arm_rx_interrupt(void) { unlock_event = 1; event_fired = false; }
+
+/* Issue henols/firestarter#183: the host opens the port (DTR edge) and sends a
+ * command at once, before main applies the session reset. */
+static void host_send_packet(const uint8_t *data, size_t n) {
+    assert(host_out_armed && n <= sizeof(cdc_out_packet));
+    memcpy(cdc_out_packet, data, n);
+    host_out_armed = false;
+    firestarter_cdc_bulk_out(FIRESTARTER_CDC_OUT_EP, (uint32_t)n);
+}
+static void expect_rx(const uint8_t *data, size_t n) {
+    assert(py32_usb_available() == (int)n);
+    for (size_t i = 0; i < n; ++i) assert(py32_usb_read() == data[i]);
+    assert(py32_usb_available() == 0 && host_out_armed);
+}
+void test_dtr_edge_then_command(void) {
+    const uint8_t stale[] = {0xEE, 0xEE, 0xEE};
+    const uint8_t cmd[] = {'#', 0x03, 0x11, 0x22, 0x00};
+    const uint8_t next[] = {0x05, 0x06};
+    uint8_t full[64];
+    for (size_t i = 0; i < sizeof(full); ++i) full[i] = (uint8_t)(0x40 + i);
+    (void)py32_usb_available();
+    assert(host_out_armed);
+
+    /* Old-session bytes queued, then reopen, then the command arrives on the
+     * OUT buffer that was armed before the edge. Main has not run yet. */
+    host_send_packet(stale, sizeof(stale));
+    (void)py32_usb_available();
+    usbd_cdc_acm_set_dtr(0, false);
+    usbd_cdc_acm_set_dtr(0, true);
+    assert(host_out_armed);
+    host_send_packet(cmd, sizeof(cmd));
+    /* OUT stays disarmed: the host gets NAK, nothing is overwritten. */
+    assert(!host_out_armed && !rx_armed);
+    expect_rx(cmd, sizeof(cmd));            /* stale bytes gone, command kept */
+    host_send_packet(next, sizeof(next));   /* normal flow resumes */
+    expect_rx(next, sizeof(next));
+
+    /* A full 64-byte packet is kept whole. */
+    usbd_cdc_acm_set_dtr(0, false);
+    usbd_cdc_acm_set_dtr(0, true);
+    host_send_packet(full, sizeof(full));
+    expect_rx(full, sizeof(full));
+
+    /* A packet held for an earlier edge belongs to the session that the next
+     * edge ends: open, packet held, close before main runs -> discarded. */
+    usbd_cdc_acm_set_dtr(0, false);
+    usbd_cdc_acm_set_dtr(0, true);
+    host_send_packet(stale, sizeof(stale));
+    assert(!host_out_armed);
+    usbd_cdc_acm_set_dtr(0, false);
+    assert(py32_usb_available() == 0 && host_out_armed);
+    usbd_cdc_acm_set_dtr(0, true);
+    host_send_packet(cmd, sizeof(cmd));
+    expect_rx(cmd, sizeof(cmd));
+
+    /* SET_CONFIGURATION cancels endpoint ownership: nothing held survives. */
+    usbd_cdc_acm_set_dtr(0, false);
+    host_send_packet(stale, sizeof(stale));
+    usbd_configure_done_callback();
+    assert(py32_usb_available() == 0 && host_out_armed);
+    usbd_cdc_acm_set_dtr(0, true);
+    (void)py32_usb_available();
+
+    /* DTR drop, then a completed OUT packet, then main runs -> expect empty RX queue. */
+    usbd_cdc_acm_set_dtr(0, false);
+    host_send_packet(stale, sizeof(stale));
+    (void)py32_usb_available();
+    assert(py32_usb_available() == 0 && host_out_armed);
+}
 
 void fake_ep_write(uint8_t ep, const uint8_t *data, size_t count) {
     assert(ep == FIRESTARTER_CDC_IN_EP && count <= sizeof(pending_packet));
@@ -388,9 +479,16 @@ void test_event_after_unlocks(unsigned, unsigned);
 void test_assert_event_fired(void);
 void test_ring_reset_ownership(void);
 void test_arm_rx_interrupt(void);
+void test_dtr_edge_then_command(void);
+void test_reopen_at_mask(unsigned, const uint8_t *, size_t);
 int rurp_communication_tx_failed(void);
 }
 
+// firestarter.cpp keeps the session of the active command. Each scenario that
+// stands for a command of the current session calls new_command() first.
+static uint32_t command_session;
+bool fs_session_changed(void) { return command_session != rurp_communication_session(); }
+static void new_command(void) { command_session = rurp_communication_session(); }
 static size_t writes_after_failure;
 static size_t write_calls;
 
@@ -472,6 +570,7 @@ static int decode_from_usb(const std::vector<uint8_t>& encoded, std::vector<char
 int main() {
     test_usb_begin();
     test_rx_backpressure();
+    test_dtr_edge_then_command();
     std::vector<char> decoded(DATA_BUFFER_SIZE + 1);
 
     // Full-size payload, embedded zeros, nonzero runs and a real CRC.
@@ -497,6 +596,7 @@ int main() {
     // Real shared MSG_DATA_CHUNK emitter -> USB backend -> fake host.
     const uint8_t id = MSG_DATA_CHUNK;
     test_prepare_tx(0);
+    new_command();
     rurp_log_id_wide(id, mixed.data(), (uint16_t)mixed.size());
     assert(!rurp_communication_tx_failed());
     std::vector<uint8_t> expected = {0xAA, 0x55, 0xAA, 0x55};
@@ -543,6 +643,7 @@ int main() {
     // the flush.
     {
         test_prepare_tx(0);
+        new_command();
         test_slow_host(75);
         const uint16_t params = 3 * 64 - 9;
         rurp_log_id_wide(id, mixed.data(), params);
@@ -560,6 +661,7 @@ int main() {
     for (uint32_t period : {0U, 1U, 75U}) {
         for (uint16_t params = 0; params <= 200; ++params) {
             test_prepare_tx(0);
+            new_command();
             test_host_period(period);
             writes_after_failure = 0;
             write_calls = 0;
@@ -586,6 +688,7 @@ int main() {
         const std::vector<uint8_t> tiny = {3, 0, 5};
         const auto old_frame = expected_frame(id, mixed.data(), params);
         test_prepare_tx(0);
+        new_command();
         test_host_period(period);
         // Critical sections: frame begin, header, first params packet. The
         // edge comes after the first packet is in the controller. A 75 ms
@@ -601,6 +704,7 @@ int main() {
         const size_t old_bytes = test_event_received() + test_event_pending();
         assert(test_event_pending() == 64);
         assert(old_bytes < old_frame.size());
+        new_command();
         writes_after_failure = 0;
         rurp_log_id_wide(id, tiny.data(), (uint16_t)tiny.size());
         assert(!rurp_communication_tx_failed() && !test_session_tx_failed());
@@ -617,6 +721,7 @@ int main() {
     // timeout or fail the frame.
     {
         test_prepare_tx(0);
+        new_command();
         test_host_period(1);
         test_bus_reset_after_next_in();
         const uint16_t params = 64 - 9;
@@ -659,6 +764,7 @@ int main() {
     // Stalled USB IN endpoint: the write is incomplete and fails closed, and
     // the emitter stops writing or flushing as soon as the frame fails.
     test_prepare_tx(1);
+    new_command();
     writes_after_failure = 0;
     rurp_log_id_wide(id, mixed.data(), (uint16_t)mixed.size());
     assert(rurp_communication_tx_failed());
@@ -667,6 +773,7 @@ int main() {
 
     // Reopening the port, without SET_CONFIGURATION, recovers a stalled link.
     test_reopen();
+    new_command();
     const std::vector<uint8_t> small = {3, 0, 5};
     rurp_log_id_wide(id, small.data(), (uint16_t)small.size());
     assert(!rurp_communication_tx_failed());
@@ -677,12 +784,14 @@ int main() {
     // no remainder of the old frame may enter the new session's TX queue.
     for (unsigned event : {1U, 2U}) {
         test_prepare_tx(0);
+        new_command();
         test_event_during_frame(event);
         rurp_log_id_wide(id, mixed.data(), (uint16_t)mixed.size());
         test_assert_event_fired();
         assert(rurp_communication_tx_failed());
         const size_t before = test_tx_length();
         assert(before <= 1064); // at most pre-event bytes + one hardware packet
+        new_command();
         rurp_log_id_wide(id, small.data(), (uint16_t)small.size());
         assert(!rurp_communication_tx_failed());
         // DTR may deliver one packet already handed to the USB controller.
@@ -693,6 +802,38 @@ int main() {
         assert(tail[0] == 0xAA && tail[1] == 0x55 && tail[6] == id);
         assert(memcmp(tail + 7, small.data(), small.size()) == 0);
     }
+    // The host reopens the port while a command runs, and main applies the
+    // session reset before the command starts its next frame. No frame of
+    // the old command may reach the new host: here a read step, the
+    // MSG_DATA_SENDING frame and its MSG_DATA_CHUNK.
+    test_prepare_tx(0);
+    new_command();
+    rurp_log_id_wide(id, small.data(), (uint16_t)small.size());
+    assert(!rurp_communication_tx_failed() && test_tx_length() == small.size() + 9);
+    test_reopen();
+    assert(rurp_communication_available() == 0);  // main applied the reset
+    rurp_log_id(MSG_DATA_SENDING, nullptr, 0);
+    rurp_log_id_wide(id, mixed.data(), (uint16_t)mixed.size());
+    for (int i = 0; i < 100; ++i) (void)test_millis();
+    assert(test_tx_length() == 0);
+    // The new session's command gets its frames.
+    new_command();
+    rurp_log_id_wide(id, small.data(), (uint16_t)small.size());
+    assert(!rurp_communication_tx_failed());
+    assert(test_tx_length() == small.size() + 9 && test_tx_bytes()[6] == id);
+
+    // The reopen and the next command arrive just before the frame start
+    // masks IRQs. The frame is dropped and the command is kept.
+    test_prepare_tx(0);
+    new_command();
+    const uint8_t next_cmd[] = {'#', 0x02, 0x07, 0x00};
+    test_reopen_at_mask(1, next_cmd, sizeof(next_cmd));
+    rurp_log_id_wide(id, small.data(), (uint16_t)small.size());
+    test_assert_event_fired();
+    for (int i = 0; i < 100; ++i) (void)test_millis();
+    assert(test_tx_length() == 0);
+    assert(rurp_communication_available() == (int)sizeof(next_cmd));
+
     test_prepare_tx(0);
     test_ring_reset_ownership();
 
@@ -704,6 +845,20 @@ int main() {
     assert(rurp_communication_read_data(decoded.data(), DATA_BUFFER_SIZE) < 0);
     test_assert_event_fired();
     assert(decode_from_usb(frame(good), decoded) == (int)good.size());
+
+    // The reopen and the next command arrive between the decoder's generation
+    // check and its read (the 4th mask: available, read, available, read).
+    // The read must not consume byte 0 of the kept command.
+    std::vector<uint8_t> kept = {'#'};
+    kept.insert(kept.end(), encoded.begin(), encoded.end());
+    test_feed_rx(encoded.data(), 2);
+    test_reopen_at_mask(4, kept.data(), kept.size());
+    assert(rurp_communication_read_data(decoded.data(), DATA_BUFFER_SIZE) < 0);
+    test_assert_event_fired();
+    assert(rurp_communication_available() == (int)kept.size());
+    assert(rurp_communication_read() == '#');
+    assert(rurp_communication_read_data(decoded.data(), DATA_BUFFER_SIZE) == (int)good.size());
+    assert(memcmp(decoded.data(), good.data(), good.size()) == 0);
     return 0;
 }
 ''')

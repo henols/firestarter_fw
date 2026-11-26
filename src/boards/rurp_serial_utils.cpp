@@ -398,6 +398,13 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
     const uint8_t trailer[2] = { crc, 0x0A };
 
     rurp_communication_frame_begin();
+    // A frame of a command from an earlier host session is dropped. The
+    // check comes after frame begin: an edge before it is seen here, an edge
+    // after it fails the frame in the transport.
+    if (fs_session_changed()) {
+        rurp_communication_frame_end();
+        return;
+    }
     if (emit_segment(header, sizeof(header)) &&
         emit_segment(params, param_count) &&
         emit_segment(trailer, sizeof(trailer))) {

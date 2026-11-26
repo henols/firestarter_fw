@@ -1,7 +1,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 
 #include "boards/py32f071_rurp_shield.h"
 #include "rurp_platform.h"
@@ -101,6 +100,13 @@ static uint32_t frame_generation;
 static uint32_t packet_generation;
 static volatile bool reset_pending;
 static volatile bool endpoint_reset_pending;
+/* Bytes of the first OUT packet that completed after a DTR edge that asserts
+ * DTR, before main applied the session reset (0: none). A packet that completes
+ * after a DTR drop is discarded. The packet stays in cdc_out_packet and
+ * OUT stays disarmed, so the host gets NAK until main discards the old queue
+ * and appends this packet. Once OUT is armed, this controller accepts one
+ * packet; it cannot cancel that buffer without losing the packet. */
+static volatile uint8_t held_out_count;
 static volatile bool dtr_enabled;
 static bool frame_active;
 static bool frame_failed;
@@ -114,6 +120,23 @@ static uint16_t ring_next(uint16_t value, uint16_t capacity)
 {
     ++value;
     return value == capacity ? 0U : value;
+}
+
+/* Called in the USB ISR or with IRQs disabled in main. Drops bytes that do
+ * not fit. */
+static void usb_rx_append(const uint8_t *data, uint32_t n)
+{
+    for (uint32_t index = 0U; index < n; ++index)
+    {
+        const uint16_t next = ring_next(rx_head, FIRESTARTER_USB_RX_CAPACITY);
+        if (next == rx_tail)
+        {
+            break;
+        }
+
+        rx_buffer[rx_head] = data[index];
+        rx_head = next;
+    }
 }
 
 /* Called in the USB ISR or with IRQs disabled in main. */
@@ -148,6 +171,12 @@ static void usb_apply_session_reset(void)
     reset_pending = false;
     applied_generation = usb_generation;
     tx_failed = false;
+    /* The new session's first command, received while the reset was pending. */
+    if (held_out_count != 0U)
+    {
+        usb_rx_append(cdc_out_packet, held_out_count);
+        held_out_count = 0U;
+    }
     usb_arm_receive();
 }
 
@@ -207,26 +236,22 @@ void usbd_configure_done_callback(void)
     ++usb_generation;
     reset_pending = true;
     endpoint_reset_pending = true;
+    held_out_count = 0U;
 }
 
 static void firestarter_cdc_bulk_out(uint8_t endpoint, uint32_t byte_count)
 {
     (void)endpoint;
     rx_armed = false;
-    if (reset_pending) return;
-
-    for (uint32_t index = 0U; index < byte_count; ++index)
+    if (reset_pending)
     {
-        const uint16_t next = ring_next(rx_head, FIRESTARTER_USB_RX_CAPACITY);
-        if (next == rx_tail)
-        {
-            break;
-        }
-
-        rx_buffer[rx_head] = cdc_out_packet[index];
-        rx_head = next;
+        /* Keep the packet and leave OUT disarmed; see held_out_count. */
+        if (!endpoint_reset_pending && dtr_enabled && byte_count <= sizeof(cdc_out_packet))
+            held_out_count = (uint8_t)byte_count;
+        return;
     }
 
+    usb_rx_append(cdc_out_packet, byte_count);
     usb_arm_receive();
 }
 
@@ -262,6 +287,9 @@ void usbd_cdc_acm_set_dtr(uint8_t interface_number, bool enabled)
     dtr_enabled = enabled;
     ++usb_generation;
     reset_pending = true;
+    /* A packet held for an earlier edge belongs to the session that this edge
+     * ends. OUT stays disarmed until main applies the reset. */
+    held_out_count = 0U;
 }
 
 void usbd_cdc_acm_set_rts(uint8_t interface_number, bool enabled)
@@ -323,13 +351,16 @@ int py32_usb_peek(void)
     return value;
 }
 
+/* A read that applies a session reset returns -1 and consumes nothing. The
+ * caller then sees the new generation before it takes a new-session byte. */
 int py32_usb_read(void)
 {
     const uint32_t state = __get_PRIMASK();
     __disable_irq();
+    const bool session_reset = reset_pending;
     usb_apply_session_reset();
     int value = -1;
-    if (rx_tail != rx_head)
+    if (!session_reset && rx_tail != rx_head)
     {
         value = rx_buffer[rx_tail];
         rx_tail = ring_next(rx_tail, FIRESTARTER_USB_RX_CAPACITY);
