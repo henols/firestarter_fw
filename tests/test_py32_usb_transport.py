@@ -29,6 +29,7 @@ void test_enable_irq(void);
 #define __get_PRIMASK() test_irq_state()
 #define __disable_irq() test_disable_irq()
 #define __enable_irq() test_enable_irq()
+#define __NOP() ((void)0)
 #define __HAL_RCC_SYSCFG_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_USB_CLK_ENABLE() ((void)0)
 #define NVIC_EnableIRQ(x) ((void)0)
@@ -37,6 +38,7 @@ void test_enable_irq(void);
 #include <stdint.h>
 uint32_t test_millis(void);
 #define RURP_MILLIS() test_millis()
+#define RURP_DELAY_US(value) ((void)(value))
 ''')
     (tmp_path / 'usbd_cdc.h').write_text('#include "usbd_core.h"\n')
     (tmp_path / 'usbd_core.h').write_text('''
@@ -50,7 +52,8 @@ uint32_t test_millis(void);
 struct usbd_interface { int unused; };
 struct usbd_endpoint { unsigned ep_addr; void (*ep_cb)(uint8_t, uint32_t); };
 void fake_ep_write(uint8_t, const uint8_t *, size_t);
-static inline bool usb_device_is_configured(void) { return true; }
+extern bool fake_configured;
+static inline bool usb_device_is_configured(void) { return fake_configured; }
 void fake_ep_read(void);
 static inline int usbd_ep_start_read(uint8_t ep, uint8_t *buf, size_t n) { fake_ep_read(); return 0; }
 static inline int usbd_ep_start_write(uint8_t ep, const uint8_t *buf, size_t n) {
@@ -80,7 +83,23 @@ static inline void _firestarter_emit_frame(uint8_t id, const uint8_t *params, ui
     _firestarter_emit_frame_wide(id, params, param_count);
 }
 ''')
-    (tmp_path / 'rurp_shield.h').write_text('#pragma once\n')
+    # The board API with RURP_HAS_HOST_SESSIONS 1: the serial layer calls
+    # the session hooks, and the production usb_cdc.c defines them. Both the
+    # C backend and the C++ serial layer include it.
+    (tmp_path / 'rurp_shield.h').write_text('''
+#pragma once
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+uint32_t rurp_communication_session(void);
+int rurp_communication_tx_failed(void);
+void rurp_communication_frame_begin(void);
+void rurp_communication_frame_end(void);
+#ifdef __cplusplus
+}
+#endif
+''')
 
     backend = tmp_path / 'usb_backend.c'
     backend.write_text(r'''
@@ -88,9 +107,19 @@ static inline void _firestarter_emit_frame(uint8_t id, const uint8_t *params, ui
 #include <string.h>
 #include "platform/py32f071/src/usb_cdc.c"
 
-static uint8_t received[DATA_BUFFER_SIZE + 32U];
+/* Capture the independent 3000-byte streaming case as well as frames. */
+static uint8_t received[DATA_BUFFER_SIZE + 3000U + 32U];
 static uint8_t pending_packet[64];
 static size_t received_count;
+static size_t packet_count;
+static size_t zlp_count;
+/* Size of each IN packet, in order. A ZLP is 0. */
+static uint8_t packet_log[4096];
+static size_t packet_log_count;
+bool fake_configured = true;
+static bool immediate_host;
+static bool bus_reset_after_in;
+static size_t event_received, event_pending;
 static size_t pending_size;
 static bool pending;
 static bool paused;
@@ -108,11 +137,25 @@ static void pump_host_rx(void) {
     firestarter_cdc_bulk_out(FIRESTARTER_CDC_OUT_EP, n);
 }
 static uint32_t now_ms;
+static uint32_t slow_period;
+static bool measure_cs;
+static uint16_t cs_tx_head;
+static size_t max_cs_bytes;
 static unsigned irq_state, unlock_event, timer_event, event_at;
+static unsigned unlock_count_event, unlocks_left;
 static bool event_fired;
+static void host_read_in(void);
 static void fire_event(unsigned kind) {
     event_fired = true;
-    if (kind == 1) {
+    event_received = received_count;
+    event_pending = pending ? pending_size : 0U;
+    if (kind == 3) {
+        /* Bus reset: the core clears the configuration and the controller
+         * forgets the endpoint transfer. No callback follows. */
+        pending = false;
+        host_out_armed = false;
+        fake_configured = false;
+    } else if (kind == 1) {
         pending = false; /* SET_CONFIGURATION cancels endpoint transfers. */
         host_out_armed = false;
         host_rx_count = host_rx_offset = 0;
@@ -138,6 +181,7 @@ void test_disable_irq(void) {
         host_send_packet(mask_packet, mask_packet_size);
     }
     irq_state = 1;
+    cs_tx_head = tx_head;
 }
 /* Fire the reopen at the n-th IRQ mask from now. */
 void test_reopen_at_mask(unsigned n, const uint8_t *packet, size_t size) {
@@ -146,10 +190,26 @@ void test_reopen_at_mask(unsigned n, const uint8_t *packet, size_t size) {
 }
 void test_enable_irq(void) {
     assert(irq_state); irq_state = 0;
+    if (measure_cs) {
+        const size_t queued = (size_t)((tx_head + FIRESTARTER_USB_TX_CAPACITY - cs_tx_head) %
+                                       FIRESTARTER_USB_TX_CAPACITY);
+        if (queued > max_cs_bytes) max_cs_bytes = queued;
+    }
     if (unlock_event) { unsigned kind = unlock_event; unlock_event = 0; fire_event(kind); }
+    if (unlock_count_event && --unlocks_left == 0) {
+        unsigned kind = unlock_count_event; unlock_count_event = 0; fire_event(kind);
+    }
+    if (immediate_host) { while (pending && !paused) host_read_in(); }
 }
 void test_event_during_frame(unsigned kind) {
-    timer_event = kind; event_at = now_ms + 150; event_fired = false;
+    timer_event = kind; event_at = now_ms + 2; event_fired = false;
+}
+void test_event_after(unsigned kind, uint32_t ms) {
+    timer_event = kind; event_at = now_ms + ms; event_fired = false;
+}
+/* Fire the event at the n-th critical section exit from now. */
+void test_event_after_unlocks(unsigned kind, unsigned n) {
+    unlock_count_event = kind; unlocks_left = n; event_fired = false;
 }
 void test_assert_event_fired(void) { assert(event_fired && !irq_state); }
 void test_ring_reset_ownership(void) {
@@ -242,7 +302,23 @@ void fake_ep_write(uint8_t ep, const uint8_t *data, size_t count) {
     assert(!pending);
     if (count) memcpy(pending_packet, data, count);
     pending_size = count;
+    if (count) ++packet_count; else ++zlp_count;
+    assert(packet_log_count < sizeof(packet_log));
+    packet_log[packet_log_count++] = (uint8_t)count;
     pending = true;
+}
+
+/* The host reads the pending IN packet. The controller then calls the
+ * completion callback with the packet length, ZLP included (usb_dc_py32.c). */
+static void host_read_in(void) {
+    if (irq_state || !pending || paused) return;
+    const size_t sent = pending_size;
+    pending = false;
+    assert(received_count + sent <= sizeof(received));
+    if (sent) memcpy(received + received_count, pending_packet, sent);
+    received_count += sent;
+    firestarter_cdc_bulk_in(FIRESTARTER_CDC_IN_EP, (uint32_t)sent);
+    if (bus_reset_after_in) { bus_reset_after_in = false; fire_event(3); }
 }
 
 uint32_t test_millis(void) {
@@ -251,14 +327,8 @@ uint32_t test_millis(void) {
     if (timer_event && now_ms >= event_at) {
         unsigned kind = timer_event; timer_event = 0; fire_event(kind);
     }
-    if (pending && !paused) {
-        const size_t sent = pending_size;
-        pending = false;
-        assert(received_count + sent <= sizeof(received));
-        if (sent) memcpy(received + received_count, pending_packet, sent);
-        received_count += sent;
-        firestarter_cdc_bulk_in(FIRESTARTER_CDC_IN_EP, (uint32_t)sent);
-    }
+    if (immediate_host) { while (pending && !paused) host_read_in(); }
+    else if (!slow_period || now_ms % slow_period == 0) host_read_in();
     return now_ms;
 }
 
@@ -303,8 +373,19 @@ void test_rx_backpressure(void) {
 }
 
 void test_prepare_tx(int hold) {
+    slow_period = 0U;
+    measure_cs = false;
+    max_cs_bytes = 0U;
     pending = false;
     received_count = 0U;
+    packet_count = 0U;
+    zlp_count = 0U;
+    packet_log_count = 0U;
+    immediate_host = false;
+    bus_reset_after_in = false;
+    fake_configured = true;
+    timer_event = 0U;
+    unlock_count_event = 0U;
     paused = hold != 0;
     now_ms = 0U;
     host_out_armed = false; /* SET_CONFIGURATION cancels the pending OUT read. */
@@ -321,6 +402,28 @@ void test_reopen(void) {
     (void)test_millis();
     received_count = 0;
 }
+/* Host drains one IN packet every `period` ms, so the TX ring stays full
+ * for far longer than the timeout while bytes keep moving. */
+void test_slow_host(uint32_t period) { slow_period = period; }
+/* 0: the host reads each IN packet as soon as the ISR can run. */
+void test_host_period(uint32_t period) {
+    immediate_host = period == 0U;
+    slow_period = period;
+}
+void test_bus_reset_after_next_in(void) { bus_reset_after_in = true; }
+void test_bus_reset(void) { fire_event(3); }
+void test_dtr_edge(void) { fire_event(2); }
+size_t test_packet_log(const uint8_t **sizes) { *sizes = packet_log; return packet_log_count; }
+size_t test_event_received(void) { return event_received; }
+size_t test_event_pending(void) { return event_pending; }
+int test_tx_batching(void) { return tx_batching; }
+int test_tx_zlp_due(void) { return tx_zlp_due; }
+int test_session_tx_failed(void) { return tx_failed; }
+void test_measure_critical_sections(void) { measure_cs = true; max_cs_bytes = 0U; }
+size_t test_max_critical_section_bytes(void) { return max_cs_bytes; }
+uint32_t test_now(void) { return now_ms; }
+size_t test_packet_count(void) { return packet_count; }
+size_t test_zlp_count(void) { return zlp_count; }
 size_t test_tx_length(void) { return received_count; }
 const uint8_t *test_tx_bytes(void) { return received; }
 ''')
@@ -341,6 +444,22 @@ void test_usb_begin(void);
 void test_rx_backpressure(void);
 void test_feed_rx(const uint8_t *, size_t);
 void test_prepare_tx(int);
+void test_slow_host(uint32_t);
+void test_host_period(uint32_t);
+void test_bus_reset_after_next_in(void);
+void test_bus_reset(void);
+void test_dtr_edge(void);
+size_t test_packet_log(const uint8_t **);
+size_t test_event_received(void);
+size_t test_event_pending(void);
+int test_tx_batching(void);
+int test_tx_zlp_due(void);
+int test_session_tx_failed(void);
+void test_measure_critical_sections(void);
+size_t test_max_critical_section_bytes(void);
+uint32_t test_now(void);
+size_t test_packet_count(void);
+size_t test_zlp_count(void);
 size_t test_tx_length(void);
 const uint8_t *test_tx_bytes(void);
 uint32_t test_millis(void);
@@ -350,18 +469,19 @@ int py32_usb_read(void);
 size_t py32_usb_read_bytes(char *, size_t);
 size_t py32_usb_write(const uint8_t *, size_t);
 void py32_usb_flush(void);
-void py32_usb_frame_begin(void);
-void py32_usb_frame_end(void);
-uint32_t py32_usb_generation(void);
+void rurp_communication_frame_begin(void);
+void rurp_communication_frame_end(void);
+uint32_t rurp_communication_session(void);
 void test_reopen(void);
 void test_event_during_frame(unsigned);
+void test_event_after(unsigned, uint32_t);
+void test_event_after_unlocks(unsigned, unsigned);
 void test_assert_event_fired(void);
 void test_ring_reset_ownership(void);
 void test_arm_rx_interrupt(void);
 void test_dtr_edge_then_command(void);
 void test_reopen_at_mask(unsigned, const uint8_t *, size_t);
 int rurp_communication_tx_failed(void);
-uint32_t rurp_communication_session(void);
 }
 
 // firestarter.cpp keeps the session of the active command. Each scenario that
@@ -369,6 +489,8 @@ uint32_t rurp_communication_session(void);
 static uint32_t command_session;
 bool fs_session_changed(void) { return command_session != rurp_communication_session(); }
 static void new_command(void) { command_session = rurp_communication_session(); }
+static size_t writes_after_failure;
+static size_t write_calls;
 
 struct SerialMock {
     void begin(unsigned long) {}
@@ -378,9 +500,10 @@ struct SerialMock {
     int read() { return py32_usb_read(); }
     int peek() const { return py32_usb_peek(); }
     size_t readBytes(char *out, size_t n) { return py32_usb_read_bytes(out, n); }
-    size_t write(uint8_t b) { return py32_usb_write(&b, 1); }
-    size_t write(const uint8_t *p, size_t n) { return py32_usb_write(p, n); }
-    void flush() { py32_usb_flush(); }
+    size_t write(uint8_t b) { note_failed_use(); ++write_calls; return py32_usb_write(&b, 1); }
+    size_t write(const uint8_t *p, size_t n) { note_failed_use(); ++write_calls; return py32_usb_write(p, n); }
+    void flush() { note_failed_use(); py32_usb_flush(); }
+    static void note_failed_use() { if (rurp_communication_tx_failed()) ++writes_after_failure; }
 } Serial;
 
 unsigned long millis() { return test_millis(); }
@@ -400,6 +523,37 @@ static std::vector<uint8_t> frame(const std::vector<uint8_t>& payload, bool wron
         encoded.push_back(0);
     }
     return encoded;
+}
+
+static std::vector<uint8_t> expected_frame(uint8_t id, const uint8_t *params, size_t count) {
+    std::vector<uint8_t> out = {0xAA, 0x55, 0xAA, 0x55};
+    const uint16_t length = (uint16_t)(count + 2);
+    out.push_back(uint8_t(length >> 8));
+    out.push_back(uint8_t(length));
+    out.push_back(id);
+    out.insert(out.end(), params, params + count);
+    std::vector<uint8_t> crc_input = {id};
+    crc_input.insert(crc_input.end(), params, params + count);
+    out.push_back(ref_crc8(crc_input.data(), crc_input.size()));
+    out.push_back(0x0A);
+    return out;
+}
+
+/* One frame is one USB transfer: full packets, then one short packet. The
+ * short packet is a ZLP only when the frame ends on a packet boundary. */
+static void assert_one_transfer(size_t total) {
+    const uint8_t *sizes;
+    const size_t count = test_packet_log(&sizes);
+    assert(count > 0);
+    size_t bytes = 0, zlps = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (i + 1 < count) assert(sizes[i] == 64);
+        else assert(sizes[i] < 64);
+        if (sizes[i] == 0) ++zlps;
+        bytes += sizes[i];
+    }
+    assert(bytes == total);
+    assert(zlps == (total % 64 == 0 ? 1U : 0U));
 }
 
 static int decode_from_usb(const std::vector<uint8_t>& encoded, std::vector<char>& out) {
@@ -455,14 +609,166 @@ int main() {
     checksum_input.insert(checksum_input.end(), mixed.begin(), mixed.end());
     expected.push_back(ref_crc8(checksum_input.data(), checksum_input.size()));
     expected.push_back(0x0A);
+    assert(test_packet_count() == (expected.size() + 63) / 64);
+    // A ZLP only after a last packet that is full, never between packets.
+    assert(test_zlp_count() == (expected.size() % 64 == 0 ? 1U : 0U));
     assert(test_tx_length() == expected.size());
     assert(memcmp(test_tx_bytes(), expected.data(), expected.size()) == 0);
 
-    // Stalled USB IN endpoint: the write is incomplete and fails closed.
+    // A slow but steady host keeps the TX ring full for much longer than the
+    // timeout. Each accepted byte or IN completion is progress, so the write
+    // must complete. 75 ms is below the timeout for one IN completion, but
+    // above it for two. Interrupts are re-enabled after at most one USB
+    // packet of copying.
+    for (uint32_t period : {20U, 75U}) {
+        std::vector<uint8_t> bulk(3000);
+        for (size_t i = 0; i < bulk.size(); ++i) bulk[i] = uint8_t(i * 7 + 1);
+        test_prepare_tx(0);
+        test_slow_host(period);
+        test_measure_critical_sections();
+        assert(py32_usb_write(bulk.data(), bulk.size()) == bulk.size());
+        assert(!rurp_communication_tx_failed());
+        assert(test_now() > 2 * 100); // ring stayed full far beyond the timeout
+        assert(test_max_critical_section_bytes() <= 64);
+        assert(test_max_critical_section_bytes() > 0);
+        py32_usb_flush();
+        assert(!rurp_communication_tx_failed());
+        assert(test_tx_length() == bulk.size());
+        assert(memcmp(test_tx_bytes(), bulk.data(), bulk.size()) == 0);
+        assert(bulk.size() % 64 != 0 && test_zlp_count() == 0);
+    }
+
+    // A frame that ends on a packet boundary needs a ZLP after its last
+    // packet. The ZLP completion is progress, so a slow host does not fail
+    // the flush.
+    {
+        test_prepare_tx(0);
+        new_command();
+        test_slow_host(75);
+        const uint16_t params = 3 * 64 - 9;
+        rurp_log_id_wide(id, mixed.data(), params);
+        assert(!rurp_communication_tx_failed());
+        assert(test_now() > 3 * 75);
+        assert(test_tx_length() == 3 * 64);
+        assert(test_zlp_count() == 1);
+        assert(memcmp(test_tx_bytes() + 7, mixed.data(), params) == 0);
+    }
+
+    // Every frame size from 0 to 200 parameter bytes (9 to 209 bytes on the
+    // wire, so each packet boundary), for an immediate, a 1 ms and a 75 ms
+    // host. The frame arrives complete and in order, as one transfer, with
+    // no timeout.
+    for (uint32_t period : {0U, 1U, 75U}) {
+        for (uint16_t params = 0; params <= 200; ++params) {
+            test_prepare_tx(0);
+            new_command();
+            test_host_period(period);
+            writes_after_failure = 0;
+            write_calls = 0;
+            rurp_log_id_wide(id, mixed.data(), params);
+            assert(!rurp_communication_tx_failed() && !test_session_tx_failed());
+            assert(writes_after_failure == 0);
+            // Each write call has a fixed transport cost: header, params
+            // and trailer take one call each, whatever the frame size.
+            assert(write_calls == (params ? 3U : 2U));
+            const auto want = expected_frame(id, mixed.data(), params);
+            assert(test_tx_length() == want.size());
+            assert(memcmp(test_tx_bytes(), want.data(), want.size()) == 0);
+            assert_one_transfer(want.size());
+            assert(!test_tx_batching() && !test_tx_zlp_due());
+        }
+    }
+
+    // A DTR edge in the middle of a frame, during the params write. Only
+    // the packet already given to the controller can arrive after the edge.
+    // The next frame is complete, it does not time out, and no byte of the
+    // old frame follows it.
+    for (uint32_t period : {0U, 1U, 75U}) {
+        const uint16_t params = 500;
+        const std::vector<uint8_t> tiny = {3, 0, 5};
+        const auto old_frame = expected_frame(id, mixed.data(), params);
+        test_prepare_tx(0);
+        new_command();
+        test_host_period(period);
+        // Critical sections: frame begin, header, first params packet. The
+        // edge comes after the first packet is in the controller. A 75 ms
+        // host reads it at 75 ms, during the flush of the next frame. That
+        // old-session completion must start the new frame.
+        test_event_after_unlocks(2, 3);
+        writes_after_failure = 0;
+        rurp_log_id_wide(id, mixed.data(), params);
+        test_assert_event_fired();
+        assert(rurp_communication_tx_failed());
+        assert(writes_after_failure == 0);
+        assert(!test_tx_batching() && !test_tx_zlp_due());
+        const size_t old_bytes = test_event_received() + test_event_pending();
+        assert(test_event_pending() == 64);
+        assert(old_bytes < old_frame.size());
+        new_command();
+        writes_after_failure = 0;
+        rurp_log_id_wide(id, tiny.data(), (uint16_t)tiny.size());
+        assert(!rurp_communication_tx_failed() && !test_session_tx_failed());
+        assert(writes_after_failure == 0);
+        const auto want = expected_frame(id, tiny.data(), tiny.size());
+        assert(test_tx_length() == old_bytes + want.size());
+        assert(memcmp(test_tx_bytes(), old_frame.data(), old_bytes) == 0);
+        assert(memcmp(test_tx_bytes() + old_bytes, want.data(), want.size()) == 0);
+        assert(!test_tx_batching() && !test_tx_zlp_due());
+    }
+
+    // A bus reset after the last full packet of a frame: all data is
+    // delivered, only the ZLP is not. The flush must not wait for the
+    // timeout or fail the frame.
+    {
+        test_prepare_tx(0);
+        new_command();
+        test_host_period(1);
+        test_bus_reset_after_next_in();
+        const uint16_t params = 64 - 9;
+        rurp_log_id_wide(id, mixed.data(), params);
+        assert(!rurp_communication_tx_failed() && !test_session_tx_failed());
+        assert(test_tx_length() == 64 && test_zlp_count() == 0);
+        assert(!test_tx_zlp_due());
+    }
+
+    // A bus reset with bytes still queued: the flush fails at once.
+    {
+        test_prepare_tx(1);
+        rurp_communication_frame_begin();
+        assert(py32_usb_write(mixed.data(), 30) == 30);
+        test_bus_reset();
+        const uint32_t start = test_now();
+        py32_usb_flush();
+        assert(test_now() - start < 5U);
+        rurp_communication_frame_end();
+        assert(rurp_communication_tx_failed());
+        assert(!test_tx_batching());
+    }
+
+    // A DTR edge between a write and the flush outside a frame. The flush
+    // discards the old bytes, waits only for the packet in the controller,
+    // and does not latch a TX failure.
+    {
+        test_prepare_tx(0);
+        test_host_period(75);
+        assert(py32_usb_write(mixed.data(), 100) == 100);
+        test_dtr_edge();
+        const uint32_t start = test_now();
+        py32_usb_flush();
+        assert(!test_session_tx_failed());
+        assert(test_now() - start <= 75U + 5U);
+        assert(test_tx_length() == 64);
+        assert(memcmp(test_tx_bytes(), mixed.data(), 64) == 0);
+    }
+
+    // Stalled USB IN endpoint: the write is incomplete and fails closed, and
+    // the emitter stops writing or flushing as soon as the frame fails.
     test_prepare_tx(1);
     new_command();
+    writes_after_failure = 0;
     rurp_log_id_wide(id, mixed.data(), (uint16_t)mixed.size());
     assert(rurp_communication_tx_failed());
+    assert(writes_after_failure == 0);
     assert(py32_usb_write(mixed.data(), 1) == 0);
 
     // Reopening the port, without SET_CONFIGURATION, recovers a stalled link.

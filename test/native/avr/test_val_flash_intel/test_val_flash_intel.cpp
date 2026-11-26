@@ -55,7 +55,11 @@ void setUp(void) {
         });
     s_millis = 0;
     When(Method(ArduinoFake(), millis)).AlwaysDo([]() -> unsigned long { return s_millis++; });
-    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
+    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t)))
+        .AlwaysDo([](const uint8_t* data, size_t count) -> size_t {
+            s_wire_bytes.insert(s_wire_bytes.end(), data, data + count);
+            return count;
+        });
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
     /* delay() is called by flash_intel_write_init (delay(500) for regulator settle). */
     When(Method(ArduinoFake(), delay)).AlwaysReturn();

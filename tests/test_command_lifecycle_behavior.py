@@ -69,7 +69,7 @@ extern "C" void rurp_log_id_u16(uint8_t, uint16_t) { logged++; }
 extern "C" void rurp_log_id_u24(uint8_t, uint32_t) { logged++; }
 extern "C" void rurp_log_id_u32(uint8_t, uint32_t) { logged++; }
 extern "C" int rurp_communication_available() { return incoming.empty() ? 0 : 1; }
-#if defined(RURP_PLATFORM_PY32F071)
+#if RURP_HAS_HOST_SESSIONS
 // The USB session generation; a DTR edge changes it.
 static uint32_t usb_session = 1;
 extern "C" uint32_t rurp_communication_session(void) { return usb_session; }
@@ -325,8 +325,10 @@ int main() {
 }
 """
 
-# AVR builds define HARDWARE_REVISION; the py32 build does not.
-@pytest.mark.parametrize("defines", [[], ["-DHARDWARE_REVISION"], ["-DRURP_PLATFORM_PY32F071"]],
+# AVR builds define HARDWARE_REVISION; the py32 build does not. The py32
+# build sets RURP_HAS_HOST_SESSIONS.
+@pytest.mark.parametrize("defines", [[], ["-DHARDWARE_REVISION"],
+                                     ["-DRURP_PLATFORM_PY32F071", "-DRURP_HAS_HOST_SESSIONS=1"]],
                          ids=["no-hw-revision", "hw-revision", "py32"])
 def test_command_lifecycle_and_safe_cleanup(tmp_path: Path, defines: list[str]) -> None:
     (tmp_path / "Arduino.h").write_text(FAKE_ARDUINO_H)

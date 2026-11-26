@@ -1,14 +1,22 @@
-#pragma once
+/*
+ * Project Name: Firestarter
+ * Copyright (c) 2024 Henrik Olsson
+ *
+ * Permission is hereby granted under MIT license.
+ *
+ * The Arduino analog-pin implementation of rurp_read_revision_adc10()
+ * (declared in rurp_shield.h). PlatformIO compiles it for the AVR boards.
+ * The PY32 build does not list this file; its board backend defines the
+ * function.
+ */
+#ifdef HARDWARE_REVISION
 #include <stdint.h>
-
-#if defined(RURP_PLATFORM_PY32F071)
-extern "C" bool rurp_read_revision_adc10(bool divider, uint16_t *out);
-#else
 #include <Arduino.h>
 #include "rurp_pinout.h"
+#include "rurp_shield.h"
 
 /* Preserve AVR behavior: A3 averaged eight times; legacy A2 check once. */
-static inline bool rurp_read_revision_adc10(bool divider, uint16_t *out)
+bool rurp_read_revision_adc10(bool divider, uint16_t *out)
 {
     const uint8_t pin = divider ? PIN_VPP_VOLTAGE_ADC : PIN_HW_REVISION_DETECT_ADC;
     pinMode(PIN_HW_REVISION_DETECT_ADC, INPUT);

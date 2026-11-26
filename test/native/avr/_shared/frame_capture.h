@@ -17,19 +17,30 @@
 #include <cstdint>
 #include <vector>
 
-/* Every byte the firmware wrote with Serial.write(uint8_t). One buffer for
- * the whole program, even when several translation units include this. */
+/* Every byte the firmware wrote with Serial.write. One buffer for the whole
+ * program, even when several translation units include this. */
 inline std::vector<uint8_t> captured_frames;
 
-/* Routes every single-byte Serial.write into captured_frames. Call it after
- * ArduinoFakeReset(). */
-inline void capture_serial_writes() {
+/* Routes every Serial.write, single byte and buffer form, into *sink. The
+ * frame emitter writes one buffer per frame segment. */
+inline void capture_serial_writes_to(std::vector<uint8_t>* sink) {
     using namespace fakeit;
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t)))
-        .AlwaysDo([](uint8_t b) -> size_t {
-            captured_frames.push_back(b);
+        .AlwaysDo([sink](uint8_t b) -> size_t {
+            sink->push_back(b);
             return (size_t)1;
         });
+    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t)))
+        .AlwaysDo([sink](const uint8_t* data, size_t count) -> size_t {
+            sink->insert(sink->end(), data, data + count);
+            return count;
+        });
+}
+
+/* Routes every Serial.write into captured_frames. Call it after
+ * ArduinoFakeReset(). */
+inline void capture_serial_writes() {
+    capture_serial_writes_to(&captured_frames);
 }
 
 /* Walks captured_frames with rurp_log_id()'s fixed wire layout (4-byte magic,

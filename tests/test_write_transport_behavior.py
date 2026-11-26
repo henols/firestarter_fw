@@ -89,7 +89,7 @@ int rurp_communication_read_data(char* buf, size_t cap) {
     return (int)n;
 }
 size_t rurp_communication_write(const char*, size_t n) { return n; }
-#if defined(RURP_PLATFORM_PY32F071)
+#if RURP_HAS_HOST_SESSIONS
 int rurp_communication_tx_failed(void) { return 0; }
 #endif
 void rurp_log_id(uint8_t id, const uint8_t*, uint8_t) {
@@ -111,7 +111,7 @@ void rurp_log_id_wide(uint8_t id, const uint8_t*, uint16_t n) {
 }
 }
 
-#if defined(RURP_PLATFORM_PY32F071)
+#if RURP_HAS_HOST_SESSIONS
 static bool reopened = false;  // the host reopened the USB port
 static bool reopen_in_read = false;  // the host reopens it during a chip read
 bool fs_session_changed(void) { return reopened; }
@@ -123,7 +123,7 @@ static void write_main(firestarter_handle_t* h) {
 }
 
 static void read_main(firestarter_handle_t* h) {
-#if defined(RURP_PLATFORM_PY32F071)
+#if RURP_HAS_HOST_SESSIONS
     if (reopen_in_read) reopened = true;
 #endif
     uint32_t remaining = h->mem_size - h->address;
@@ -181,7 +181,7 @@ static bool has_error() {
 }
 
 int main() {
-#if defined(RURP_PLATFORM_PY32F071)
+#if RURP_HAS_HOST_SESSIONS
     // Only the reopen cases run on this platform.
     // The host reopens the port during a chip read. The read ends before it
     // sends a frame of that step, and does not wait for an ack.
@@ -297,7 +297,9 @@ int main() {
 """
 
 
-@pytest.mark.parametrize("defines", [[], ["-DRURP_PLATFORM_PY32F071"]], ids=["avr", "py32"])
+# The py32 case also sets RURP_HAS_HOST_SESSIONS, as the CMake build does.
+@pytest.mark.parametrize("defines", [[], ["-DRURP_PLATFORM_PY32F071", "-DRURP_HAS_HOST_SESSIONS=1"]],
+                         ids=["avr", "py32"])
 def test_write_and_read_transfer_loops(tmp_path: Path, defines: list[str]) -> None:
     (tmp_path / "Arduino.h").write_text(ARDUINO_H)
     driver = tmp_path / "driver.cpp"

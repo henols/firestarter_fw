@@ -1,6 +1,6 @@
 """Exercise the actual ARM board backend without a connected shield."""
 from ._py32_build import arm_defines
-from ._host_build import FAKE_ARDUINO_H, INCLUDE, REPO_ROOT, host_cxx, compile_ok, run_binary
+from ._host_build import FAKE_ARDUINO_H, INCLUDE, REPO_ROOT, host_cc, host_cxx, compile_ok, run_binary
 
 
 def test_provisional_arm_never_drives_socket_gpio(tmp_path):
@@ -26,22 +26,9 @@ inline void HAL_GPIO_WritePin(GPIO_TypeDef*, uint16_t, GPIO_PinState) { __builti
 #define GPIO_MODE_INPUT 0
 #define GPIO_NOPULL 0
 #define GPIO_PULLUP 1
-inline void HAL_GPIO_Init(GPIO_TypeDef *p, GPIO_InitTypeDef *c) {
-    // Only the selected diagnostic ADC and optional button may be configured.
-    extern unsigned adc_pins, button_pins;
-    if (p == GPIOA && c->Pin ==
-#ifdef RURP_BOARD_MICROPETAL_UNO
-        (1U << 2)
-#else
-        (1U << 4)
-#endif
-         && c->Mode == GPIO_MODE_ANALOG) ++adc_pins;
-#ifdef RURP_BOARD_MICROPETAL_UNO
-    else if (p == GPIOA && c->Pin == (1U << 3) && c->Mode == GPIO_MODE_ANALOG) ++adc_pins;
-#endif
-    else if (p == GPIOB && c->Pin == (1U << 14) && c->Mode == GPIO_MODE_INPUT) ++button_pins;
-    else __builtin_trap();
-}
+// Defined in driver.cpp: the check reads the pin map, which the board
+// header includes after this file.
+void HAL_GPIO_Init(GPIO_TypeDef *p, GPIO_InitTypeDef *c);
 inline GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *p, uint16_t pin) {
     return (p->IDR & pin) ? GPIO_PIN_SET : GPIO_PIN_RESET;
 }
@@ -64,7 +51,7 @@ struct ADC_ChannelConfTypeDef { uint32_t Channel, Rank, SamplingTime; };
 #define HAL_OK 0
 inline int HAL_ADC_Init(ADC_HandleTypeDef*) { return HAL_OK; }
 inline int HAL_ADCEx_Calibration_Start(ADC_HandleTypeDef*) { return HAL_OK; }
-extern unsigned adc_channel, adc_a2, adc_a3;
+extern unsigned adc_channel, adc_a2, adc_a3, adc_vref;
 extern unsigned adc_error, adc_samples;
 extern bool adc_mix_zero;
 inline int HAL_ADC_ConfigChannel(ADC_HandleTypeDef*, ADC_ChannelConfTypeDef* c) { adc_channel = c->Channel; return adc_error == 1 ? 1 : HAL_OK; }
@@ -72,7 +59,7 @@ inline int HAL_ADC_Start(ADC_HandleTypeDef*) { return adc_error == 2 ? 1 : HAL_O
 inline int HAL_ADC_Stop(ADC_HandleTypeDef*) { return HAL_OK; }
 inline int HAL_ADC_PollForConversion(ADC_HandleTypeDef*, unsigned) { return adc_error == 3 ? 1 : HAL_OK; }
 inline unsigned HAL_ADC_GetValue(ADC_HandleTypeDef*) { if (adc_mix_zero) return (++adc_samples % 2) ? 0 : 2048;
-    return adc_channel == 3 ? adc_a3 : adc_a2; }
+    return adc_channel == 3 ? adc_a3 : adc_channel == ADC_CHANNEL_VREFINT ? adc_vref : adc_a2; }
 '''
     for pin in range(16):
         hal += f'\n#define GPIO_PIN_{pin} (1U << {pin})\n'
@@ -83,11 +70,12 @@ inline unsigned HAL_ADC_GetValue(ADC_HandleTypeDef*) { if (adc_mix_zero) return 
 #include <cassert>
 #include "boards/py32f071_rurp_shield.h"
 #include "rurp_shield.h"
+#include "rurp_voltage_math.h"
 unsigned long millis() { return 0; }
 void delayMicroseconds(unsigned long) {}
 GPIO_TypeDef a = {}, b = {};
 unsigned adc_pins, button_pins;
-unsigned adc_channel, adc_a2 = 2048, adc_a3;
+unsigned adc_channel, adc_a2 = 2048, adc_a3, adc_vref = 1489;
 unsigned adc_error, adc_samples;
 bool adc_mix_zero;
 extern "C" void rurp_log_id_u8(uint8_t, uint8_t) {}
@@ -95,10 +83,24 @@ void rurp_serial_begin(unsigned long) {}
 extern "C" rurp_configuration_t *rurp_get_config() {
     static rurp_configuration_t c = {}; return &c;
 }
+void HAL_GPIO_Init(GPIO_TypeDef *p, GPIO_InitTypeDef *c) {
+    // Only the pin-map ADC inputs and the optional button may be configured.
+    if (p == RURP_PY32F071_VPP_ADC_PORT && c->Pin == RURP_PY32F071_VPP_ADC_PIN
+        && c->Mode == GPIO_MODE_ANALOG) ++adc_pins;
+#if RURP_PY32F071_HAS_REVISION_ADC
+    else if (p == RURP_PY32F071_REV_ADC_PORT && c->Pin == RURP_PY32F071_REV_ADC_PIN
+             && c->Mode == GPIO_MODE_ANALOG) ++adc_pins;
+#endif
+#if RURP_PY32F071_HAS_USER_BUTTON
+    else if (p == RURP_PY32F071_BUTTON_PORT && c->Pin == RURP_PY32F071_BUTTON_PIN
+             && c->Mode == GPIO_MODE_INPUT) ++button_pins;
+#endif
+    else __builtin_trap();
+}
 int main() {
     rurp_board_setup();
-    assert(adc_pins == 1 + RURP_PY32F071_HAS_USER_BUTTON && button_pins == RURP_PY32F071_HAS_USER_BUTTON);
-#ifdef RURP_BOARD_MICROPETAL_UNO
+    assert(adc_pins == 1 + RURP_PY32F071_HAS_REVISION_ADC && button_pins == RURP_PY32F071_HAS_USER_BUTTON);
+#ifdef HARDWARE_REVISION
     rurp_get_config()->hardware_revision = 0xFF;
     for (unsigned n = 0; n < 1024; ++n) {
         adc_a3 = n << 2;
@@ -155,6 +157,42 @@ int main() {
         assert(rurp_read_divider_adc() == 0);
     }
     adc_error = 0;
+    // henols/firestarter#186: the rail readers use the shared conversions with
+    // the fixed 1200 mV reference (4096 full scale, not 4095).
+    rurp_configuration_t *cfg = rurp_get_config();
+    cfg->r1 = VALUE_R1;
+    cfg->r2 = VALUE_R2;
+    cfg->bandgap_mv = 1100;  // AVR calibration field; PY32 must ignore it
+    adc_vref = 1489;
+    assert(rurp_read_vcc_mv() == 3301);
+    const uint32_t ref = rurp_reference_mv(cfg->bandgap_mv);
+    assert(ref == 1200);
+    const unsigned vrefs[] = {0, 1, 1000, 1489, 1500, 4095};
+    const unsigned dividers[] = {0, 1, 100, 1024, 2048, 4095};
+    for (unsigned vref : vrefs) {
+        for (unsigned div : dividers) {
+            adc_vref = vref;
+            adc_a2 = div;
+            assert(rurp_read_vcc_mv() == rurp_scale_vcc_mv(vref, ref));
+            assert(rurp_read_voltage_mv() ==
+                   rurp_scale_voltage_mv(div, vref, VALUE_R1, VALUE_R2, ref));
+        }
+    }
+    adc_vref = 1489;
+    adc_a2 = 2048;
+    assert(rurp_read_voltage_mv() == rurp_scale_voltage_mv(2048, 1489, VALUE_R1, VALUE_R2, 1200));
+    assert(rurp_read_voltage_mv() == 11778);  // 2048 counts, VREFINT 1489, default divider
+    cfg->r2 = 0;
+    assert(rurp_read_voltage_mv() == 0);
+    // A negative r1 or r2 wraps to a large uint32 and must also read 0.
+    const long bad[][2] = {{-1, VALUE_R2}, {VALUE_R1, -5}, {INT32_MIN, VALUE_R2}};
+    for (const auto &pair : bad) {
+        cfg->r1 = pair[0];
+        cfg->r2 = pair[1];
+        assert(rurp_read_voltage_mv() == 0);
+    }
+    cfg->r1 = VALUE_R1;
+    cfg->r2 = VALUE_R2;
     rurp_set_data_output();
     assert(b.MODER == 0);
 #if RURP_PY32F071_HAS_USER_BUTTON
@@ -167,10 +205,13 @@ int main() {
 #endif
 }
 ''')
+    math = tmp_path / 'rurp_voltage_math.o'
+    compile_ok([host_cc(), '-std=c11', *defines, '-UNDEBUG', '-I', INCLUDE,
+                '-c', REPO_ROOT / 'src/rurp_voltage_math.c', '-o', math])
     binary = tmp_path / 'test'
     compile_ok([host_cxx(), '-std=c++17', *defines, '-UNDEBUG', '-ffunction-sections', '-fdata-sections',
                 '-I', tmp_path, '-I', INCLUDE,
-                driver, REPO_ROOT / 'platform/py32f071/src/py32f071_rurp_shield.cpp',
+                driver, REPO_ROOT / 'platform/py32f071/src/py32f071_rurp_shield.cpp', math,
                 '-o', binary])
     result = run_binary(binary)
     assert result.returncode == 0, result.stderr

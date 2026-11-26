@@ -143,7 +143,7 @@ long rurp_get_bandgap_adc_reading() {
 
 uint16_t rurp_read_vcc_mv() {
     return rurp_scale_vcc_mv((uint32_t)rurp_get_bandgap_adc_reading(),
-                             rurp_get_config()->bandgap_mv);
+                             rurp_reference_mv(rurp_get_config()->bandgap_mv));
 }
 
 uint16_t rurp_read_divider_adc() {
@@ -160,6 +160,6 @@ uint16_t rurp_read_voltage_mv() {
 
     return rurp_scale_voltage_mv(voltage_adc_reading, (uint32_t)bandgap_adc_reading,
                                  (uint32_t)rurp_config->r1, (uint32_t)rurp_config->r2,
-                                 rurp_config->bandgap_mv);
+                                 rurp_reference_mv(rurp_config->bandgap_mv));
 }
 #endif

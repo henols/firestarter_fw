@@ -32,8 +32,8 @@ firestarter_handle_t handle;
 
 uint32_t timeout_started_ms = 0;
 
-#if defined(RURP_PLATFORM_PY32F071)
-/* The USB session that sent the active command. */
+#if RURP_HAS_HOST_SESSIONS
+/* The host session that sent the active command. */
 static uint32_t command_session;
 
 bool fs_session_changed(void) {
@@ -204,7 +204,7 @@ void loop() {
         command_done(&handle);
     } else if (handle.cmd == CMD_IDLE) {
         if (rurp_communication_available() > 0) {
-#if defined(RURP_PLATFORM_PY32F071)
+#if RURP_HAS_HOST_SESSIONS
             command_session = rurp_communication_session();
 #endif
             /* The transport reads complete COBS frames and checks CRC8 before command decoding.

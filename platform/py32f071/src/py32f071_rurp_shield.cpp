@@ -4,6 +4,7 @@
 #include "rurp_register_utils.h"
 #include "rurp_serial_utils.h"
 #include "rurp_shield.h"
+#include "rurp_voltage_math.h"
 
 #if !defined(RURP_PLATFORM_PY32F071)
 #error "py32f071_rurp_shield.cpp compiled for the wrong platform"
@@ -78,7 +79,7 @@ void configure_adc()
     analog_input.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(RURP_PY32F071_VPP_ADC_PORT, &analog_input);
 
-#if defined(RURP_BOARD_MICROPETAL_UNO)
+#if RURP_PY32F071_HAS_REVISION_ADC
     analog_input.Pin = RURP_PY32F071_REV_ADC_PIN;
     HAL_GPIO_Init(RURP_PY32F071_REV_ADC_PORT, &analog_input);
 #endif
@@ -158,7 +159,7 @@ void configure_socket_outputs()
 }
 }
 
-#if defined(RURP_BOARD_MICROPETAL_UNO)
+#if RURP_PY32F071_HAS_REVISION_ADC
 extern "C" bool rurp_read_revision_adc10(bool divider, uint16_t *out)
 {
     const uint32_t channel = divider ? RURP_PY32F071_VPP_ADC_CHANNEL : RURP_PY32F071_REV_ADC_CHANNEL;
@@ -281,18 +282,13 @@ extern "C" long rurp_get_bandgap_adc_reading(void)
     return read_adc_average(ADC_CHANNEL_VREFINT, 16U, &value) ? value : 0U;
 }
 
+/* Both readers use the shared ratiometric conversions with the fixed VREFINT
+ * reference. The PY32 build has no dev adc diagnostic. */
 extern "C" uint16_t rurp_read_vcc_mv(void)
 {
     const uint32_t reference_reading =
         static_cast<uint32_t>(rurp_get_bandgap_adc_reading());
-    if (reference_reading == 0U)
-    {
-        return 0U;
-    }
-
-    return static_cast<uint16_t>(
-        (4095UL * 1200UL + reference_reading / 2U) /
-        reference_reading);
+    return rurp_scale_vcc_mv(reference_reading, RURP_FIXED_REFERENCE_MV);
 }
 
 extern "C" uint16_t rurp_read_divider_adc(void)
@@ -303,26 +299,13 @@ extern "C" uint16_t rurp_read_divider_adc(void)
 
 extern "C" uint16_t rurp_read_voltage_mv(void)
 {
-    const uint32_t vcc_mv = rurp_read_vcc_mv();
+    const uint32_t reference_reading =
+        static_cast<uint32_t>(rurp_get_bandgap_adc_reading());
     const uint32_t adc_reading = rurp_read_divider_adc();
     const rurp_configuration_t *const configuration = rurp_get_config();
-
-    if (vcc_mv == 0U || adc_reading == 0U || configuration->r2 == 0U)
-    {
-        return 0U;
-    }
-
-    const uint64_t numerator =
-        static_cast<uint64_t>(adc_reading) *
-        vcc_mv *
-        (configuration->r1 + configuration->r2);
-    const uint64_t denominator =
-        static_cast<uint64_t>(4095U) * configuration->r2;
-
-    const uint64_t measured_mv =
-        (numerator + denominator / 2U) / denominator;
-
-    return measured_mv > 0xFFFFU
-        ? 0xFFFFU
-        : static_cast<uint16_t>(measured_mv);
+    return rurp_scale_voltage_mv(
+        adc_reading, reference_reading,
+        static_cast<uint32_t>(configuration->r1),
+        static_cast<uint32_t>(configuration->r2),
+        RURP_FIXED_REFERENCE_MV);
 }
