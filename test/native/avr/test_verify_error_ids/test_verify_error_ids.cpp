@@ -65,7 +65,6 @@ void setUp(void) {
     captured_frames.clear();
 
     capture_serial_writes();
-    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
     When(Method(ArduinoFake(), delay)).AlwaysReturn();

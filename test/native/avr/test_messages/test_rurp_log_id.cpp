@@ -55,13 +55,17 @@ void setUp(void) {
     ArduinoFakeReset();
     captured.clear();
 
-    // Mock every SERIAL_PORT.write(uint8_t) — accumulate into `captured`.
-    // SerialFake has two write overloads (single-byte and buffer-form); use
-    // OverloadedMethod to pick the single-byte one explicitly.
+    // Mock both SERIAL_PORT.write overloads (single-byte and buffer form)
+    // and accumulate into `captured`.
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t)))
         .AlwaysDo([](uint8_t b) -> size_t {
             captured.push_back(b);
             return (size_t)1;
+        });
+    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t)))
+        .AlwaysDo([](const uint8_t* data, size_t count) -> size_t {
+            captured.insert(captured.end(), data, data + count);
+            return count;
         });
 
     // .flush() is no-op-safe; stub explicitly so ArduinoFake doesn't warn.
@@ -392,6 +396,37 @@ void test_deferred_frame_longer_than_the_slot_is_truncated(void) {
     TEST_ASSERT_EQUAL_MEMORY(params, log.frames[0].params, DEFERRED_PARAM_MAX);
 }
 
+// A short write fails the frame: the emitter sends no later segment and does
+// not flush. Header, params and trailer each take one write call.
+static size_t s_buffer_writes;
+
+void test_short_write_stops_the_frame(void) {
+    s_buffer_writes = 0;
+    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t)))
+        .AlwaysDo([](const uint8_t* data, size_t count) -> size_t {
+            ++s_buffer_writes;
+            captured.insert(captured.end(), data, data + count);
+            return s_buffer_writes == 2 ? count - 1 : count;
+        });
+    uint8_t params[4] = { 0x00, 0x01, 0x00, 0x00 };
+    rurp_log_id(MSG_WARN_MEM_SIZE_TOO_SMALL, params, 4);
+
+    TEST_ASSERT_EQUAL_size_t(2, s_buffer_writes);
+    TEST_ASSERT_EQUAL_size_t(7 + 4, captured.size());
+    Verify(Method(ArduinoFake(Serial), flush)).Never();
+}
+
+void test_frame_takes_one_write_per_segment(void) {
+    uint8_t params[300];
+    for (size_t i = 0; i < sizeof(params); i++) params[i] = (uint8_t)i;
+    rurp_log_id_wide(MSG_DATA_CHUNK, params, sizeof(params));
+
+    TEST_ASSERT_EQUAL_size_t(9 + sizeof(params), captured.size());
+    Verify(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).Exactly(3);
+    Verify(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t))).Never();
+    Verify(Method(ArduinoFake(Serial), flush)).Once();
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -410,6 +445,8 @@ int main(int argc, char** argv) {
     RUN_TEST(test_deferred_full_queue_drops_a_new_info_frame);
     RUN_TEST(test_deferred_queue_without_droppable_frames_keeps_the_first_errors);
     RUN_TEST(test_deferred_frame_longer_than_the_slot_is_truncated);
+    RUN_TEST(test_short_write_stops_the_frame);
+    RUN_TEST(test_frame_takes_one_write_per_segment);
 
     return UNITY_END();
 }

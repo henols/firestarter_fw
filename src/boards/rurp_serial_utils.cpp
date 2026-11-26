@@ -328,10 +328,6 @@ size_t rurp_communication_write(const char* buffer, size_t size) {
 //     byte N+1   : crc8 over [id, params] — poly 0x07, seed 0x00, no refl, no XOR
 //     byte N+2   : 0x0A re-sync anchor (NOT a delimiter; len is authoritative)
 
-// 4-byte magic preamble: alternating-bit pattern, statistically incompatible
-// with single-byte PORTD address-line patterns on the Uno.
-static const uint8_t MAGIC_PREAMBLE[4] PROGMEM = { 0xAA, 0x55, 0xAA, 0x55 };
-
 // CRC8-CCITT (poly 0x07, seed 0x00) — precomputed table. Sanity: t[0^0x01] = t[1] = 0x07.
 static const uint8_t CRC8_TABLE[256] PROGMEM = {
     0x00, 0x07, 0x0E, 0x09, 0x1C, 0x1B, 0x12, 0x15, 0x38, 0x3F, 0x36, 0x31, 0x24, 0x23, 0x2A, 0x2D,
@@ -356,7 +352,20 @@ static uint8_t crc8_ccitt(uint8_t crc, uint8_t b) {
     return pgm_read_byte(&CRC8_TABLE[crc ^ b]);
 }
 
-// Board-agnostic frame emitter: single-byte writes, .flush() at end. It does
+// Writes one frame segment. Returns false when the frame failed: a short
+// write, or rurp_communication_tx_failed() (always 0 on AVR).
+static bool emit_segment(const uint8_t* data, uint16_t count) {
+    if (count != 0 && SERIAL_PORT.write(data, count) != count) {
+        return false;
+    }
+    return !rurp_communication_tx_failed();
+}
+
+// Board-agnostic frame emitter: one write call per frame segment (header,
+// params, trailer), .flush() at end. On PY32 each write call has a fixed
+// transport cost, so a write per byte makes a 64 KiB read CPU-bound. The USB
+// transport puts the bytes into full packets. When a segment fails, the
+// emitter stops. It does
 // not consult com_mode; the Uno strong override of rurp_log_id gates the call.
 // The narrow _firestarter_emit_frame in rurp_serial_utils.h calls this one, so
 // every frame has the same bytes whatever its parameter count type.
@@ -368,40 +377,32 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
         return;
     }
 
-    rurp_communication_frame_begin();
-    // Magic preamble (4 bytes from PROGMEM).
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[0]));
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[1]));
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[2]));
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[3]));
+    // CRC8 over [id, params]. Calculate it first, so the params go out in
+    // one write call.
+    uint8_t crc = crc8_ccitt(0, id);
+    for (uint16_t i = 0; i < param_count; i++) {
+        crc = crc8_ccitt(crc, params[i]);
+    }
 
     // Length field (u16 big-endian): counts id + params + crc; excludes the
     // len field itself and the trailing 0x0A anchor.
-    uint16_t len_u16 = (uint16_t)(1 + param_count + 1);
-    SERIAL_PORT.write((uint8_t)(len_u16 >> 8));    // MSB
-    SERIAL_PORT.write((uint8_t)(len_u16 & 0xFF));  // LSB
+    const uint16_t len_u16 = (uint16_t)(1 + param_count + 1);
+    // The magic preamble is an alternating-bit pattern, statistically
+    // incompatible with single-byte PORTD address-line patterns on the Uno.
+    const uint8_t header[7] = {
+        0xAA, 0x55, 0xAA, 0x55,
+        (uint8_t)(len_u16 >> 8), (uint8_t)(len_u16 & 0xFF),
+        id,
+    };
+    // CRC byte, then the 0x0A re-sync anchor.
+    const uint8_t trailer[2] = { crc, 0x0A };
 
-    // CRC8 accumulator over [id, params].
-    uint8_t crc = 0;
-
-    // ID.
-    SERIAL_PORT.write(id);
-    crc = crc8_ccitt(crc, id);
-
-    // Params.
-    for (uint16_t i = 0; i < param_count; i++) {
-        uint8_t b = params[i];
-        SERIAL_PORT.write(b);
-        crc = crc8_ccitt(crc, b);
+    rurp_communication_frame_begin();
+    if (emit_segment(header, sizeof(header)) &&
+        emit_segment(params, param_count) &&
+        emit_segment(trailer, sizeof(trailer))) {
+        SERIAL_PORT.flush();
     }
-
-    // CRC byte.
-    SERIAL_PORT.write(crc);
-
-    // 0x0A re-sync anchor.
-    SERIAL_PORT.write((uint8_t)0x0A);
-
-    SERIAL_PORT.flush();
     rurp_communication_frame_end();
 }
 

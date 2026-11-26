@@ -85,9 +85,16 @@ static volatile uint16_t rx_tail;
 static volatile uint16_t tx_head;
 static volatile uint16_t tx_tail;
 static volatile bool tx_busy;
+/* Counts IN completions, ZLPs included. A change means the host is reading. */
+static volatile uint32_t tx_in_completions;
+/* Set while a frame is emitted: send full packets only. Flush and frame end
+ * clear it and send the rest. */
+static volatile bool tx_batching;
+/* The last IN packet was full. The transfer needs a ZLP if no data follows. */
+static volatile bool tx_zlp_due;
 static volatile bool rx_armed;
 /* ISR publishes session changes, main owns all ring resets. A frame keeps
- * its generation across every single-byte Serial.write call. */
+ * its generation across every Serial.write call in the frame. */
 static volatile uint32_t usb_generation;
 static uint32_t applied_generation;
 static uint32_t frame_generation;
@@ -137,6 +144,7 @@ static void usb_apply_session_reset(void)
         rx_armed = false;
     }
     endpoint_reset_pending = false;
+    tx_zlp_due = false;
     reset_pending = false;
     applied_generation = usb_generation;
     tx_failed = false;
@@ -150,19 +158,30 @@ static void usb_restore_irq(uint32_t state)
 
 static void usb_start_next_transmit(void)
 {
-    if (reset_pending || tx_failed || tx_busy || tx_head == tx_tail ||
-        !usb_device_is_configured())
+    if (reset_pending || tx_failed || tx_busy || !usb_device_is_configured())
+    {
+        return;
+    }
+    const uint16_t queued = (uint16_t)((tx_head + FIRESTARTER_USB_TX_CAPACITY - tx_tail) %
+                                       FIRESTARTER_USB_TX_CAPACITY);
+    if (tx_batching ? queued < FIRESTARTER_CDC_MAX_PACKET_SIZE
+                    : queued == 0U && !tx_zlp_due)
     {
         return;
     }
 
+    /* With no data queued, count stays 0 and this sends the ZLP. */
     size_t count = 0U;
-    while (count < sizeof(cdc_in_packet) && tx_tail != tx_head)
+    uint16_t tail = tx_tail;
+    const uint16_t head = tx_head;
+    while (count < sizeof(cdc_in_packet) && tail != head)
     {
-        cdc_in_packet[count++] = tx_buffer[tx_tail];
-        tx_tail = ring_next(tx_tail, FIRESTARTER_USB_TX_CAPACITY);
+        cdc_in_packet[count++] = tx_buffer[tail];
+        tail = ring_next(tail, FIRESTARTER_USB_TX_CAPACITY);
     }
+    tx_tail = tail;
 
+    tx_zlp_due = false;
     tx_busy = true;
     packet_generation = usb_generation;
     if (usbd_ep_start_write(FIRESTARTER_CDC_IN_EP, cdc_in_packet, count) != 0)
@@ -214,20 +233,16 @@ static void firestarter_cdc_bulk_out(uint8_t endpoint, uint32_t byte_count)
 static void firestarter_cdc_bulk_in(uint8_t endpoint, uint32_t byte_count)
 {
     (void)endpoint;
+    ++tx_in_completions;
 
-    if (reset_pending || packet_generation != usb_generation)
-    {
-        tx_busy = false;
-        return;
-    }
-    if (byte_count != 0U &&
-        (byte_count % FIRESTARTER_CDC_MAX_PACKET_SIZE) == 0U)
-    {
-        usbd_ep_start_write(FIRESTARTER_CDC_IN_EP, NULL, 0U);
-        return;
-    }
-
+    /* A transfer that ends on a full packet needs a ZLP. Send it only when
+     * no more data follows: queued data continues the transfer. An old
+     * session packet gets no ZLP. */
+    tx_zlp_due = !reset_pending && packet_generation == usb_generation &&
+                 byte_count == FIRESTARTER_CDC_MAX_PACKET_SIZE;
     tx_busy = false;
+    /* After a reset, the queue holds only new session bytes. Start them
+     * also when the completed packet is from the old session. */
     usb_start_next_transmit();
 }
 
@@ -333,11 +348,15 @@ void rurp_communication_frame_begin(void)
     frame_active = true;
     frame_generation = applied_generation;
     frame_failed = tx_failed || !usb_device_is_configured();
+    tx_batching = true;
     usb_restore_irq(state);
 }
 
 void rurp_communication_frame_end(void)
 {
+    /* A frame that stopped before its flush must not hold back queued bytes. */
+    tx_batching = false;
+    usb_start_next_transmit_safe();
     frame_failed = frame_failed || tx_failed || frame_generation != usb_generation;
     frame_active = false;
 }
@@ -364,7 +383,11 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
 {
     const uint32_t generation = frame_active ? frame_generation : usb_generation;
     size_t count = 0U;
-    uint32_t deadline = RURP_MILLIS() + FIRESTARTER_USB_TIMEOUT_MS;
+    /* The deadline starts at the first pass without progress. A pass that
+     * makes progress reads no clock. */
+    bool stalled = false;
+    uint32_t deadline = 0U;
+    uint32_t completions = tx_in_completions;
     while (count < length)
     {
         const uint32_t state = __get_PRIMASK();
@@ -382,22 +405,46 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
             usb_restore_irq(state);
             break;
         }
-        const uint16_t next = ring_next(tx_head, FIRESTARTER_USB_TX_CAPACITY);
-        const bool full = next == tx_tail;
-        if (!full)
+        /* Copy at most one USB packet per critical section, so the USB ISR
+         * and millis() are never held off for a whole caller buffer. */
+        const size_t before = count;
+        const size_t limit = length - count > FIRESTARTER_CDC_MAX_PACKET_SIZE
+            ? count + FIRESTARTER_CDC_MAX_PACKET_SIZE : length;
+        uint16_t head = tx_head;
+        const uint16_t tail = tx_tail;
+        while (count < limit)
         {
-            tx_buffer[tx_head] = buffer[count++];
-            tx_head = next;
+            const uint16_t next = ring_next(head, FIRESTARTER_USB_TX_CAPACITY);
+            if (next == tail)
+            {
+                break;
+            }
+            tx_buffer[head] = buffer[count++];
+            head = next;
         }
+        tx_head = head;
         usb_start_next_transmit();
         usb_restore_irq(state);
+        /* An accepted byte or an IN completion is progress. Time out only
+         * after FIRESTARTER_USB_TIMEOUT_MS without progress. */
+        if (count != before || completions != tx_in_completions)
+        {
+            completions = tx_in_completions;
+            stalled = false;
+            continue;
+        }
         const uint32_t now = RURP_MILLIS();
-        if (!full) deadline = now + FIRESTARTER_USB_TIMEOUT_MS;
+        if (!stalled)
+        {
+            stalled = true;
+            deadline = now + FIRESTARTER_USB_TIMEOUT_MS;
+        }
         else if ((int32_t)(now - deadline) >= 0)
         {
             frame_failed = tx_failed = true;
             break;
         }
+        RURP_DELAY_US(10);
     }
     return count;
 }
@@ -405,16 +452,40 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
 void py32_usb_flush(void)
 {
     const uint32_t generation = frame_active ? frame_generation : usb_generation;
-    const uint32_t deadline = RURP_MILLIS() + FIRESTARTER_USB_TIMEOUT_MS;
-    usb_start_next_transmit_safe();
-    while (tx_head != tx_tail || tx_busy)
+    uint32_t deadline = RURP_MILLIS() + FIRESTARTER_USB_TIMEOUT_MS;
+    uint32_t completions = tx_in_completions;
+    const uint32_t state = __get_PRIMASK();
+    __disable_irq();
+    /* Bytes queued before a session change are not sent. Discard them now,
+     * so that they do not cause a timeout. */
+    usb_apply_session_reset();
+    tx_batching = false;
+    usb_start_next_transmit();
+    usb_restore_irq(state);
+    while (tx_head != tx_tail || tx_busy || tx_zlp_due)
     {
         if (generation != usb_generation)
         {
             frame_failed = true;
             return;
         }
-        if (tx_failed || (int32_t)(RURP_MILLIS() - deadline) >= 0)
+        if (!usb_device_is_configured())
+        {
+            /* A bus reset stopped the endpoint. A lost ZLP loses no data, so
+             * the frame fails only when data stays unsent. */
+            tx_zlp_due = false;
+            if (tx_head != tx_tail || tx_busy) frame_failed = tx_failed = true;
+            return;
+        }
+        const uint32_t now = RURP_MILLIS();
+        /* Each IN completion, ZLP included, is progress. A slow host that
+         * keeps reading must not time out on the total frame duration. */
+        if (completions != tx_in_completions)
+        {
+            completions = tx_in_completions;
+            deadline = now + FIRESTARTER_USB_TIMEOUT_MS;
+        }
+        if (tx_failed || (int32_t)(now - deadline) >= 0)
         {
             frame_failed = tx_failed = true;
             return;
