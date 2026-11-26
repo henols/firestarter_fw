@@ -147,16 +147,35 @@ bool socket_output_allowed()
     return !RURP_PINMAP_PROVISIONAL;
 }
 
-void configure_socket_outputs()
+/* Preload inactive levels before enabling output drivers.
+ * No provisional check: safe idle must also drive these pins. */
+void configure_control_outputs()
 {
-    if (!socket_output_allowed()) return;
-    /* Preload inactive levels before enabling output drivers. */
     configure_output(RURP_PY32F071_CE_PORT, RURP_PY32F071_CE_PIN, GPIO_PIN_SET);
     configure_output(RURP_PY32F071_OE_PORT, RURP_PY32F071_OE_PIN, GPIO_PIN_SET);
     configure_output(RURP_PY32F071_LSB_PORT, RURP_PY32F071_LSB_PIN, GPIO_PIN_RESET);
     configure_output(RURP_PY32F071_MSB_PORT, RURP_PY32F071_MSB_PIN, GPIO_PIN_RESET);
     configure_output(RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_RESET);
 }
+
+void configure_socket_outputs()
+{
+#if RURP_PY32F071_SAFE_IDLE_AT_RESET
+    // safe_idle already configures these pins and clears the physical latch.
+    return;
+#endif
+    if (!socket_output_allowed()) return;
+    configure_control_outputs();
+}
+
+#if RURP_PY32F071_SAFE_IDLE_AT_RESET
+/* Conservative latch setup, pulse and hold delay at any supported clock.
+ * Does not use TIM3. */
+void settle()
+{
+    for (volatile unsigned n = 0; n < 64; ++n) { __NOP(); }
+}
+#endif
 }
 
 #if RURP_PY32F071_HAS_REVISION_ADC
@@ -171,12 +190,34 @@ extern "C" bool rurp_read_revision_adc10(bool divider, uint16_t *out)
 }
 #endif
 
-extern "C" void rurp_board_setup(void)
+/* Independent of the operation gate: high-Z latch enables are NOT safe on a
+ * populated shield. Zero is the physical all-HV-off byte on every revision.
+ * Do not call the guarded bus APIs here, or depend on revision ADC / USB / TIM3.
+ * This cannot protect the reset/ROM-loader interval: hardware biasing is needed.
+ */
+extern "C" void rurp_board_safe_idle(void)
 {
     RURP_PY32F071_ENABLE_GPIO_CLOCKS();
+#if RURP_PY32F071_SAFE_IDLE_AT_RESET
+    configure_control_outputs();
 
-    configure_socket_outputs();
+    // Preload zero before driving the data bus. Clear an already-random latch,
+    // not just its enable pin; /CE and /OE stay inactive throughout.
+    configure_output(RURP_PY32F071_DATA_PORT, data_pin_mask(), GPIO_PIN_RESET);
+    settle();
+    HAL_GPIO_WritePin(RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_SET);
+    settle();
+    HAL_GPIO_WritePin(RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_RESET);
+    settle();
+#endif
     rurp_set_data_input();
+}
+
+extern "C" void rurp_board_setup(void)
+{
+    // main() already called safe idle. Apply it again: it is idempotent.
+    rurp_board_safe_idle();
+    configure_socket_outputs();
 
 #if RURP_PY32F071_HAS_USER_BUTTON
     GPIO_InitTypeDef button = {};

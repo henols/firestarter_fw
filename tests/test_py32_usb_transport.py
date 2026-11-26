@@ -6,18 +6,24 @@ The mocked USB controller only supplies packets and completion callbacks.
 import pytest
 
 from ._host_build import REPO_ROOT, compile_ok, host_cc, host_cxx, run_binary
-from ._py32_build import arm_defines
+from ._py32_build import arm_defines, pinmap_flag, with_define
 
 
 @pytest.mark.parametrize('stress_size', [None, 4096], ids=['production', '4k-stress'])
-def test_large_usb_frames_and_stalled_host(tmp_path, stress_size):
+@pytest.mark.parametrize('rom_touch', [False, True], ids=['normal', 'rom-touch'])
+def test_large_usb_frames_and_stalled_host(tmp_path, stress_size, rom_touch):
     def transport_defines(source):
         defines = arm_defines(source)
+        if rom_touch and source == 'platform/py32f071/src/usb_cdc.c':
+            if not pinmap_flag(defines, 'RURP_PY32F071_HAS_ROM_TOUCH'):
+                pytest.skip('the pin map has no ROM USB touch')
+            defines = with_define(defines, 'RURP_MICROPETAL_ROM_TOUCH', 1)
+        elif source == 'platform/py32f071/src/usb_cdc.c':
+            defines = with_define(defines, 'RURP_MICROPETAL_ROM_TOUCH', 0)
         # The real image stays at its CMake size. This second configuration
         # stresses streaming across a much smaller USB ring, not shipped RAM.
         if stress_size is not None:
-            defines = [d for d in defines if not d.startswith('-DDATA_BUFFER_SIZE=')]
-            defines.append(f'-DDATA_BUFFER_SIZE={stress_size}')
+            defines = with_define(defines, 'DATA_BUFFER_SIZE', stress_size)
         return defines
     (tmp_path / 'boards').mkdir()
     (tmp_path / 'avr').mkdir()
@@ -40,7 +46,7 @@ uint32_t test_millis(void);
 #define RURP_MILLIS() test_millis()
 #define RURP_DELAY_US(value) ((void)(value))
 ''')
-    (tmp_path / 'usbd_cdc.h').write_text('#include "usbd_core.h"\n')
+    (tmp_path / 'usbd_cdc.h').write_text('#include "usbd_core.h"\nstruct cdc_line_coding { uint32_t dwDTERate; };\n')
     (tmp_path / 'usbd_core.h').write_text('''
 #pragma once
 #define USB_MEM_ALIGNX
@@ -426,6 +432,32 @@ size_t test_packet_count(void) { return packet_count; }
 size_t test_zlp_count(void) { return zlp_count; }
 size_t test_tx_length(void) { return received_count; }
 const uint8_t *test_tx_bytes(void) { return received; }
+void test_rom_touch(void) {
+    assert(!py32_usb_take_rom_request());
+#if RURP_MICROPETAL_ROM_TOUCH
+    struct cdc_line_coding coding = {250000};
+    usbd_cdc_acm_set_dtr(0, false);
+    usbd_cdc_acm_set_line_coding(0, &coding);
+    usbd_cdc_acm_set_dtr(0, true);
+    usbd_cdc_acm_set_dtr(0, false);
+    assert(!py32_usb_take_rom_request());
+    coding.dwDTERate = 1200;
+    usbd_cdc_acm_set_line_coding(1, &coding); // wrong interface
+    usbd_cdc_acm_set_dtr(0, true);
+    usbd_cdc_acm_set_dtr(0, false);
+    assert(!py32_usb_take_rom_request());
+    usbd_cdc_acm_set_line_coding(0, &coding);
+    assert(!py32_usb_take_rom_request()); // rate alone is not a trigger
+    usbd_cdc_acm_set_dtr(0, true);
+    usbd_cdc_acm_set_dtr(0, false);
+    assert(py32_usb_take_rom_request());
+    assert(!py32_usb_take_rom_request()); // consumed exactly once
+    coding.dwDTERate = 250000;
+    usbd_cdc_acm_set_line_coding(0, &coding);
+    (void)py32_usb_available(); // apply DTR session reset before RX tests
+#endif
+}
+
 ''')
 
     driver = tmp_path / 'transport.cpp'
@@ -441,6 +473,7 @@ const uint8_t *test_tx_bytes(void) { return received; }
 
 extern "C" {
 void test_usb_begin(void);
+void test_rom_touch(void);
 void test_rx_backpressure(void);
 void test_feed_rx(const uint8_t *, size_t);
 void test_prepare_tx(int);
@@ -569,6 +602,7 @@ static int decode_from_usb(const std::vector<uint8_t>& encoded, std::vector<char
 
 int main() {
     test_usb_begin();
+    test_rom_touch();
     test_rx_backpressure();
     test_dtr_edge_then_command();
     std::vector<char> decoded(DATA_BUFFER_SIZE + 1);
@@ -867,6 +901,7 @@ int main() {
     compile_ok([host_cc(), '-std=c11',
                 *transport_defines('platform/py32f071/src/usb_cdc.c'),
                 '-UNDEBUG', '-I', tmp_path, '-I', REPO_ROOT,
+                '-I', REPO_ROOT / 'include',
                 '-c', backend, '-o', backend_obj])
     binary = tmp_path / 'transport'
     compile_ok([host_cxx(), '-std=c++17',

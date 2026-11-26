@@ -39,10 +39,19 @@
 #error "The contiguous PY32F071 D0-D7 bus must fit within one 16-pin GPIO port"
 #endif
 
+/* The same rule applies to the safe-idle and ROM-touch flags. */
+#if !defined(RURP_PY32F071_SAFE_IDLE_AT_RESET) || !defined(RURP_PY32F071_HAS_ROM_TOUCH)
+#error "A PY32 pin-map header must define RURP_PY32F071_SAFE_IDLE_AT_RESET and RURP_PY32F071_HAS_ROM_TOUCH (0 or 1)"
+#endif
+#if RURP_MICROPETAL_ROM_TOUCH && !RURP_PY32F071_HAS_ROM_TOUCH
+#error "RURP_MICROPETAL_ROM_TOUCH needs a board with RURP_PY32F071_HAS_ROM_TOUCH 1"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+void rurp_board_safe_idle(void);
 void rurp_communication_begin(void);
 void rurp_timing_init(void);
 

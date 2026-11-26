@@ -1,16 +1,41 @@
 """Exercise the actual ARM board backend without a connected shield."""
-from ._py32_build import arm_defines
+import pytest
+from ._py32_build import arm_defines, board_name, pinmap_flag, with_define
 from ._host_build import FAKE_ARDUINO_H, INCLUDE, REPO_ROOT, host_cc, host_cxx, compile_ok, run_binary
 
 
-def test_provisional_arm_never_drives_socket_gpio(tmp_path):
+@pytest.mark.parametrize("full", [False, True])
+def test_provisional_arm_safe_idle_and_operation_lockout(tmp_path, full):
     defines = arm_defines("platform/py32f071/src/py32f071_rurp_shield.cpp")
+    # MicroPetal powers up with random shield latches: its safe idle must
+    # clear them. The C driver checks that sequence for this flag.
+    if board_name(defines) == 'micropetal_uno':
+        assert pinmap_flag(defines, 'RURP_PY32F071_SAFE_IDLE_AT_RESET') == 1
+    if full and board_name(defines) != 'micropetal_uno':
+        pytest.skip('CMake allows full operation mode only on micropetal_uno')
+    # Set the mode explicitly. Then both cases run with the default and the
+    # full compile database.
+    defines = with_define(defines, 'RURP_PINMAP_PROVISIONAL', 0 if full else 1)
     # Only the HAL and serial transport are fake; the mapping, setup and bus
     # functions under test are the production translation unit.
     hal = r'''
 #pragma once
 #include <stdint.h>
-struct GPIO_TypeDef { uint32_t MODER, OTYPER, PUPDR, BSRR, IDR; };
+#include <cassert>
+#define __NOP() ((void)0)
+extern unsigned bsrr_count;
+extern uint32_t bsrr_trace[2048];
+struct TraceRegister {
+    uint32_t value;
+    operator uint32_t() const { return value; }
+    TraceRegister& operator=(uint32_t v) {
+        assert(bsrr_count < 2048);
+        bsrr_trace[bsrr_count++] = v;
+        value = v;
+        return *this;
+    }
+};
+struct GPIO_TypeDef { uint32_t MODER, OTYPER, PUPDR; TraceRegister BSRR; uint32_t IDR, ODR; };
 extern GPIO_TypeDef a, b;
 #define GPIOA (&a)
 #define GPIOB (&b)
@@ -21,13 +46,13 @@ struct GPIO_InitTypeDef { uint32_t Pin, Mode, Pull, Speed; };
 enum GPIO_PinState { GPIO_PIN_RESET, GPIO_PIN_SET };
 #define GPIO_MODE_OUTPUT_PP 1
 #define GPIO_SPEED_FREQ_HIGH 3
-inline void HAL_GPIO_WritePin(GPIO_TypeDef*, uint16_t, GPIO_PinState) { __builtin_trap(); }
 #define GPIO_MODE_ANALOG 3
 #define GPIO_MODE_INPUT 0
 #define GPIO_NOPULL 0
 #define GPIO_PULLUP 1
-// Defined in driver.cpp: the check reads the pin map, which the board
+// Defined in driver.cpp: the checks read the pin map, which the board
 // header includes after this file.
+void HAL_GPIO_WritePin(GPIO_TypeDef *p, uint16_t pin, GPIO_PinState state);
 void HAL_GPIO_Init(GPIO_TypeDef *p, GPIO_InitTypeDef *c);
 inline GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *p, uint16_t pin) {
     return (p->IDR & pin) ? GPIO_PIN_SET : GPIO_PIN_RESET;
@@ -74,6 +99,9 @@ inline unsigned HAL_ADC_GetValue(ADC_HandleTypeDef*) { if (adc_mix_zero) return 
 unsigned long millis() { return 0; }
 void delayMicroseconds(unsigned long) {}
 GPIO_TypeDef a = {}, b = {};
+unsigned bsrr_count;
+uint32_t bsrr_trace[2048];
+unsigned gpio_writes, gpio_outputs;
 unsigned adc_pins, button_pins;
 unsigned adc_channel, adc_a2 = 2048, adc_a3, adc_vref = 1489;
 unsigned adc_error, adc_samples;
@@ -83,7 +111,71 @@ void rurp_serial_begin(unsigned long) {}
 extern "C" rurp_configuration_t *rurp_get_config() {
     static rurp_configuration_t c = {}; return &c;
 }
+constexpr uint32_t data_pins = 0xFFU << RURP_PY32F071_DATA_SHIFT;
+struct Write { GPIO_TypeDef *port; uint32_t pin; GPIO_PinState state; };
+#if RURP_PY32F071_SAFE_IDLE_AT_RESET
+// Safe idle: preload and drive /CE, /OE high, LSB, MSB, CTRL low, the data
+// bus low, then pulse CTRL to clear the physical control latch.
+const Write safe_idle_writes[] = {
+    {RURP_PY32F071_CE_PORT, RURP_PY32F071_CE_PIN, GPIO_PIN_SET},
+    {RURP_PY32F071_OE_PORT, RURP_PY32F071_OE_PIN, GPIO_PIN_SET},
+    {RURP_PY32F071_LSB_PORT, RURP_PY32F071_LSB_PIN, GPIO_PIN_RESET},
+    {RURP_PY32F071_MSB_PORT, RURP_PY32F071_MSB_PIN, GPIO_PIN_RESET},
+    {RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_RESET},
+    {RURP_PY32F071_DATA_PORT, data_pins, GPIO_PIN_RESET},
+    {RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_SET},
+    {RURP_PY32F071_CONTROL_PORT, RURP_PY32F071_CONTROL_PIN, GPIO_PIN_RESET},
+};
+constexpr unsigned safe_idle_count = 8, safe_idle_output_count = 6;
+#else
+constexpr unsigned safe_idle_count = 0, safe_idle_output_count = 0;
+#endif
+// /CE and /OE high, LSB, MSB, CTRL and the data bus low: no latch can
+// capture an HV-on byte.
+static bool controls_idle() {
+    return (RURP_PY32F071_CE_PORT->ODR & RURP_PY32F071_CE_PIN)
+        && (RURP_PY32F071_OE_PORT->ODR & RURP_PY32F071_OE_PIN)
+        && !(RURP_PY32F071_LSB_PORT->ODR & RURP_PY32F071_LSB_PIN)
+        && !(RURP_PY32F071_MSB_PORT->ODR & RURP_PY32F071_MSB_PIN)
+        && !(RURP_PY32F071_CONTROL_PORT->ODR & RURP_PY32F071_CONTROL_PIN)
+        && !(RURP_PY32F071_DATA_PORT->ODR & data_pins);
+}
+static uint32_t data_modes() {
+    return (RURP_PY32F071_DATA_PORT->MODER >> (RURP_PY32F071_DATA_SHIFT * 2U)) & 0xFFFFU;
+}
+void HAL_GPIO_WritePin(GPIO_TypeDef *p, uint16_t pin, GPIO_PinState state) {
+#if RURP_PY32F071_SAFE_IDLE_AT_RESET
+    assert(gpio_writes < safe_idle_count);
+    const Write &w = safe_idle_writes[gpio_writes];
+    assert(p == w.port && pin == w.pin && state == w.state);
+    if (gpio_writes == 6) {
+        // At the control-latch edge all data drivers hold zero.
+        assert(controls_idle());
+        assert(data_modes() == 0x5555);
+        assert(gpio_outputs == safe_idle_output_count);
+    }
+    ++gpio_writes;
+    if (state == GPIO_PIN_SET) p->ODR |= pin; else p->ODR &= ~pin;
+#else
+    (void)p; (void)pin; (void)state;
+    __builtin_trap();
+#endif
+}
 void HAL_GPIO_Init(GPIO_TypeDef *p, GPIO_InitTypeDef *c) {
+#if RURP_PY32F071_SAFE_IDLE_AT_RESET
+    if (c->Mode == GPIO_MODE_OUTPUT_PP) {
+        assert(gpio_outputs < safe_idle_output_count);
+        const Write &w = safe_idle_writes[gpio_outputs];
+        assert(p == w.port && c->Pin == w.pin);
+        assert(gpio_writes == gpio_outputs + 1); // preload before direction
+        assert(c->Pull == GPIO_NOPULL);
+        for (unsigned bit = 0; bit < 16; ++bit)
+            if (c->Pin & (1U << bit))
+                p->MODER = (p->MODER & ~(3U << (bit*2))) | (1U << (bit*2));
+        ++gpio_outputs;
+        return;
+    }
+#endif
     // Only the pin-map ADC inputs and the optional button may be configured.
     if (p == RURP_PY32F071_VPP_ADC_PORT && c->Pin == RURP_PY32F071_VPP_ADC_PIN
         && c->Mode == GPIO_MODE_ANALOG) ++adc_pins;
@@ -97,8 +189,58 @@ void HAL_GPIO_Init(GPIO_TypeDef *p, GPIO_InitTypeDef *c) {
 #endif
     else __builtin_trap();
 }
+// No pin of the port is in output mode (MODER field 01).
+static bool no_output_mode(const GPIO_TypeDef &p) {
+    for (unsigned bit = 0; bit < 16; ++bit)
+        if (((p.MODER >> (bit * 2)) & 3U) == 1U) return false;
+    return true;
+}
 int main() {
+    // Simulate stale/random control latch inputs and a nonzero bus latch.
+#if RURP_PY32F071_SAFE_IDLE_AT_RESET
+    a.ODR = b.ODR = 0xFFFF;
+#else
+    // PY32 GPIO reset state is analog mode. The provisional generic board
+    // may change pins to input, but never to output.
+    a.MODER = b.MODER = 0xFFFFFFFFU;
+#endif
+    // Exercise the early-main hook before ADC/serial setup, then its safe
+    // reapplication in board setup (the runtime follows this same sequence).
+    rurp_board_safe_idle();
+#if RURP_PY32F071_SAFE_IDLE_AT_RESET
+    assert(gpio_writes == safe_idle_count && gpio_outputs == safe_idle_output_count);
+    assert(adc_pins == 0 && button_pins == 0);
+    gpio_writes = gpio_outputs = 0;
+#else
+    assert(no_output_mode(a) && no_output_mode(b) && a.BSRR == 0 && b.BSRR == 0);
+#endif
     rurp_board_setup();
+#if RURP_PY32F071_SAFE_IDLE_AT_RESET
+    assert(gpio_writes == safe_idle_count && gpio_outputs == safe_idle_output_count);
+    assert(controls_idle());
+    assert(data_modes() == 0); // bus released, control drivers stay active
+#else
+    assert(gpio_writes == 0 && gpio_outputs == 0);
+    assert(no_output_mode(a) && no_output_mode(b));
+#endif
+#if !RURP_PINMAP_PROVISIONAL
+    // Full mode must deliver all 256 data bytes unmodified to CTRL. This
+    // distinguishes real operation enablement from the bench-zero clamp.
+    for (unsigned n = 0; n < 256; ++n) {
+        bsrr_count = 0;
+        rurp_write_data_buffer(n);
+        rurp_set_control_pin(CONTROL_REGISTER, 1);
+        assert(bsrr_count == 2);
+        assert(bsrr_trace[0] == ((n << RURP_PY32F071_DATA_SHIFT)
+            | ((~n & 255U) << (RURP_PY32F071_DATA_SHIFT + 16U))));
+        assert(bsrr_trace[1] == RURP_PY32F071_CONTROL_PIN);
+        rurp_set_control_pin(CONTROL_REGISTER, 0);
+        assert(bsrr_trace[2] == (RURP_PY32F071_CONTROL_PIN << 16U));
+    }
+    return 0;
+#endif
+    const auto idle_mode = b.MODER;
+    const auto idle_odr = b.ODR;
     assert(adc_pins == 1 + RURP_PY32F071_HAS_REVISION_ADC && button_pins == RURP_PY32F071_HAS_USER_BUTTON);
 #ifdef HARDWARE_REVISION
     rurp_get_config()->hardware_revision = 0xFF;
@@ -142,7 +284,7 @@ int main() {
         rurp_write_data_buffer(n);
         rurp_set_control_pin(n, 0);
         rurp_set_control_pin(n, 1);
-        assert(b.BSRR == 0 && b.MODER == 0 && b.OTYPER == 0);
+        assert(b.BSRR == 0 && b.MODER == idle_mode && b.ODR == idle_odr && b.OTYPER == 0);
         assert(a.BSRR == 0);
         b.IDR = n;
         assert(rurp_read_data_buffer() == n);
@@ -194,11 +336,15 @@ int main() {
     cfg->r1 = VALUE_R1;
     cfg->r2 = VALUE_R2;
     rurp_set_data_output();
-    assert(b.MODER == 0);
+    assert(b.MODER == idle_mode);
+#if !RURP_PY32F071_SAFE_IDLE_AT_RESET
+    assert(no_output_mode(a) && no_output_mode(b));
+#endif
+    assert(gpio_writes == safe_idle_count);
 #if RURP_PY32F071_HAS_USER_BUTTON
-    b.IDR = 1U << 14;
+    RURP_PY32F071_BUTTON_PORT->IDR = RURP_PY32F071_BUTTON_PIN;
     assert(!rurp_user_button_pressed());
-    b.IDR = 0;
+    RURP_PY32F071_BUTTON_PORT->IDR = 0;
     assert(rurp_user_button_pressed());
 #else
     assert(!rurp_user_button_pressed());

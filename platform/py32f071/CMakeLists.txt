@@ -36,6 +36,39 @@ set(RURP_PROVISIONAL_micropetal_uno 1)
 # then set RURP_PY32F071_HAS_REVISION_ADC 1; the board header checks this.
 set(RURP_HARDWARE_REVISION_py32f071 0)
 set(RURP_HARDWARE_REVISION_micropetal_uno 1)
+option(RURP_MICROPETAL_ROM_TOUCH "Experimental 1200-baud touch into factory ROM USB loader" OFF)
+if(RURP_MICROPETAL_ROM_TOUCH AND NOT RURP_BOARD STREQUAL "micropetal_uno")
+    message(FATAL_ERROR "ROM touch requires MicroPetal")
+endif()
+option(RURP_MICROPETAL_FULL "Enable all implemented MicroPetal socket operations (experimental)" OFF)
+option(RURP_DEV_TOOLS "Include development diagnostics" OFF)
+# Optional version for an untagged local build: -DRURP_BUILD_VERSION=<text>.
+# -D writes the cache. Copy the value, then remove the cache entry, so that
+# a later configure of this build directory does not use an old value.
+set(RURP_LOCAL_BUILD_VERSION "${RURP_BUILD_VERSION}")
+# An earlier revision of this file kept the value as a cache option with this
+# help text. Do not use such an old value.
+get_property(RURP_BUILD_VERSION_HELP CACHE RURP_BUILD_VERSION PROPERTY HELPSTRING)
+if(RURP_BUILD_VERSION_HELP STREQUAL "Version for an untagged local build")
+    message(WARNING
+        "Ignored RURP_BUILD_VERSION from an old CMake cache. "
+        "Give -DRURP_BUILD_VERSION=<text> again to label this build.")
+    set(RURP_LOCAL_BUILD_VERSION "")
+endif()
+unset(RURP_BUILD_VERSION CACHE)
+if(RURP_MICROPETAL_FULL)
+    if(NOT RURP_BOARD STREQUAL "micropetal_uno")
+        message(FATAL_ERROR "Full operation mode requires MicroPetal")
+    endif()
+    set(RURP_PROVISIONAL_micropetal_uno 0)
+endif()
+# A provisional build blocks all register writes, so the dev commands would
+# report values that the shield never received.
+if(RURP_DEV_TOOLS AND NOT RURP_MICROPETAL_FULL)
+    message(FATAL_ERROR
+        "RURP_DEV_TOOLS=ON requires RURP_MICROPETAL_FULL=ON "
+        "(and RURP_BOARD=micropetal_uno)")
+endif()
 set(TARGET_NAME firestarter_${RURP_BOARD}.elf)
 set(REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 set(PY32_SDK_ROOT "${py32f071_sdk_SOURCE_DIR}")
@@ -44,7 +77,6 @@ set(LINKER_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/linker/PY32F071xB_FLASH.ld")
 # PY32_EXCLUDED: src/boards/uno_rurp_shield.cpp -- AVR board impl, no ARM analogue
 # PY32_EXCLUDED: src/boards/leonardo_rurp_shield.cpp -- AVR board impl, no ARM analogue
 # PY32_EXCLUDED: src/boards/rurp_common.cpp -- AVR-specific common
-# PY32_EXCLUDED: src/dev_tools.cpp -- ARM uses the shared DEV_TOOLS=0 default
 # PY32_EXCLUDED: src/boards/rurp_config_storage_eeprom.cpp -- AVR EEPROM backend, no ARM analogue
 # PY32_EXCLUDED: src/boards/rurp_revision_adc.cpp -- AVR analog-pin reader; py32f071_rurp_shield.cpp has the ARM one
 set(FIRESTARTER_COMMON_SOURCES
@@ -71,9 +103,14 @@ set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/proms/not_implemented.cpp"
 )
 
+if(RURP_DEV_TOOLS)
+    list(APPEND FIRESTARTER_COMMON_SOURCES "${REPOSITORY_ROOT}/src/dev_tools.cpp")
+endif()
+
 set(PY32_PLATFORM_SOURCES
     startup/startup_py32f071.s
     src/main.cpp
+    src/rom_boot.cpp
     src/platform_compat.cpp
     src/timing.cpp
     src/usb_cdc.c
@@ -122,7 +159,7 @@ target_include_directories(
         "${PY32_SDK_ROOT}/Middlewares/Third_Party/CherryUSB/class/cdc"
 )
 
-# ARM uses the shared DEV_TOOLS=0 default.
+# Development diagnostics are opt-in through RURP_DEV_TOOLS below.
 # The pin-map guard requires an explicitly configured board to avoid silently
 # compiling provisional GPIO mappings. No PY32 PCB exists to validate the DAC,
 # so keep the VPP DAC capability disabled until real hardware is available.
@@ -148,6 +185,19 @@ target_compile_definitions(
 
 if(RURP_HARDWARE_REVISION_${RURP_BOARD})
     target_compile_definitions(${TARGET_NAME} PRIVATE HARDWARE_REVISION=1)
+endif()
+
+if(RURP_DEV_TOOLS)
+    target_compile_definitions(${TARGET_NAME} PRIVATE DEV_TOOLS=1)
+endif()
+if(RURP_LOCAL_BUILD_VERSION)
+    message(STATUS "Local build version: ${RURP_LOCAL_BUILD_VERSION}")
+    target_compile_definitions(${TARGET_NAME} PRIVATE VERSION="${RURP_LOCAL_BUILD_VERSION}")
+endif()
+
+
+if(RURP_MICROPETAL_ROM_TOUCH)
+    target_compile_definitions(${TARGET_NAME} PRIVATE RURP_MICROPETAL_ROM_TOUCH=1)
 endif()
 
 target_compile_features(${TARGET_NAME} PRIVATE c_std_11 cxx_std_17)

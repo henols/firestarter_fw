@@ -27,10 +27,20 @@ inputs:
     description: PY32F071 board target
     default: py32f071
     required: false
+  experimental_micropetal:
+    description: Enable full MicroPetal operations, ROM touch and diagnostics for CI
+    default: OFF
+    required: false
+  build_dir:
+    description: >
+      CMake build directory, relative to the workspace. Empty means
+      build/<board>. A second build of the same board needs its own value.
+    default: ''
+    required: false
   deps-dir:
     description: >
       FetchContent base directory, relative to the workspace. Two builds that
-      give the same value share one SDK clone. Empty means build/<board>/_deps.
+      give the same value share one SDK clone. Empty means <build_dir>/_deps.
     default: ''
     required: false
 outputs:
@@ -83,16 +93,20 @@ runs:
       name: Configure
       shell: bash
       env:
-        DEPS_DIR: ${{ inputs.deps-dir || format('build/{0}/_deps', inputs.board) }}
+        BUILD_DIR: ${{ inputs.build_dir || format('build/{0}', inputs.board) }}
+        DEPS_DIR: ${{ inputs.deps-dir || format('{0}/_deps', inputs.build_dir || format('build/{0}', inputs.board)) }}
       run: |
         set -o pipefail
         cmake \
           -S platform/py32f071 \
-          -B "build/${{ inputs.board }}" \
+          -B "$BUILD_DIR" \
           -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
           -DRURP_BOARD="${{ inputs.board }}" \
+          -DRURP_MICROPETAL_FULL="${{ inputs.experimental_micropetal }}" \
+          -DRURP_MICROPETAL_ROM_TOUCH="${{ inputs.experimental_micropetal }}" \
+          -DRURP_DEV_TOOLS="${{ inputs.experimental_micropetal }}" \
           -DFETCHCONTENT_BASE_DIR:PATH="$PWD/$DEPS_DIR" \
           2>&1 | tee configure.log
         # Composite steps inherit the caller's checked-out workspace.
@@ -101,13 +115,13 @@ runs:
       name: Build and resolve outputs
       shell: bash
       env:
-        DEPS_DIR: ${{ inputs.deps-dir || format('build/{0}/_deps', inputs.board) }}
+        BUILD_DIR: ${{ inputs.build_dir || format('build/{0}', inputs.board) }}
+        DEPS_DIR: ${{ inputs.deps-dir || format('{0}/_deps', inputs.build_dir || format('build/{0}', inputs.board)) }}
       run: |
         set -o pipefail
-        # One directory per board (henols/firestarter#187): a second board
-        # built in the same job must not add a second image to the first one's
+        # One directory per build (henols/firestarter#187): a second build in
+        # the same job must not add a second image to the first one's
         # directory, or the exactly-one-image check below fails.
-        BUILD_DIR="build/${{ inputs.board }}"
         cmake --build "$BUILD_DIR" 2>&1 | tee build.log
 
         # With nullglob, missing images produce zero matches instead of a literal

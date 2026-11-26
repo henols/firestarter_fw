@@ -372,3 +372,31 @@ The read-operation TX check is the result of the current MSG_DATA_CHUNK frame, n
 MicroPetal revision detection runs before USB enumeration, so its boot-time UNKNOWN warning is not delivered on ARM. The normal ready reply reports the effective hardware revision, including UNKNOWN when no override is set. This is not proof of physical shield identification.
 
 Operator build/install and board-arrival procedures live in the [MicroPetal wiki](https://github.com/henols/firestarter/wiki/MicroPetal-Uno) and [bring-up checklist](https://github.com/henols/firestarter/wiki/MicroPetal-Bring-up), not a second per-board design record.
+
+### MicroPetal application safe idle
+
+MicroPetal preloads /CE and /OE high and the latch enables low before it
+enables output drivers. It then writes zero to the physical control latch
+with the data bus actively driven, and releases the data bus. This runs
+before clock, ADC and USB initialization, independently of operation refusal.
+It cannot protect reset or ROM-loader intervals; those require hardware bias.
+The pin-map flag `RURP_PY32F071_SAFE_IDLE_AT_RESET 1` selects this sequence.
+The board header refuses a pin map that does not define the flag.
+
+### Experimental full operations and ROM entry
+
+The default build stays provisional. `RURP_MICROPETAL_FULL=ON` explicitly
+enables the implemented socket commands on MicroPetal only; it is not chip
+programming qualification. `RURP_DEV_TOOLS=ON` includes the shared register,
+address and raw ADC diagnostics. It requires `RURP_MICROPETAL_FULL=ON`.
+PY32 raw ADC uses fixed 1200 mV VREFINT, not stored AVR calibration.
+`RURP_BUILD_VERSION` labels an untagged bench build. CMake does not keep it in
+the cache: give it again at each configure.
+
+`RURP_MICROPETAL_ROM_TOUCH=ON` enables a 1200-baud DTR close request. Main
+checks BOOT0 low and ROM vectors, clears shield controls, resets USB, holds
+fixed-pull-up D+ low for 100 ms, resets clocks/interrupt state, and jumps to
+ROM. The pin map must set `RURP_PY32F071_HAS_ROM_TOUCH 1`.
+The socket must be empty. A successful physical attempt and a later
+failed re-enumeration were observed: keep hardware BOOT/RESET recovery and
+do not present this opt-in experiment as reliable unattended installation.

@@ -53,10 +53,10 @@ void configure_memory(firestarter_handle_t* handle) {
     // board header), refuse every command that can energise the PROM bus, BEFORE
     // any handler is configured. The three operation pointers are still NULL here,
     // so this early return leaves the handle exactly as configure_not_implemented()
-    // would. The payload is the COMMAND ordinal, not the protocol ordinal. On AVR
+    // would. MSG_ERR_NOT_SUPPORTED has no parameters in the wire catalog. On AVR
     // targets RURP_PINMAP_PROVISIONAL is never defined, so this compiles to nothing.
     if (rurp_pinmap_refuses(handle->cmd)) {
-        LOG_ERROR_ID_U8(MSG_ERR_NOT_SUPPORTED, (uint8_t)handle->cmd);
+        LOG_ERROR_ID(MSG_ERR_NOT_SUPPORTED);
         handle->response_code = RESPONSE_CODE_ERROR;
         return;
     }

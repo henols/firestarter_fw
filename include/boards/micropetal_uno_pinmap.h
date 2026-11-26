@@ -12,9 +12,15 @@
 
 /* MicroPetal Uno R1, non-E PY32F071C1BU6. See platform/py32f071/DESIGN.md.
  * U4 CAN transceiver is DNP on the F071 assembly: D8/D9 are available.
- * Keep socket outputs disabled until ARM shield-revision routing
- * and the board backend are validated on hardware.
+ * Keep socket operations disabled until the board backend is validated.
+ * Startup must still drive latch enables low, /CE and /OE high, and clear
+ * the physical control latch: floating controls are not electrically safe.
  */
+/* 1: rurp_board_safe_idle() drives the controls and clears the latches. */
+#define RURP_PY32F071_SAFE_IDLE_AT_RESET 1
+/* 1: the 1200-baud touch can enter the factory ROM USB loader (PA12 D+ has
+ * a fixed pull-up, BOOT0 is on PF8). */
+#define RURP_PY32F071_HAS_ROM_TOUCH 1
 #define RURP_PY32F071_LSB_PORT GPIOB
 #define RURP_PY32F071_LSB_PIN GPIO_PIN_8
 #define RURP_PY32F071_MSB_PORT GPIOB

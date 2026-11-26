@@ -4,6 +4,7 @@
 
 #include "boards/py32f071_rurp_shield.h"
 #include "rurp_platform.h"
+#include "rurp_rom_touch.h"
 #include "rurp_shield.h"
 #include "usbd_cdc.h"
 #include "usbd_core.h"
@@ -281,9 +282,37 @@ static struct usbd_endpoint cdc_in_endpoint = {
     .ep_cb = firestarter_cdc_bulk_in
 };
 
+#if RURP_MICROPETAL_ROM_TOUCH
+static volatile rurp_rom_touch_state_t rom_touch;
+void usbd_cdc_acm_set_line_coding(uint8_t interface_number, struct cdc_line_coding *coding)
+{
+    if (interface_number == 0U)
+        rurp_rom_touch_rate(&rom_touch, coding->dwDTERate, dtr_enabled);
+}
+#endif
+
+bool py32_usb_take_rom_request(void)
+{
+#if RURP_MICROPETAL_ROM_TOUCH
+    // Main loop calls this on each pass. Mask IRQs only when a request is set.
+    if (!rom_touch.pending) return false;
+    const uint32_t irq = __get_PRIMASK();
+    __disable_irq();
+    const bool pending = rom_touch.pending;
+    rom_touch.pending = false;
+    usb_restore_irq(irq);
+    return pending;
+#else
+    return false;
+#endif
+}
+
 void usbd_cdc_acm_set_dtr(uint8_t interface_number, bool enabled)
 {
     if (interface_number != 0U || dtr_enabled == enabled) return;
+#if RURP_MICROPETAL_ROM_TOUCH
+    rurp_rom_touch_dtr(&rom_touch, enabled);
+#endif
     dtr_enabled = enabled;
     ++usb_generation;
     reset_pending = true;
