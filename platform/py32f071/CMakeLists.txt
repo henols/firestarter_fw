@@ -32,6 +32,10 @@ if(NOT RURP_BOARD IN_LIST RURP_BOARDS)
 endif()
 set(RURP_PROVISIONAL_py32f071 1)
 set(RURP_PROVISIONAL_micropetal_uno 1)
+# 1 when the board reads the shield revision on an ADC input. The pin map must
+# then set RURP_PY32F071_HAS_REVISION_ADC 1; the board header checks this.
+set(RURP_HARDWARE_REVISION_py32f071 0)
+set(RURP_HARDWARE_REVISION_micropetal_uno 1)
 set(TARGET_NAME firestarter_${RURP_BOARD}.elf)
 set(REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 set(PY32_SDK_ROOT "${py32f071_sdk_SOURCE_DIR}")
@@ -42,6 +46,7 @@ set(LINKER_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/linker/PY32F071xB_FLASH.ld")
 # PY32_EXCLUDED: src/boards/rurp_common.cpp -- AVR-specific common
 # PY32_EXCLUDED: src/dev_tools.cpp -- ARM uses the shared DEV_TOOLS=0 default
 # PY32_EXCLUDED: src/boards/rurp_config_storage_eeprom.cpp -- AVR EEPROM backend, no ARM analogue
+# PY32_EXCLUDED: src/boards/rurp_revision_adc.cpp -- AVR analog-pin reader; py32f071_rurp_shield.cpp has the ARM one
 set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/firestarter.cpp"
     "${REPOSITORY_ROOT}/src/eprom_operations.cpp"
@@ -137,10 +142,12 @@ target_compile_definitions(
         # to every translation unit, not only the hardware backend.
         RURP_PINMAP_PROVISIONAL=${RURP_PROVISIONAL_${RURP_BOARD}}
         RURP_HAS_VPP_DAC=0
+        # USB CDC starts a new host session on each port open (rurp_shield.h).
+        RURP_HAS_HOST_SESSIONS=1
 )
 
-if(RURP_BOARD STREQUAL "micropetal_uno")
-    target_compile_definitions(${TARGET_NAME} PRIVATE RURP_BOARD_MICROPETAL_UNO=1 HARDWARE_REVISION=1)
+if(RURP_HARDWARE_REVISION_${RURP_BOARD})
+    target_compile_definitions(${TARGET_NAME} PRIVATE HARDWARE_REVISION=1)
 endif()
 
 target_compile_features(${TARGET_NAME} PRIVATE c_std_11 cxx_std_17)
