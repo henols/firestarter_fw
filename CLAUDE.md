@@ -21,7 +21,7 @@ Three workflows exist. Read the trigger before you decide that CI tested a commi
 | Workflow | Fires on | Publishes |
 |---|---|---|
 | `build.yml` | A push to any branch, and every pull request | Nothing. It is CI only. |
-| `release.yml` | A push of a version tag `X.Y.Z`, `X.Y.ZbN` or `X.Y.ZrcN` on `main` | **A GitHub release.** A `b`/`rc` tag gives a pre-release with dev tools and the py32f071 image. A plain tag gives a stable release marked Latest, without dev tools. |
+| `release.yml` | A push of a version tag `X.Y.Z`, `X.Y.ZbN` or `X.Y.ZrcN` on `main` | **A GitHub release.** A `b`/`rc` tag gives a pre-release with dev tools and the two PY32 images (`py32f071` and `micropetal_uno`). A plain tag gives a stable release marked Latest, without dev tools. |
 | `py32f071.yml` | A push to any branch, and pull requests that touch ARM paths | Nothing. It is the ARM build gate and never continues on error. |
 
 **Only a version tag publishes.** A merge to `main` publishes nothing. To make a release, use the

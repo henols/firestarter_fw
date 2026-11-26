@@ -23,28 +23,19 @@ import re
 import shlex
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
+from ._compile_db import COMPILE_COMMANDS_ENV, compile_defines, defines_from_argv
 from ._host_build import INCLUDE, REPO_ROOT, host_cxx, run_binary, run_compiler
 
-_SEAM_SRC = REPO_ROOT / "src" / "rurp_vpp.cpp"
-_PY32_COMPILE_COMMANDS_ENV = "FIRESTARTER_PY32_COMPILE_COMMANDS"
+# The relative name finds the entry in compile_commands.json. The absolute
+# path lets g++ find the file from any working directory.
+_SEAM_SRC = "src/rurp_vpp.cpp"
+_SEAM_PATH = REPO_ROOT / _SEAM_SRC
 
 _EXPECTED_MODE_MANUAL = 0
 _EXPECTED_RESULT_MANUAL_REQUIRED = 1
-
-
-def _defines_from_argv(tokens):
-    """The -D definitions in a compiler argv, one token per argument."""
-    defines = []
-    for index, token in enumerate(tokens):
-        if token == "-D" and index + 1 < len(tokens):
-            defines.append(tokens[index + 1])
-        elif token.startswith("-D") and len(token) > 2:
-            defines.append(token[2:])
-    return defines
 
 
 def _avr_macro_sets():
@@ -65,7 +56,7 @@ def _avr_macro_sets():
         if not section.startswith("env:") or options.get("platform") != "atmelavr":
             continue
         tokens = [token for flag in options.get("build_flags", []) for token in shlex.split(flag)]
-        defines = _defines_from_argv(tokens)
+        defines = defines_from_argv(tokens)
         params.append(pytest.param(("__AVR__", *defines), id=section[len("env:"):]))
     return params, None
 
@@ -75,24 +66,23 @@ def _py32_macro_set():
     src/rurp_vpp.cpp, read from the compile_commands.json that CMake wrote.
     A skip mark when the environment variable is not set; an error string
     (which fails the test) when the file has no entry for that source."""
-    path = os.environ.get(_PY32_COMPILE_COMMANDS_ENV)
+    path = os.environ.get(COMPILE_COMMANDS_ENV)
     if not path:
         return pytest.param(
             None,
             id="py32f071",
             marks=pytest.mark.skip(
                 reason=(
-                    f"{_PY32_COMPILE_COMMANDS_ENV} is not set: configure platform/py32f071 "
+                    f"{COMPILE_COMMANDS_ENV} is not set: configure platform/py32f071 "
                     "with -DCMAKE_EXPORT_COMPILE_COMMANDS=ON and point the variable at the "
                     "compile_commands.json to test the py32f071 macro set"
                 )
             ),
         )
-    for entry in json.loads(Path(path).read_text()):
-        if (Path(entry["directory"]) / entry["file"]).resolve() == _SEAM_SRC:
-            tokens = entry["arguments"] if "arguments" in entry else shlex.split(entry["command"])
-            return pytest.param(tuple(_defines_from_argv(tokens)), id="py32f071")
-    return pytest.param(f"{path} has no entry for {_SEAM_SRC}", id="py32f071")
+    try:
+        return pytest.param(tuple(compile_defines(path, _SEAM_SRC)), id="py32f071")
+    except LookupError as error:
+        return pytest.param(str(error), id="py32f071")
 
 
 _AVR_MACRO_SETS, _AVR_CONFIG_ERROR = _avr_macro_sets()
@@ -160,7 +150,7 @@ def test_manual_control_on_every_board_macro_set(tmp_path, defines):
     tu_path = _write_shim_tu(tmp_path)
     binary_path = tmp_path / "seam_under_test"
 
-    compile_result = _compile(defines, (tu_path, _SEAM_SRC), binary_path)
+    compile_result = _compile(defines, (tu_path, _SEAM_PATH), binary_path)
     assert compile_result.returncode == 0, (
         f"expected a clean compile for board macro-set {defines!r}.\n"
         f"stdout:\n{compile_result.stdout}\nstderr:\n{compile_result.stderr}"
@@ -208,7 +198,7 @@ def test_forced_capability_macro_fails_closed_in_the_source(tmp_path):
     "the macro is genuinely consulted" argument would evaporate."""
     binary_path = tmp_path / "forced_capability"
 
-    result = _compile(("__AVR__", "RURP_HAS_VPP_DAC=1"), (_SEAM_SRC,), binary_path)
+    result = _compile(("__AVR__", "RURP_HAS_VPP_DAC=1"), (_SEAM_PATH,), binary_path)
 
     assert result.returncode != 0, (
         "expected a non-zero compile exit with RURP_HAS_VPP_DAC forced to 1 "

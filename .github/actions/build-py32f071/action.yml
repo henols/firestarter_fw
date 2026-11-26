@@ -27,6 +27,12 @@ inputs:
     description: PY32F071 board target
     default: py32f071
     required: false
+  deps-dir:
+    description: >
+      FetchContent base directory, relative to the workspace. Two builds that
+      give the same value share one SDK clone. Empty means build/<board>/_deps.
+    default: ''
+    required: false
 outputs:
   hex_path:
     description: Path to the emitted Intel HEX image
@@ -43,6 +49,13 @@ runs:
       name: Install GNU Arm toolchain and build tools
       shell: bash
       run: |
+        # Skip the install when all tools are present, for example on the
+        # second board build in the same job.
+        if command -v cmake && command -v ninja \
+          && command -v arm-none-eabi-gcc && command -v arm-none-eabi-objcopy; then
+          echo "Toolchain is present. Skip the install."
+          exit 0
+        fi
         sudo apt-get update
         sudo apt-get install -y \
           cmake \
@@ -69,31 +82,40 @@ runs:
     - id: configure
       name: Configure
       shell: bash
+      env:
+        DEPS_DIR: ${{ inputs.deps-dir || format('build/{0}/_deps', inputs.board) }}
       run: |
         set -o pipefail
         cmake \
           -S platform/py32f071 \
-          -B build/py32f071 \
+          -B "build/${{ inputs.board }}" \
           -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
           -DRURP_BOARD="${{ inputs.board }}" \
+          -DFETCHCONTENT_BASE_DIR:PATH="$PWD/$DEPS_DIR" \
           2>&1 | tee configure.log
         # Composite steps inherit the caller's checked-out workspace.
 
     - id: build
       name: Build and resolve outputs
       shell: bash
+      env:
+        DEPS_DIR: ${{ inputs.deps-dir || format('build/{0}/_deps', inputs.board) }}
       run: |
         set -o pipefail
-        cmake --build build/py32f071 2>&1 | tee build.log
+        # One directory per board (henols/firestarter#187): a second board
+        # built in the same job must not add a second image to the first one's
+        # directory, or the exactly-one-image check below fails.
+        BUILD_DIR="build/${{ inputs.board }}"
+        cmake --build "$BUILD_DIR" 2>&1 | tee build.log
 
         # With nullglob, missing images produce zero matches instead of a literal
         # glob. Reject zero or multiple images before publishing.
         shopt -s nullglob
-        MATCHES=(build/py32f071/firestarter_*.hex)
+        MATCHES=("$BUILD_DIR"/firestarter_*.hex)
         if [ "${#MATCHES[@]}" -ne 1 ]; then
-          echo "::error::expected exactly one build/py32f071/firestarter_*.hex, found ${#MATCHES[@]}: ${MATCHES[*]}"
+          echo "::error::expected exactly one $BUILD_DIR/firestarter_*.hex, found ${#MATCHES[@]}: ${MATCHES[*]}"
           exit 1
         fi
         HEX_PATH="${MATCHES[0]}"
@@ -105,8 +127,9 @@ runs:
         # branch v1.23-py32f071-integration, 2026-08-01) -- ninja object
         # paths under _deps/py32f071_sdk-src/ relative to the build dir.
         # This matches CMake's documented default
-        # <binary_dir>/_deps/<lowercaseName>-src.
-        SRC="build/py32f071/_deps/py32f071_sdk-src"
+        # <binary_dir>/_deps/<lowercaseName>-src. The configure step sets
+        # FETCHCONTENT_BASE_DIR to DEPS_DIR, so the source is in DEPS_DIR.
+        SRC="$DEPS_DIR/py32f071_sdk-src"
         if [ ! -d "$SRC" ]; then
           # Deliberately non-fatal here: provenance enforcement is REL-04's
           # concern and its hard gate lives in the release job (Plan

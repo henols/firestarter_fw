@@ -56,6 +56,20 @@ static void test_sum_wraparound_is_refused(void) {
     TEST_ASSERT_EQUAL_UINT8(0, rurp_calibration_is_plausible(0xFFFFFFFFUL, 44000, RURP_BANDGAP_NOMINAL_MV));
 }
 
+// The rail readers cast the signed config fields r1 and r2 to uint32 with no
+// sign check. A negative value must give 0, never a plausible reading.
+static void test_negative_divider_values_read_as_zero(void) {
+    const int32_t cases[][2] = {
+        {-1, 44000}, {270000, -5}, {INT32_MIN, 44000}, {270000, INT32_MIN}, {-1, -1},
+    };
+    for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        const uint32_t r1 = (uint32_t)cases[i][0];
+        const uint32_t r2 = (uint32_t)cases[i][1];
+        TEST_ASSERT_EQUAL_UINT8(0, rurp_calibration_is_plausible(r1, r2, RURP_BANDGAP_MAX_MV));
+        TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_voltage_mv(512, 300, r1, r2, RURP_BANDGAP_MAX_MV));
+    }
+}
+
 static void test_scale_factor_bound_follows_the_adc_width(void) {
     // adc at full scale times k at the bound must fit in uint32.
     uint64_t product = (uint64_t)(RURP_ADC_FULL_SCALE - 1) * (uint64_t)RURP_SCALE_K_MAX;
@@ -76,6 +90,7 @@ int main(int, char**) {
     RUN_TEST(test_max_bandgap_boundary_of_the_sum);
     RUN_TEST(test_nominal_bandgap_accepts_the_sum_bound);
     RUN_TEST(test_sum_wraparound_is_refused);
+    RUN_TEST(test_negative_divider_values_read_as_zero);
     RUN_TEST(test_scale_factor_bound_follows_the_adc_width);
     RUN_TEST(test_scale_voltage_saturates_instead_of_wrapping);
     return UNITY_END();
