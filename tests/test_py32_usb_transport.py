@@ -125,6 +125,7 @@ static bool measure_cs;
 static uint16_t cs_tx_head;
 static size_t max_cs_bytes;
 static unsigned irq_state, unlock_event, timer_event, event_at;
+static unsigned unlock_count_event, unlocks_left;
 static bool event_fired;
 static void host_read_in(void);
 static void fire_event(unsigned kind) {
@@ -157,6 +158,9 @@ void test_enable_irq(void) {
         if (queued > max_cs_bytes) max_cs_bytes = queued;
     }
     if (unlock_event) { unsigned kind = unlock_event; unlock_event = 0; fire_event(kind); }
+    if (unlock_count_event && --unlocks_left == 0) {
+        unsigned kind = unlock_count_event; unlock_count_event = 0; fire_event(kind);
+    }
     if (immediate_host) { while (pending && !paused) host_read_in(); }
 }
 void test_event_during_frame(unsigned kind) {
@@ -164,6 +168,10 @@ void test_event_during_frame(unsigned kind) {
 }
 void test_event_after(unsigned kind, uint32_t ms) {
     timer_event = kind; event_at = now_ms + ms; event_fired = false;
+}
+/* Fire the event at the n-th critical section exit from now. */
+void test_event_after_unlocks(unsigned kind, unsigned n) {
+    unlock_count_event = kind; unlocks_left = n; event_fired = false;
 }
 void test_assert_event_fired(void) { assert(event_fired && !irq_state); }
 void test_ring_reset_ownership(void) {
@@ -270,6 +278,7 @@ void test_prepare_tx(int hold) {
     bus_reset_after_in = false;
     fake_configured = true;
     timer_event = 0U;
+    unlock_count_event = 0U;
     paused = hold != 0;
     now_ms = 0U;
     host_out_armed = false; /* SET_CONFIGURATION cancels the pending OUT read. */
@@ -359,6 +368,7 @@ uint32_t py32_usb_generation(void);
 void test_reopen(void);
 void test_event_during_frame(unsigned);
 void test_event_after(unsigned, uint32_t);
+void test_event_after_unlocks(unsigned, unsigned);
 void test_assert_event_fired(void);
 void test_ring_reset_ownership(void);
 void test_arm_rx_interrupt(void);
@@ -366,6 +376,7 @@ int rurp_communication_tx_failed(void);
 }
 
 static size_t writes_after_failure;
+static size_t write_calls;
 
 struct SerialMock {
     void begin(unsigned long) {}
@@ -375,8 +386,8 @@ struct SerialMock {
     int read() { return py32_usb_read(); }
     int peek() const { return py32_usb_peek(); }
     size_t readBytes(char *out, size_t n) { return py32_usb_read_bytes(out, n); }
-    size_t write(uint8_t b) { note_failed_use(); return py32_usb_write(&b, 1); }
-    size_t write(const uint8_t *p, size_t n) { note_failed_use(); return py32_usb_write(p, n); }
+    size_t write(uint8_t b) { note_failed_use(); ++write_calls; return py32_usb_write(&b, 1); }
+    size_t write(const uint8_t *p, size_t n) { note_failed_use(); ++write_calls; return py32_usb_write(p, n); }
     void flush() { note_failed_use(); py32_usb_flush(); }
     static void note_failed_use() { if (rurp_communication_tx_failed()) ++writes_after_failure; }
 } Serial;
@@ -535,9 +546,13 @@ int main() {
             test_prepare_tx(0);
             test_host_period(period);
             writes_after_failure = 0;
+            write_calls = 0;
             rurp_log_id_wide(id, mixed.data(), params);
             assert(!rurp_communication_tx_failed() && !test_session_tx_failed());
             assert(writes_after_failure == 0);
+            // Each write call has a fixed transport cost: header, params
+            // and trailer take one call each, whatever the frame size.
+            assert(write_calls == (params ? 3U : 2U));
             const auto want = expected_frame(id, mixed.data(), params);
             assert(test_tx_length() == want.size());
             assert(memcmp(test_tx_bytes(), want.data(), want.size()) == 0);
@@ -546,7 +561,7 @@ int main() {
         }
     }
 
-    // A DTR edge in the middle of a frame, while the host reads slowly. Only
+    // A DTR edge in the middle of a frame, during the params write. Only
     // the packet already given to the controller can arrive after the edge.
     // The next frame is complete, it does not time out, and no byte of the
     // old frame follows it.
@@ -556,17 +571,19 @@ int main() {
         const auto old_frame = expected_frame(id, mixed.data(), params);
         test_prepare_tx(0);
         test_host_period(period);
-        // At 260 ms the second packet is in the controller. A 75 ms host
-        // reads it at 300 ms, after the next frame starts its flush. That
+        // Critical sections: frame begin, header, first params packet. The
+        // edge comes after the first packet is in the controller. A 75 ms
+        // host reads it at 75 ms, during the flush of the next frame. That
         // old-session completion must start the new frame.
-        test_event_after(2, 260);
+        test_event_after_unlocks(2, 3);
+        writes_after_failure = 0;
         rurp_log_id_wide(id, mixed.data(), params);
         test_assert_event_fired();
         assert(rurp_communication_tx_failed());
+        assert(writes_after_failure == 0);
         assert(!test_tx_batching() && !test_tx_zlp_due());
         const size_t old_bytes = test_event_received() + test_event_pending();
-        assert(test_event_pending() <= 64);
-        if (period == 75) assert(test_event_pending() == 64);
+        assert(test_event_pending() == 64);
         assert(old_bytes < old_frame.size());
         writes_after_failure = 0;
         rurp_log_id_wide(id, tiny.data(), (uint16_t)tiny.size());

@@ -171,11 +171,14 @@ static void usb_start_next_transmit(void)
 
     /* With no data queued, count stays 0 and this sends the ZLP. */
     size_t count = 0U;
-    while (count < sizeof(cdc_in_packet) && tx_tail != tx_head)
+    uint16_t tail = tx_tail;
+    const uint16_t head = tx_head;
+    while (count < sizeof(cdc_in_packet) && tail != head)
     {
-        cdc_in_packet[count++] = tx_buffer[tx_tail];
-        tx_tail = ring_next(tx_tail, FIRESTARTER_USB_TX_CAPACITY);
+        cdc_in_packet[count++] = tx_buffer[tail];
+        tail = ring_next(tail, FIRESTARTER_USB_TX_CAPACITY);
     }
+    tx_tail = tail;
 
     tx_zlp_due = false;
     tx_busy = true;
@@ -379,7 +382,10 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
 {
     const uint32_t generation = frame_active ? frame_generation : usb_generation;
     size_t count = 0U;
-    uint32_t deadline = RURP_MILLIS() + FIRESTARTER_USB_TIMEOUT_MS;
+    /* The deadline starts at the first pass without progress. A pass that
+     * makes progress reads no clock. */
+    bool stalled = false;
+    uint32_t deadline = 0U;
     uint32_t completions = tx_in_completions;
     while (count < length)
     {
@@ -401,24 +407,35 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
         /* Copy at most one USB packet per critical section, so the USB ISR
          * and millis() are never held off for a whole caller buffer. */
         const size_t before = count;
-        while (count < length && count - before < FIRESTARTER_CDC_MAX_PACKET_SIZE)
+        const size_t limit = length - count > FIRESTARTER_CDC_MAX_PACKET_SIZE
+            ? count + FIRESTARTER_CDC_MAX_PACKET_SIZE : length;
+        uint16_t head = tx_head;
+        const uint16_t tail = tx_tail;
+        while (count < limit)
         {
-            const uint16_t next = ring_next(tx_head, FIRESTARTER_USB_TX_CAPACITY);
-            if (next == tx_tail)
+            const uint16_t next = ring_next(head, FIRESTARTER_USB_TX_CAPACITY);
+            if (next == tail)
             {
                 break;
             }
-            tx_buffer[tx_head] = buffer[count++];
-            tx_head = next;
+            tx_buffer[head] = buffer[count++];
+            head = next;
         }
+        tx_head = head;
         usb_start_next_transmit();
         usb_restore_irq(state);
-        const uint32_t now = RURP_MILLIS();
         /* An accepted byte or an IN completion is progress. Time out only
          * after FIRESTARTER_USB_TIMEOUT_MS without progress. */
         if (count != before || completions != tx_in_completions)
         {
             completions = tx_in_completions;
+            stalled = false;
+            continue;
+        }
+        const uint32_t now = RURP_MILLIS();
+        if (!stalled)
+        {
+            stalled = true;
             deadline = now + FIRESTARTER_USB_TIMEOUT_MS;
         }
         else if ((int32_t)(now - deadline) >= 0)
@@ -426,10 +443,7 @@ size_t py32_usb_write(const uint8_t *buffer, size_t length)
             frame_failed = tx_failed = true;
             break;
         }
-        else
-        {
-            RURP_DELAY_US(10);
-        }
+        RURP_DELAY_US(10);
     }
     return count;
 }

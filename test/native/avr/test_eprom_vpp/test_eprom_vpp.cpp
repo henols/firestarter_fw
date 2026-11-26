@@ -69,7 +69,11 @@ void setUp(void) {
             captured.push_back(b);
             return (size_t)1;
         });
-    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
+    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t)))
+        .AlwaysDo([](const uint8_t* data, size_t count) -> size_t {
+            captured.insert(captured.end(), data, data + count);
+            return count;
+        });
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
     clear_bus_recording();
     set_mock_vpp_mv(0);
