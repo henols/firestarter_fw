@@ -70,11 +70,7 @@ size_t rurp_communication_read_bytes(char* buffer, size_t size) {
 /* Forward declaration: crc8_ccitt is defined below with the PROGMEM table. */
 static uint8_t crc8_ccitt(uint8_t crc, uint8_t b);
 
-#if defined(RURP_PLATFORM_PY32F071)
-static void _drain_to_delimiter(bool wait_on_silence, uint32_t generation) {
-#else
-static void _drain_to_delimiter(bool wait_on_silence) {
-#endif
+static void _drain_to_delimiter(bool wait_on_silence, uint32_t session) {
     /* Consume bytes up to and including the next 0x00 to re-anchor the RX cursor
      * on a frame boundary. This must never hang.
      *
@@ -88,26 +84,20 @@ static void _drain_to_delimiter(bool wait_on_silence) {
      * This is a MID-FRAME INTER-BYTE guard, not an idle timer: loop() gates entry
      * into the decoder on available() > 0, so it is never entered when idle. */
     while (1) {
-#if defined(RURP_PLATFORM_PY32F071)
-        if (generation != py32_usb_generation()) return;
-#endif
+        if (session != rurp_communication_session()) return;
         if (rurp_communication_available() <= 0) {
             if (!wait_on_silence) {
                 return;  /* caller already proved silence; nothing buffered to drain */
             }
             unsigned long start = millis();
             while (rurp_communication_available() <= 0) {
-#if defined(RURP_PLATFORM_PY32F071)
-                if (generation != py32_usb_generation()) return;
-#endif
+                if (session != rurp_communication_session()) return;
                 if (millis() - start >= TIMEOUT_MS) {
                     return;  /* deadline: stop draining, return bounded */
                 }
             }
         }
-#if defined(RURP_PLATFORM_PY32F071)
-        if (generation != py32_usb_generation()) return;
-#endif
+        if (session != rurp_communication_session()) return;
         int d = rurp_communication_read();
         if (d < 0 || (uint8_t)d == 0x00) {
             break;
@@ -116,9 +106,7 @@ static void _drain_to_delimiter(bool wait_on_silence) {
 }
 
 int rurp_communication_read_data(char* buffer, size_t cap) {
-#if defined(RURP_PLATFORM_PY32F071)
-    const uint32_t generation = py32_usb_generation();
-#endif
+    const uint32_t session = rurp_communication_session();
     size_t out = 0;                   /* committed payload bytes in buffer[]         */
     uint8_t block_remaining = 0;      /* data bytes remaining in current COBS run    */
     bool was_254_run = false;         /* current run started with 0xFF (no impl zero) */
@@ -137,11 +125,7 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
      *       no NUL write follows; consumers use data_buffer[i] index only).
      * The cap is a compile-time constant at both call sites — no runtime
      * user input controls the bound.  The overflow/drain path is unchanged. */
-#if defined(RURP_PLATFORM_PY32F071)
-#define DRAIN(wait_) _drain_to_delimiter(wait_, generation)
-#else
-#define DRAIN(wait_) _drain_to_delimiter(wait_)
-#endif
+#define DRAIN(wait_) _drain_to_delimiter(wait_, session)
 #define PUSH(b_)                                \
     do {                                        \
         if (has_last) {                         \
@@ -156,9 +140,7 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
     } while (0)
 
     while (1) {
-#if defined(RURP_PLATFORM_PY32F071)
-        if (generation != py32_usb_generation()) return -1;
-#endif
+        if (session != rurp_communication_session()) return -1;
         /* Delimiter-driven: wait until a byte is available.
          * Bounded mid-frame inter-byte deadline — armed only once
          * decoding is underway (loop() gated entry on available()>0, so we
@@ -171,9 +153,7 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
         if (rurp_communication_available() <= 0) {
             unsigned long start = millis();
             while (rurp_communication_available() <= 0) {
-#if defined(RURP_PLATFORM_PY32F071)
-                if (generation != py32_usb_generation()) return -1;
-#endif
+                if (session != rurp_communication_session()) return -1;
                 if (millis() - start >= TIMEOUT_MS) {
                     /* 53-04: silence already proven + buffer empty -> drain without a
                      * second redundant TIMEOUT_MS wait (brings a dropped-delimiter
@@ -184,13 +164,9 @@ int rurp_communication_read_data(char* buffer, size_t cap) {
             }
         }
 
-#if defined(RURP_PLATFORM_PY32F071)
-        if (generation != py32_usb_generation()) return -1;
-#endif
+        if (session != rurp_communication_session()) return -1;
         int b = rurp_communication_read();
-#if defined(RURP_PLATFORM_PY32F071)
-        if (generation != py32_usb_generation()) return -1;
-#endif
+        if (session != rurp_communication_session()) return -1;
         if (b < 0) {
             DRAIN(true);
             return -1; /* read() underrun */
@@ -352,10 +328,6 @@ size_t rurp_communication_write(const char* buffer, size_t size) {
 //     byte N+1   : crc8 over [id, params] — poly 0x07, seed 0x00, no refl, no XOR
 //     byte N+2   : 0x0A re-sync anchor (NOT a delimiter; len is authoritative)
 
-// 4-byte magic preamble: alternating-bit pattern, statistically incompatible
-// with single-byte PORTD address-line patterns on the Uno.
-static const uint8_t MAGIC_PREAMBLE[4] PROGMEM = { 0xAA, 0x55, 0xAA, 0x55 };
-
 // CRC8-CCITT (poly 0x07, seed 0x00) — precomputed table. Sanity: t[0^0x01] = t[1] = 0x07.
 static const uint8_t CRC8_TABLE[256] PROGMEM = {
     0x00, 0x07, 0x0E, 0x09, 0x1C, 0x1B, 0x12, 0x15, 0x38, 0x3F, 0x36, 0x31, 0x24, 0x23, 0x2A, 0x2D,
@@ -380,7 +352,20 @@ static uint8_t crc8_ccitt(uint8_t crc, uint8_t b) {
     return pgm_read_byte(&CRC8_TABLE[crc ^ b]);
 }
 
-// Board-agnostic frame emitter: single-byte writes, .flush() at end. It does
+// Writes one frame segment. Returns false when the frame failed: a short
+// write, or rurp_communication_tx_failed() (always 0 on AVR).
+static bool emit_segment(const uint8_t* data, uint16_t count) {
+    if (count != 0 && SERIAL_PORT.write(data, count) != count) {
+        return false;
+    }
+    return !rurp_communication_tx_failed();
+}
+
+// Board-agnostic frame emitter: one write call per frame segment (header,
+// params, trailer), .flush() at end. On PY32 each write call has a fixed
+// transport cost, so a write per byte makes a 64 KiB read CPU-bound. The USB
+// transport puts the bytes into full packets. When a segment fails, the
+// emitter stops. It does
 // not consult com_mode; the Uno strong override of rurp_log_id gates the call.
 // The narrow _firestarter_emit_frame in rurp_serial_utils.h calls this one, so
 // every frame has the same bytes whatever its parameter count type.
@@ -392,45 +377,40 @@ void _firestarter_emit_frame_wide(uint8_t id, const uint8_t* params, uint16_t pa
         return;
     }
 
-#if defined(RURP_PLATFORM_PY32F071)
-    py32_usb_frame_begin();
-#endif
-    // Magic preamble (4 bytes from PROGMEM).
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[0]));
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[1]));
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[2]));
-    SERIAL_PORT.write((uint8_t)pgm_read_byte(&MAGIC_PREAMBLE[3]));
+    // CRC8 over [id, params]. Calculate it first, so the params go out in
+    // one write call.
+    uint8_t crc = crc8_ccitt(0, id);
+    for (uint16_t i = 0; i < param_count; i++) {
+        crc = crc8_ccitt(crc, params[i]);
+    }
 
     // Length field (u16 big-endian): counts id + params + crc; excludes the
     // len field itself and the trailing 0x0A anchor.
-    uint16_t len_u16 = (uint16_t)(1 + param_count + 1);
-    SERIAL_PORT.write((uint8_t)(len_u16 >> 8));    // MSB
-    SERIAL_PORT.write((uint8_t)(len_u16 & 0xFF));  // LSB
+    const uint16_t len_u16 = (uint16_t)(1 + param_count + 1);
+    // The magic preamble is an alternating-bit pattern, statistically
+    // incompatible with single-byte PORTD address-line patterns on the Uno.
+    const uint8_t header[7] = {
+        0xAA, 0x55, 0xAA, 0x55,
+        (uint8_t)(len_u16 >> 8), (uint8_t)(len_u16 & 0xFF),
+        id,
+    };
+    // CRC byte, then the 0x0A re-sync anchor.
+    const uint8_t trailer[2] = { crc, 0x0A };
 
-    // CRC8 accumulator over [id, params].
-    uint8_t crc = 0;
-
-    // ID.
-    SERIAL_PORT.write(id);
-    crc = crc8_ccitt(crc, id);
-
-    // Params.
-    for (uint16_t i = 0; i < param_count; i++) {
-        uint8_t b = params[i];
-        SERIAL_PORT.write(b);
-        crc = crc8_ccitt(crc, b);
+    rurp_communication_frame_begin();
+    // A frame of a command from an earlier host session is dropped. The
+    // check comes after frame begin: an edge before it is seen here, an edge
+    // after it fails the frame in the transport.
+    if (fs_session_changed()) {
+        rurp_communication_frame_end();
+        return;
     }
-
-    // CRC byte.
-    SERIAL_PORT.write(crc);
-
-    // 0x0A re-sync anchor.
-    SERIAL_PORT.write((uint8_t)0x0A);
-
-    SERIAL_PORT.flush();
-#if defined(RURP_PLATFORM_PY32F071)
-    py32_usb_frame_end();
-#endif
+    if (emit_segment(header, sizeof(header)) &&
+        emit_segment(params, param_count) &&
+        emit_segment(trailer, sizeof(trailer))) {
+        SERIAL_PORT.flush();
+    }
+    rurp_communication_frame_end();
 }
 
 // Weak default for rurp_log_id — no com_mode gate (Leonardo path). Uno

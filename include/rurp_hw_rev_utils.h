@@ -44,8 +44,6 @@ uint8_t rurp_get_physical_hardware_revision() {
     return revision;
 }
 
-#include "rurp_revision_adc.h"
-
 void rurp_detect_hardware_revision() {
     uint16_t adc_a3;
     if (!rurp_read_revision_adc10(false, &adc_a3)) {

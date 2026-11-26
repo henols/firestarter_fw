@@ -78,6 +78,7 @@ set(LINKER_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/linker/PY32F071xB_FLASH.ld")
 # PY32_EXCLUDED: src/boards/leonardo_rurp_shield.cpp -- AVR board impl, no ARM analogue
 # PY32_EXCLUDED: src/boards/rurp_common.cpp -- AVR-specific common
 # PY32_EXCLUDED: src/boards/rurp_config_storage_eeprom.cpp -- AVR EEPROM backend, no ARM analogue
+# PY32_EXCLUDED: src/boards/rurp_revision_adc.cpp -- AVR analog-pin reader; py32f071_rurp_shield.cpp has the ARM one
 set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/firestarter.cpp"
     "${REPOSITORY_ROOT}/src/eprom_operations.cpp"
@@ -98,6 +99,7 @@ set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/proms/flash_intel.cpp"
     "${REPOSITORY_ROOT}/src/proms/flash_utils.cpp"
     "${REPOSITORY_ROOT}/src/proms/sram.cpp"
+    "${REPOSITORY_ROOT}/src/proms/march.cpp"
     "${REPOSITORY_ROOT}/src/proms/not_implemented.cpp"
 )
 
@@ -177,6 +179,8 @@ target_compile_definitions(
         # to every translation unit, not only the hardware backend.
         RURP_PINMAP_PROVISIONAL=${RURP_PROVISIONAL_${RURP_BOARD}}
         RURP_HAS_VPP_DAC=0
+        # USB CDC starts a new host session on each port open (rurp_shield.h).
+        RURP_HAS_HOST_SESSIONS=1
 )
 
 if(RURP_HARDWARE_REVISION_${RURP_BOARD})

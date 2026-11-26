@@ -48,9 +48,6 @@ int py32_usb_peek(void);
 size_t py32_usb_read_bytes(char *buffer, size_t length);
 size_t py32_usb_write(const uint8_t *buffer, size_t length);
 void py32_usb_flush(void);
-uint32_t py32_usb_generation(void);
-void py32_usb_frame_begin(void);
-void py32_usb_frame_end(void);
 
 #ifdef __cplusplus
 }

@@ -91,6 +91,12 @@
 // CMD_READ/CMD_WRITE/etc do.
 #define CMD_LOCK_STATUS 16
 
+// CMD_RAM_TEST runs a March C- test on a volatile SRAM (march.cpp). It is a
+// memory command: the test reads and writes through the protocol handler's
+// get/set data pointers. Only configure_sram() installs its main callback, so
+// every other protocol is refused with MSG_ERR_NOT_SUPPORTED.
+#define CMD_RAM_TEST 18
+
 // Access-control gate: this decides which commands may call configure_memory()
 // and so configure the hardware bus. configure_eprom(), reachable only
 // through this gate, enables the 12 V VPP boost regulator, a hazard on a 5 V
@@ -101,7 +107,7 @@
 // use this predicate and do not list the set again.
 //
 // Hard constraints:
-//  - No preprocessor conditional in this function's body. All seven named
+//  - No preprocessor conditional in this function's body. All eight named
 //    macros are unconditionally defined.
 //  - static inline, in this header. [env:native]'s build_src_filter compiles
 //    only src/proms/, rurp_serial_utils.cpp and command_decoder.c, so a
@@ -117,6 +123,7 @@ static inline bool is_memory_cmd(uint8_t cmd) {
         case CMD_SDP_UNLOCK:
         case CMD_SDP_LOCK:
         case CMD_LOCK_STATUS:
+        case CMD_RAM_TEST:
             return true;
         default:
             return false;
@@ -170,6 +177,8 @@ typedef struct bus_config {
     uint8_t read_high_needs_reg_off;            // read_high_mask also switches VPE onto the socket (Rev 2.x line 21)
     uint32_t static_high_mask;                  // Bus lines unconditionally driven HIGH (e.g. CE2, tied-high NC pins)
     uint32_t read_high_mask;                    // P1-VPP line driven HIGH for a read; set by mem_util_set_read_high_mask()
+    uint32_t rw_high_mask;                      // rw_line driven HIGH for a read; set by mem_util_set_read_high_mask()
+    uint32_t vpp_high_mask;                     // non-P1 VPP line, always HIGH; set by mem_util_set_read_high_mask()
 } bus_config_t;
 
 typedef struct firestarter_handle {
@@ -217,5 +226,13 @@ typedef struct firestarter_handle {
     bool (*firestarter_get_control_register)(struct firestarter_handle*, rurp_register_t);
 
 } firestarter_handle_t;
+
+#if RURP_HAS_HOST_SESSIONS
+/* True when the host session changed after the active command was read. The
+ * host reopened the port or the device was reconfigured. */
+bool fs_session_changed(void);
+#else
+static inline bool fs_session_changed(void) { return false; }
+#endif
 
 #endif  // __FIRESTARTER_H__

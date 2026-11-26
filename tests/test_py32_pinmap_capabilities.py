@@ -1,5 +1,6 @@
-"""PY32 pin-map capability flags: each pin map must define every flag, and a
-pin map that misses one fails to compile. Board names select no behaviour."""
+"""PY32 pin-map capability flags: board behaviour comes from required flags in
+the board's pin-map header, never from the board name, and a header that
+misses a flag fails to compile (henols/firestarter#185)."""
 import pytest
 
 from ._host_build import INCLUDE, host_cc, run_compiler
@@ -9,7 +10,7 @@ _FLAGS = ("RURP_PY32F071_HAS_USER_BUTTON", "RURP_PY32F071_HAS_REVISION_ADC",
 
 
 def _preprocess(tmp_path, pinmap_header, *extra):
-    # The board-header guards do not need the vendor HAL.
+    # The vendor HAL is not needed to evaluate the board-header guards.
     (tmp_path / "py32f0xx_hal.h").write_text("#pragma once\n")
     source = tmp_path / "unit.c"
     source.write_text('#include "boards/py32f071_rurp_shield.h"\n')
@@ -24,7 +25,7 @@ def _preprocess(tmp_path, pinmap_header, *extra):
     ("py32f071", ()),
     ("micropetal_uno", ("-DHARDWARE_REVISION=1", "-DRURP_MICROPETAL_ROM_TOUCH=1")),
 ])
-def test_each_board_pinmap_defines_every_flag(tmp_path, board, extra):
+def test_each_board_header_defines_every_flag(tmp_path, board, extra):
     result = _preprocess(tmp_path, f"boards/{board}_pinmap.h", *extra)
     assert result.returncode == 0, result.stderr
 
@@ -38,6 +39,12 @@ def test_a_pinmap_without_a_flag_fails_to_compile(tmp_path, missing):
     result = _preprocess(tmp_path, "new_board_pinmap.h", "-DHARDWARE_REVISION=1")
     assert result.returncode != 0
     assert "must define" in result.stderr and missing in result.stderr
+
+
+def test_revision_detection_needs_a_revision_adc(tmp_path):
+    result = _preprocess(tmp_path, "boards/py32f071_pinmap.h", "-DHARDWARE_REVISION=1")
+    assert result.returncode != 0
+    assert "needs a revision-detect ADC input" in result.stderr
 
 
 def test_rom_touch_needs_a_rom_touch_board(tmp_path):

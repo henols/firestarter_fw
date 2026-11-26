@@ -14,6 +14,8 @@ after its file is exhausted.
 import sys
 from pathlib import Path
 
+import pytest
+
 from ._host_build import FAKE_ARDUINO_H, INCLUDE, REPO_ROOT, compile_ok, host_cxx, run_binary
 
 # memory.cpp also calls delayMicroseconds().
@@ -87,6 +89,9 @@ int rurp_communication_read_data(char* buf, size_t cap) {
     return (int)n;
 }
 size_t rurp_communication_write(const char*, size_t n) { return n; }
+#if RURP_HAS_HOST_SESSIONS
+int rurp_communication_tx_failed(void) { return 0; }
+#endif
 void rurp_log_id(uint8_t id, const uint8_t*, uint8_t) {
     ids.push_back(id);
     if (id == MSG_OK_REQ_DATA) host_on_data_request();
@@ -106,12 +111,21 @@ void rurp_log_id_wide(uint8_t id, const uint8_t*, uint16_t n) {
 }
 }
 
+#if RURP_HAS_HOST_SESSIONS
+static bool reopened = false;  // the host reopened the USB port
+static bool reopen_in_read = false;  // the host reopens it during a chip read
+bool fs_session_changed(void) { return reopened; }
+#endif
+
 static void write_main(firestarter_handle_t* h) {
     if (written_at == 0xFFFFFFFF) written_at = h->address;
     written.insert(written.end(), h->data_buffer, h->data_buffer + h->data_size);
 }
 
 static void read_main(firestarter_handle_t* h) {
+#if RURP_HAS_HOST_SESSIONS
+    if (reopen_in_read) reopened = true;
+#endif
     uint32_t remaining = h->mem_size - h->address;
     h->data_size = remaining < 64 ? remaining : 64;  // a 64-byte buffer
     memset(h->data_buffer, 0x5A, h->data_size);
@@ -167,6 +181,42 @@ static bool has_error() {
 }
 
 int main() {
+#if RURP_HAS_HOST_SESSIONS
+    // Only the reopen cases run on this platform.
+    // The host reopens the port during a chip read. The read ends before it
+    // sends a frame of that step, and does not wait for an ack.
+    reset(CMD_READ, 0, 1024, 0);
+    for (int i = 0; i < 10 && chunks.empty(); i++) {
+        handle.response_code = RESPONSE_CODE_OK;
+        assert(!eprom_read(&handle));
+    }
+    assert(chunks.size() == 1 && count(MSG_DATA_SENDING) == 1);
+    reopen_in_read = true;
+    handle.response_code = RESPONSE_CODE_OK;
+    assert(eprom_read(&handle));
+    assert(chunks.size() == 1 && count(MSG_DATA_SENDING) == 1 && fake_ms < 1000);
+    reopen_in_read = reopened = false;
+    puts("PASS reopen ends read");
+
+    // The host reopens the port during a write and sends its next command.
+    // The write ends at once and does not read the command bytes.
+    reset(CMD_WRITE, 0, 1024, 64);
+    host_file = 32;
+    for (int i = 0; i < 100 && written.size() < 32; i++) {
+        handle.response_code = RESPONSE_CODE_OK;
+        assert(!eprom_write(&handle));
+    }
+    assert(written.size() == 32 && count(MSG_OK_REQ_DATA) == 1);
+    host_file = -1;
+    reopened = true;
+    rx = "\x05\x01\x02\x03\x04";
+    rx_pos = 0;
+    handle.response_code = RESPONSE_CODE_OK;
+    assert(eprom_write(&handle));
+    assert(rx_pos == 0 && !has_error() && count(MSG_OK_REQ_DATA) == 1);
+    puts("PASS reopen ends write");
+    return 0;
+#endif
     // 3.2.4 bounded write: region-end = address + file size. The file fills
     // the region, so the firmware ends at op_end and the host sends no DONE.
     reset(CMD_WRITE, 16, 1024, 16 + 48);
@@ -247,7 +297,10 @@ int main() {
 """
 
 
-def test_write_and_read_transfer_loops(tmp_path: Path) -> None:
+# The py32 case also sets RURP_HAS_HOST_SESSIONS, as the CMake build does.
+@pytest.mark.parametrize("defines", [[], ["-DRURP_PLATFORM_PY32F071", "-DRURP_HAS_HOST_SESSIONS=1"]],
+                         ids=["avr", "py32"])
+def test_write_and_read_transfer_loops(tmp_path: Path, defines: list[str]) -> None:
     (tmp_path / "Arduino.h").write_text(ARDUINO_H)
     driver = tmp_path / "driver.cpp"
     driver.write_text(DRIVER)
@@ -255,9 +308,9 @@ def test_write_and_read_transfer_loops(tmp_path: Path) -> None:
     memory_obj = tmp_path / "memory.o"
     exe = tmp_path / "driver"
     compile_ok([host_cxx(), "-std=c++17", "-c", "-ffunction-sections", "-fdata-sections",
-                *includes, str(REPO_ROOT / "src/proms/memory.cpp"), "-o", str(memory_obj)],
+                *defines, *includes, str(REPO_ROOT / "src/proms/memory.cpp"), "-o", str(memory_obj)],
                cwd=REPO_ROOT, allow_warnings=True)
-    compile_ok([host_cxx(), "-std=c++17", *includes, str(driver),
+    compile_ok([host_cxx(), "-std=c++17", *defines, *includes, str(driver),
                 str(REPO_ROOT / "src/eprom_operations.cpp"),
                 str(REPO_ROOT / "src/operation_utils.cpp"), str(memory_obj), GC_SECTIONS,
                 "-o", str(exe)],
@@ -266,6 +319,9 @@ def test_write_and_read_transfer_loops(tmp_path: Path) -> None:
     assert result.returncode == 0, (
         f"transfer loop test failed:\n{result.stdout}\n{result.stderr}"
     )
+    if defines:
+        assert result.stdout.splitlines() == ["PASS reopen ends read", "PASS reopen ends write"]
+        return
     assert result.stdout.splitlines() == [
         "PASS bounded write ends at region end",
         "PASS early DONE refused",

@@ -90,6 +90,7 @@ static inline uint8_t cf_payload_kind(uint8_t cmd) {
         case 9:
         case 10:
         case 16:
+        case 18:
             return CF_KIND_MEMORY;
         case 14:
             return CF_KIND_CONFIG;

@@ -108,7 +108,8 @@ bool op_wait_for_ack(firestarter_handle_t* handle) {
             LOG_ERROR_ID(MSG_ERR_CMD);
             return false;
         }
-        delay(10);
+        // No sleep: the host answers within a few milliseconds, and a fixed
+        // delay here would be paid on every chunk.
     }
     LOG_ERROR_ID(MSG_ERR_TIMEOUT);
     return false;
@@ -117,6 +118,11 @@ bool op_wait_for_ack(firestarter_handle_t* handle) {
 /* Non-blocking. Consumes junk until a valid message start is found; returns
  * OP_MSG_INCOMPLETE when no complete message is available yet. */
 op_message_type op_get_message(firestarter_handle_t* handle) {
+    /* After a reopen, the bytes are the new host's command. Do not read them;
+     * loop() ends this command. */
+    if (fs_session_changed()) {
+        return OP_MSG_ERROR;
+    }
     if (rurp_communication_available() <= 0) {
         return OP_MSG_INCOMPLETE;
     }

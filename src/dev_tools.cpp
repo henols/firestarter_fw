@@ -66,6 +66,10 @@ bool dt_set_registers(firestarter_handle_t* handle) {
             return false;
         }
     }
+    /* After a reopen, the bytes are the new host's command, not registers. */
+    if (fs_session_changed()) {
+        return false;
+    }
 
     uint8_t msb = rurp_communication_read();
     uint8_t lsb = rurp_communication_read();
@@ -208,12 +212,9 @@ static void dt_sample_adc(dt_adc_sample_t* out, rurp_register_t ctrl) {
     // about one count, which is 0.5 % on the bandgap channel.
     out->divider_adc = rurp_read_divider_adc();
     out->bandgap_adc = (uint16_t)rurp_get_bandgap_adc_reading();
-#if RURP_HAS_BANDGAP_CAL
-    const uint16_t reference_mv = cfg->bandgap_mv;
-#else
-    // The PY32 rail readers use fixed 1.2 V VREFINT, not AVR calibration.
-    const uint16_t reference_mv = 1200U;
-#endif
+    // rurp_reference_mv() is the reference the rail readers use, so these
+    // figures match hw read for the same counts.
+    const uint32_t reference_mv = rurp_reference_mv(cfg->bandgap_mv);
     out->vcc_mv = rurp_scale_vcc_mv(out->bandgap_adc, reference_mv);
     out->voltage_mv = rurp_scale_voltage_mv(out->divider_adc, out->bandgap_adc,
                                             (uint32_t)cfg->r1, (uint32_t)cfg->r2,

@@ -28,6 +28,7 @@ static std::string incoming;
 static unsigned reads = 0;
 static unsigned configured = 0;
 static unsigned writes = 0;
+static unsigned simple_ops = 0;
 static unsigned logged = 0;
 static int ce_level = 0;
 static int cleared[3] = {};
@@ -68,6 +69,12 @@ extern "C" void rurp_log_id_u16(uint8_t, uint16_t) { logged++; }
 extern "C" void rurp_log_id_u24(uint8_t, uint32_t) { logged++; }
 extern "C" void rurp_log_id_u32(uint8_t, uint32_t) { logged++; }
 extern "C" int rurp_communication_available() { return incoming.empty() ? 0 : 1; }
+#if RURP_HAS_HOST_SESSIONS
+// The USB session generation; a DTR edge changes it.
+static uint32_t usb_session = 1;
+extern "C" uint32_t rurp_communication_session(void) { return usb_session; }
+extern "C" int rurp_communication_tx_failed(void) { return 0; }
+#endif
 extern "C" int rurp_communication_read_data(char* buf, size_t capacity) {
     if (incoming.empty()) return 0;
     assert(incoming.size() <= capacity);
@@ -90,9 +97,7 @@ extern "C" bool eprom_read(firestarter_handle_t*) { reads++; return true; }
 extern "C" bool eprom_write(firestarter_handle_t*) { writes++; return true; }
 extern "C" bool eprom_erase(firestarter_handle_t*) { writes++; return true; }
 extern "C" bool eprom_check_chip_id(firestarter_handle_t*) { return true; }
-extern "C" bool eprom_sdp_unlock(firestarter_handle_t*) { return true; }
-extern "C" bool eprom_sdp_lock(firestarter_handle_t*) { return true; }
-extern "C" bool eprom_lock_status(firestarter_handle_t*) { return true; }
+extern "C" bool op_execute_simple_operation(firestarter_handle_t*) { simple_ops++; return true; }
 extern "C" bool hw_read_voltage(firestarter_handle_t*) { return true; }
 extern "C" bool hw_get_version(firestarter_handle_t*) { return true; }
 extern "C" bool hw_get_config(firestarter_handle_t*) { return true; }
@@ -118,7 +123,7 @@ static void reset() {
     fake_ms = 100;
     timeout_started_ms = 0;
     incoming.clear();
-    reads = configured = writes = logged = 0;
+    reads = configured = writes = simple_ops = logged = 0;
     ce_level = 0;
     memset(latch, 0, sizeof(latch));
     memset(cleared, 0, sizeof(cleared));
@@ -184,6 +189,26 @@ static void frame(const std::string& bytes) {
 static const std::string read_cmd = memory_frame(CMD_READ, 65536, 0, 28, 12500);
 
 int main() {
+#if defined(RURP_PLATFORM_PY32F071)
+    // The host reopens the port while a read runs and sends its next command
+    // at once. The read ends with the safe cleanup and the command is read.
+    // Only this case runs: the config bands of this platform are different.
+    reset();
+    frame(read_cmd);
+    assert(handle.cmd == CMD_READ && configured == 1);
+    arm();
+    ++usb_session;
+    frame(memory_frame(CMD_WRITE, 65536, 0, 28, 12500));
+    assert(reads == 0 && ce_level == 1);
+    for (int n : cleared) assert(n > 0);
+    assert(handle.cmd == CMD_WRITE && configured == 2);
+    // No reopen: the command runs.
+    loop();
+    assert(writes == 1);
+    assert_idle();
+    puts("PASS reopen ends command");
+    return 0;
+#endif
     reset();
     boot_order.clear();
     handle.cmd = CMD_READ;
@@ -287,13 +312,24 @@ int main() {
     assert(live_config.r2 == VALUE_R2);
     assert(saves == 1);
     puts("PASS in-band config applied");
+
+    reset();
+    frame(memory_frame(CMD_RAM_TEST, 32768, 0, 28, 5000));
+    assert(handle.cmd == CMD_RAM_TEST && configured == 1);
+    arm();
+    loop();
+    assert(simple_ops == 1);
+    assert_idle();
+    puts("PASS ram-test dispatch");
     return 0;
 }
 """
 
-# AVR builds define HARDWARE_REVISION; the py32 build does not.
-@pytest.mark.parametrize("defines", [[], ["-DHARDWARE_REVISION"]],
-                         ids=["no-hw-revision", "hw-revision"])
+# AVR builds define HARDWARE_REVISION; the py32 build does not. The py32
+# build sets RURP_HAS_HOST_SESSIONS.
+@pytest.mark.parametrize("defines", [[], ["-DHARDWARE_REVISION"],
+                                     ["-DRURP_PLATFORM_PY32F071", "-DRURP_HAS_HOST_SESSIONS=1"]],
+                         ids=["no-hw-revision", "hw-revision", "py32"])
 def test_command_lifecycle_and_safe_cleanup(tmp_path: Path, defines: list[str]) -> None:
     (tmp_path / "Arduino.h").write_text(FAKE_ARDUINO_H)
     main = tmp_path / "driver.cpp"
@@ -318,6 +354,9 @@ def test_command_lifecycle_and_safe_cleanup(tmp_path: Path, defines: list[str]) 
     assert result.returncode == 0, (
         f"dispatcher integration test failed:\n{result.stdout}\n{result.stderr}"
     )
+    if "-DRURP_PLATFORM_PY32F071" in defines:
+        assert result.stdout.splitlines() == ["PASS reopen ends command"]
+        return
     assert set(result.stdout.splitlines()) == {
         "PASS boot order",
         "PASS watchdog reset",
@@ -329,4 +368,5 @@ def test_command_lifecycle_and_safe_cleanup(tmp_path: Path, defines: list[str]) 
         "PASS malformed bus rejection",
         "PASS out-of-band config refused",
         "PASS in-band config applied",
+        "PASS ram-test dispatch",
     }

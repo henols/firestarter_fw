@@ -45,20 +45,6 @@ bool eprom_check_chip_id(firestarter_handle_t* handle) {
     return op_execute_simple_operation(handle);
 }
 
-// Standalone SDP commands reuse the simple operation handler. The operation
-// layer refuses unsupported protocols when no main callback is installed.
-bool eprom_sdp_unlock(firestarter_handle_t* handle) {
-    return op_execute_simple_operation(handle);
-}
-
-bool eprom_sdp_lock(firestarter_handle_t* handle) {
-    return op_execute_simple_operation(handle);
-}
-
-bool eprom_lock_status(firestarter_handle_t* handle) {
-    return op_execute_simple_operation(handle);
-}
-
 // Returns true on success/continue, false on error.
 static inline bool _process_incoming_data(firestarter_handle_t* handle) {
     // The operation's exclusive end bounds each received chunk; it defaults
@@ -148,6 +134,12 @@ static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
     }
     if (!op_execute_function(handle->firestarter_operation_main, handle)) {
         return false;  // Error, so finished.
+    }
+    // The host reopened the port during the chip read. No host waits for
+    // this chunk, so end the read before it sends a frame.
+    if (fs_session_changed()) {
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return false;
     }
 
     // The read handler fills up to a whole buffer within mem_size. Cut the

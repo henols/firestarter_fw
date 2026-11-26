@@ -81,7 +81,11 @@ void setUp(void) {
             s_wire_bytes.push_back(b);
             return (size_t)1;
         });
-    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
+    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t)))
+        .AlwaysDo([](const uint8_t* data, size_t count) -> size_t {
+            s_wire_bytes.insert(s_wire_bytes.end(), data, data + count);
+            return count;
+        });
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
     When(Method(ArduinoFake(), delay)).AlwaysReturn();

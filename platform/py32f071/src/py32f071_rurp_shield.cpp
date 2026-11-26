@@ -323,18 +323,13 @@ extern "C" long rurp_get_bandgap_adc_reading(void)
     return read_adc_average(ADC_CHANNEL_VREFINT, 16U, &value) ? value : 0U;
 }
 
+/* Both readers use the shared ratiometric conversions with the fixed VREFINT
+ * reference. The PY32 build has no dev adc diagnostic. */
 extern "C" uint16_t rurp_read_vcc_mv(void)
 {
     const uint32_t reference_reading =
         static_cast<uint32_t>(rurp_get_bandgap_adc_reading());
-    if (reference_reading == 0U)
-    {
-        return 0U;
-    }
-
-    return static_cast<uint16_t>(
-        (RURP_ADC_FULL_SCALE * 1200UL + reference_reading / 2U) /
-        reference_reading);
+    return rurp_scale_vcc_mv(reference_reading, RURP_FIXED_REFERENCE_MV);
 }
 
 extern "C" uint16_t rurp_read_divider_adc(void)
@@ -345,26 +340,13 @@ extern "C" uint16_t rurp_read_divider_adc(void)
 
 extern "C" uint16_t rurp_read_voltage_mv(void)
 {
-    const uint32_t vcc_mv = rurp_read_vcc_mv();
+    const uint32_t reference_reading =
+        static_cast<uint32_t>(rurp_get_bandgap_adc_reading());
     const uint32_t adc_reading = rurp_read_divider_adc();
     const rurp_configuration_t *const configuration = rurp_get_config();
-
-    if (vcc_mv == 0U || adc_reading == 0U || configuration->r2 == 0U)
-    {
-        return 0U;
-    }
-
-    const uint64_t numerator =
-        static_cast<uint64_t>(adc_reading) *
-        vcc_mv *
-        (configuration->r1 + configuration->r2);
-    const uint64_t denominator =
-        static_cast<uint64_t>(RURP_ADC_FULL_SCALE) * configuration->r2;
-
-    const uint64_t measured_mv =
-        (numerator + denominator / 2U) / denominator;
-
-    return measured_mv > 0xFFFFU
-        ? 0xFFFFU
-        : static_cast<uint16_t>(measured_mv);
+    return rurp_scale_voltage_mv(
+        adc_reading, reference_reading,
+        static_cast<uint32_t>(configuration->r1),
+        static_cast<uint32_t>(configuration->r2),
+        RURP_FIXED_REFERENCE_MV);
 }

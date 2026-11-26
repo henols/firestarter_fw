@@ -1,25 +1,26 @@
 """Compile definitions from an actual, explicitly identified ARM build."""
-import json
 import os
-import shlex
-from pathlib import Path
 
 import pytest
 
+from ._compile_db import COMPILE_COMMANDS_ENV, compile_defines
 from ._host_build import INCLUDE, compile_ok, host_cc
 
 
 def arm_defines(source):
-    path = os.environ.get('FIRESTARTER_PY32_COMPILE_COMMANDS')
+    """The -D arguments that the ARM build passes for `source` (relative to
+    the repository root), ready to append to a host compiler argv."""
+    path = os.environ.get(COMPILE_COMMANDS_ENV)
     if not path:
         pytest.skip('requires compile_commands.json from an ARM CMake build')
-    entries = json.loads(Path(path).read_text())
-    entry = next(e for e in entries if e['file'].endswith('/' + source))
-    tokens = entry.get('arguments') or shlex.split(entry['command'])
-    defines = [t for t in tokens if t.startswith('-D')]
+    try:
+        defines = ['-D' + d for d in compile_defines(path, source)]
+    except LookupError as error:
+        pytest.fail(str(error))
     assert '-DRURP_PLATFORM_PY32F071=1' in defines
     assert '-DRURP_PY32F071_PINMAP_CONFIGURED=1' in defines
     board = next(d.split('=', 1)[1].strip('"') for d in defines if d.startswith('-DRURP_BOARD_NAME='))
+    assert '-DRURP_HAS_HOST_SESSIONS=1' in defines
     assert ('-DHARDWARE_REVISION=1' in defines) == (board == 'micropetal_uno')
     # The default build is provisional. Only the MicroPetal full build
     # (RURP_MICROPETAL_FULL=ON) is not.

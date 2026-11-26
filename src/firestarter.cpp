@@ -24,9 +24,6 @@
 #include "dev_tools.h"
 #endif
 
-#define RX 0
-#define TX 1
-
 bool init_programmer_framed(firestarter_handle_t* handle);
 bool parse_command(firestarter_handle_t* handle);
 void command_done(firestarter_handle_t* handle);
@@ -34,6 +31,15 @@ void command_done(firestarter_handle_t* handle);
 firestarter_handle_t handle;
 
 uint32_t timeout_started_ms = 0;
+
+#if RURP_HAS_HOST_SESSIONS
+/* The host session that sent the active command. */
+static uint32_t command_session;
+
+bool fs_session_changed(void) {
+    return command_session != rurp_communication_session();
+}
+#endif
 
 void setup() {
     // Board setup first: until it runs, the pins are high-Z and the shield
@@ -188,11 +194,19 @@ void command_done(firestarter_handle_t* handle) {
 
 void loop() {
     rurp_watchdog_reset();
+    if (handle.cmd != CMD_IDLE && fs_session_changed()) {
+        /* The host reopened the port, so no host waits for this command. End
+         * it now, so that the new session's first command is read. */
+        command_done(&handle);
+    }
     if (handle.cmd != CMD_IDLE && fs_timeout_expired(timeout_started_ms, TIMEOUT_MS, (uint32_t)millis())) {
         LOG_ERROR_ID_U8(MSG_ERR_CMD_TIMEOUT, handle.cmd);
         command_done(&handle);
     } else if (handle.cmd == CMD_IDLE) {
         if (rurp_communication_available() > 0) {
+#if RURP_HAS_HOST_SESSIONS
+            command_session = rurp_communication_session();
+#endif
             /* The transport reads complete COBS frames and checks CRC8 before command decoding.
  * It drains invalid frames to the next delimiter for bounded recovery;
  * a decoded payload must have positive length to become a command. */
@@ -236,16 +250,17 @@ void loop() {
         case CMD_CHECK_CHIP_ID:
             finished = eprom_check_chip_id(&handle);
             break;
-                // Standalone lock operations use the normal INIT/MAIN/END ACKs.
-                // They have no data frames or write-path DONE handshake.
+        // Standalone lock operations use the normal INIT/MAIN/END ACKs.
+        // They have no data frames or write-path DONE handshake. The
+        // operation layer refuses a protocol that installs no main callback.
+        // The RAM test runs in bounded batches: its main callback keeps the
+        // operation in progress until the last March element ends, so it is
+        // called again on each loop() iteration.
         case CMD_SDP_UNLOCK:
-            finished = eprom_sdp_unlock(&handle);
-            break;
         case CMD_SDP_LOCK:
-            finished = eprom_sdp_lock(&handle);
-            break;
         case CMD_LOCK_STATUS:
-            finished = eprom_lock_status(&handle);
+        case CMD_RAM_TEST:
+            finished = op_execute_simple_operation(&handle);
             break;
         case CMD_READ_VPP:
         case CMD_READ_VPE:

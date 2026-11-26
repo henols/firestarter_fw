@@ -22,6 +22,7 @@ on:
       - ".github/workflows/py32f071.yml"
       - ".github/actions/build-py32f071/**"
       - "tests/_py32_build.py"
+      - "tests/_compile_db.py"
       - "tests/_host_build.py"
       - "tests/test_py32_*.py"
       - "tests/test_micropetal_*.py"
@@ -44,7 +45,7 @@ jobs:
           - board: py32f071
             tests: 'tests/test_py32_*.py tests/test_micropetal_*.py'
           - board: micropetal_uno
-            tests: 'tests/test_micropetal_*.py'
+            tests: 'tests/test_py32_compile_db.py tests/test_micropetal_*.py'
     runs-on: ubuntu-latest
 
     steps:
@@ -60,7 +61,7 @@ jobs:
 
       - name: Test ARM behavior with actual build definitions
         env:
-          FIRESTARTER_PY32_COMPILE_COMMANDS: build/py32f071/compile_commands.json
+          FIRESTARTER_PY32_COMPILE_COMMANDS: build/${{ matrix.board }}/compile_commands.json
         run: |
           python3 -m pip install pytest
           python3 -m pytest ${{ matrix.tests }} -v
@@ -71,17 +72,17 @@ jobs:
         run: |
           set -o pipefail
           arm-none-eabi-size \
-            build/py32f071/firestarter_${{ matrix.board }}.elf
+            build/${{ matrix.board }}/firestarter_${{ matrix.board }}.elf
 
       # Require the install image to exist and be nonempty.
       - name: Verify the install image exists and is non-empty
-        working-directory: build/py32f071
+        working-directory: build/${{ matrix.board }}
         run: |
           set -euxo pipefail
           test -s firestarter_${{ matrix.board }}.hex
 
       - name: Record firmware provenance and image checksums
-        working-directory: build/py32f071
+        working-directory: build/${{ matrix.board }}
         run: |
           git rev-parse HEAD > BUILD_COMMIT.txt
           sha256sum firestarter_${{ matrix.board }}.{bin,hex,elf,map} > SHA256SUMS
@@ -94,13 +95,13 @@ jobs:
           name: firestarter_${{ matrix.board }}
           if-no-files-found: error
           path: |
-            build/py32f071/firestarter_${{ matrix.board }}.*
-            build/py32f071/BUILD_COMMIT.txt
-            build/py32f071/SHA256SUMS
+            build/${{ matrix.board }}/firestarter_${{ matrix.board }}.*
+            build/${{ matrix.board }}/BUILD_COMMIT.txt
+            build/${{ matrix.board }}/SHA256SUMS
 
       # Run after uploading the default-safe image: the experimental image
       # is build-checked, never substituted into the normal artifact.
-      # Its own build directory keeps it apart from the default image.
+      # Its own build directory keeps it apart from build/micropetal_uno.
       - name: Build all opt-in MicroPetal features
         if: matrix.board == 'micropetal_uno'
         uses: ./.github/actions/build-py32f071
@@ -108,6 +109,8 @@ jobs:
           board: micropetal_uno
           experimental_micropetal: ON
           build_dir: build/micropetal_uno_full
+          # Reuse the SDK clone of the default build above.
+          deps-dir: build/micropetal_uno/_deps
 
       # The full build sets ROM touch and full operation in the compile
       # database, so the ROM-touch and full-mode test cases run here.
@@ -118,6 +121,7 @@ jobs:
         run: |
           python3 -m pytest tests/test_py32_*.py tests/test_micropetal_*.py -v
 
+      # Last step, so that it also collects a failure of the full build.
       - name: Upload failed build diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -128,7 +132,7 @@ jobs:
             configure.log
             build.log
             tool-versions.txt
-            build/py32f071/CMakeCache.txt
-            build/py32f071/build.ninja
+            build/${{ matrix.board }}/CMakeCache.txt
+            build/${{ matrix.board }}/build.ninja
             build/micropetal_uno_full/CMakeCache.txt
             build/micropetal_uno_full/build.ninja

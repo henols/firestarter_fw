@@ -124,7 +124,6 @@ static bool sdp_decode_u32_param_for_id(uint8_t target_id, uint32_t* out_value) 
 void setUp(void) {
     ArduinoFakeReset();
     capture_serial_writes();
-    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
     When(Method(ArduinoFake(), delay)).AlwaysReturn();
