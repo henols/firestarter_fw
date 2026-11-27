@@ -62,6 +62,9 @@ void rurp_set_communication_mode() {
     PORTD |= 0x01;
     DDRD &= ~(0x01);
     rurp_serial_begin(MONITOR_SPEED);
+    // This runs before every data chunk. A leaked byte completes within one
+    // byte time (40 us at 250000 baud), so 100 us is enough before the drain.
+    delayMicroseconds(100);
     while (SERIAL_PORT.available()) SERIAL_PORT.read();
     com_mode = true;
 
