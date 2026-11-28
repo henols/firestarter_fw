@@ -50,6 +50,12 @@ typedef enum {
 typedef enum {
     RURP_VPP_OK = 0,
     RURP_VPP_MANUAL_ADJUSTMENT_REQUIRED = 1,
+    RURP_VPP_OUT_OF_RANGE = 2,
+    RURP_VPP_TIMEOUT = 3,
+    RURP_VPP_ADC_ERROR = 4,
+    RURP_VPP_DAC_ERROR = 5,
+    RURP_VPP_OVERVOLTAGE = 6,
+    RURP_VPP_ABORTED = 7,
 } rurp_vpp_result_t;
 
 rurp_vpp_control_mode_t rurp_vpp_control_mode(void);

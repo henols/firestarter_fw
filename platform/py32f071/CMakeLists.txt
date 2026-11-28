@@ -87,6 +87,7 @@ set(FIRESTARTER_COMMON_SOURCES
     "${REPOSITORY_ROOT}/src/command_decoder.c"
     "${REPOSITORY_ROOT}/src/boards/rurp_serial_utils.cpp"
     "${REPOSITORY_ROOT}/src/rurp_vpp.cpp"
+    "${REPOSITORY_ROOT}/src/rurp_vpp_regulator.c"
     "${REPOSITORY_ROOT}/src/rurp_config_utils.cpp"
     "${REPOSITORY_ROOT}/src/rurp_config_migrate.cpp"
     "${REPOSITORY_ROOT}/src/rurp_voltage_math.c"
